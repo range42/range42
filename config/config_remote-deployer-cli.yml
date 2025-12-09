@@ -1,0 +1,18 @@
+#
+# default SSH configuration location
+#
+
+ssh_config_dir: "/home/dev/.ssh"
+# ssh_config_default_file: "config"
+
+
+#
+# REMOTE deployer-cli init variables
+# ------
+#
+
+infrastructure_codename: "hv_pp"
+
+deployer_cli_username: "range42-operator"
+deployer_cli_ip: "172.16.190.130"
+deployer_cli_ssh_port: "22"
