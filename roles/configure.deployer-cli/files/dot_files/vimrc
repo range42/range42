@@ -1,0 +1,19 @@
+:set number 
+:syntax on
+:set ruler
+:set title
+:set scrolloff=3   
+:set shiftwidth=4   
+:set tabstop=4
+:set statusline=%F[%L][%p%%][%04l,%04v]
+:set mouse=a 
+:highlight Pmenu ctermbg=lightblue gui=bold 
+:highlight Pmenu ctermfg=white
+
+:highlight Pmenu ctermbg=lightblue guibg=LightGray
+:highlight PmenuSel ctermbg=7 guibg=DarkBlue guifg=White
+:highlight PmenuSbar ctermbg=7 guibg=DarkGray
+:highlight PmenuThumb guibg=Black
+:nnoremap <silent> <F9> :NERDTree<CR>
+:set hlsearch  
+:set laststatus=2  
