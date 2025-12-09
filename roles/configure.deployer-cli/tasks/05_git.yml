@@ -1,0 +1,41 @@
+---
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: configure range42 repository
+  become: true
+  become_user: "{{ OPERATOR_USER }}"
+
+  block:
+    - name: configure range42 repository - clone range42 repositories into {{ RANGE_42_GIT_DIR }}
+      git:
+        repo: "{{ item.repo }}"
+        dest: "{{ RANGE_42_GIT_DIR }}/{{ item.name }}"
+        update: no
+      loop:
+        - {
+            name: range42-ansible_roles-proxmox_controller,
+            repo: "https://github.com/range42/range42-ansible_roles-proxmox_controller.git",
+          }
+        - {
+            name: range42-catalog,
+            repo: "https://github.com/range42/range42-catalog.git"
+           }
+        - { 
+            name: range42-playbooks,
+            repo: "https://github.com/range42/range42-playbooks.git"
+          }
+        - {
+            name: range42-ansible_roles-debug-devkit,
+            repo: "https://github.com/range42/range42-ansible_roles-debug-devkit.git",
+          }
+        - { 
+            name: range42-deployer-ui,
+            repo: "https://github.com/range42/range42-deployer-ui.git" 
+          }
+        - { 
+            name: range42-backend-api,
+            repo: "https://github.com/range42/range42-backend-api.git"
+          }
+      #
+      # throttle: 1 # to avoid to exceed rate limit ?
+      #

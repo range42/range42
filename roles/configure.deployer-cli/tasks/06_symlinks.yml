@@ -1,0 +1,25 @@
+---
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: configure symlinks
+  become: true
+  become_user: "{{ OPERATOR_USER }}"
+
+  block:
+    #
+    - name: configure symlinks - create secrets symlink to range42-ansible_roles-debug-devkit
+      file:
+        src: "{{ RANGE_42_CONFIG_DIR }}/secrets"
+        dest: "{{ RANGE_42_GIT_DIR }}/range42-ansible_roles-debug-devkit/secrets"
+        state: link
+
+    - name: bug_fix - remove existing demo_lab secrets dir
+      file:
+        path: "{{ RANGE_42_GIT_DIR }}/range42-playbooks/scenarios/demo_lab/secrets"
+        state: absent
+
+    - name: configure symlinks - create secrets range42-playbooks/scenarios/demo_lab
+      file:
+        src: "{{ RANGE_42_CONFIG_DIR }}/secrets"
+        dest: "{{ RANGE_42_GIT_DIR }}/range42-playbooks/scenarios/demo_lab/secrets"
+        state: link

@@ -1,0 +1,34 @@
+---
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: configure ohmyzsh
+  become: true
+  become_user: "{{ OPERATOR_USER }}"
+
+  block:
+    #
+    - name: configure ohmyzsh - git clone ohmyzsh - location /home/{{ OPERATOR_USER }}/.oh-my-zsh
+      ansible.builtin.git:
+        repo: https://github.com/ohmyzsh/ohmyzsh.git
+        dest: "/home/{{ OPERATOR_USER }}/.oh-my-zsh"
+        update: no
+
+    #
+    - name: configure ohmyzsh - locate zsh binary on system
+      stat:
+        path: "{{ item }}"
+      register: zsh_check
+      with_items:
+        - /usr/bin/zsh
+      ignore_errors: false
+
+    - name: configure ohmyzsh - set_fact variable - zsh_check
+      set_fact:
+        zsh_found: "{{ zsh_check.results | map(attribute='stat.exists') | select | list | length > 0 }}"
+
+    #
+    - name: configure ohmyzsh - set zsh as default for '{{ OPERATOR_USER }}'
+      user:
+        name: "{{ OPERATOR_USER }}"
+        shell: /usr/bin/zsh
+      when: zsh_found

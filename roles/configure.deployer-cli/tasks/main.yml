@@ -1,0 +1,11 @@
+####
+####
+####
+
+- import_tasks: 01_packages.yml
+- import_tasks: 02_shell.yml
+- import_tasks: 03_dot_files.yml
+- import_tasks: 04_ssh_client.yml
+- import_tasks: 05_git.yml
+- import_tasks: 06_symlinks.yml
+- import_tasks: 07_shell_env.yml

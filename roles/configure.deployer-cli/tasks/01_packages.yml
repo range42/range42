@@ -1,0 +1,51 @@
+---
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: apt update/upgrade
+  become: true
+
+  block:
+    - name: apt update/upgrade - update cache
+      apt:
+        update_cache: yes
+
+    - name: apt update/upgrade - upgrade system
+      apt:
+        upgrade: dist
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: install packages
+  become: true
+
+  block:
+    - name: install packages - base packages
+      apt:
+        name:
+          - curl
+          - net-tools
+          - keychain
+
+        state: present
+    - name: install packages - utils packages
+      apt:
+        name:
+          - yq
+          - jq
+          - vim
+          - git
+          - zsh
+        state: present
+
+    - name: install packages - extra packages
+      apt:
+        name:
+          - nmap
+          - tcpdump
+        state: present
+
+    - name: install packages - install ansible
+      apt:
+        name:
+          - ansible
+        state: present
