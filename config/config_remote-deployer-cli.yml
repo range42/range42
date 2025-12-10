@@ -2,17 +2,32 @@
 # default SSH configuration location
 #
 
-ssh_config_dir: "/home/dev/.ssh"
+ssh_client__dst_config_dir: "/home/dev/.ssh" # YOUR WORKSTATION SSH DIRECTORY ; not the deployer-cli ssh directory.
 # ssh_config_default_file: "config"
-
 
 #
 # REMOTE deployer-cli init variables
 # ------
 #
 
-infrastructure_codename: "hv_pp"
+####
+#### #### INFRASTRUCTURE INFORMATION #### ####
+####
 
-deployer_cli_username: "range42-operator"
-deployer_cli_ip: "172.16.190.130"
-deployer_cli_ssh_port: "22"
+infrastructure_codename: "hv_hx"
+infrastructure_scenario: "demo_lab"
+infrastructure_proxmox_address: "redacted"
+
+####
+#### #### DEPLOYER-CLI IP/USER/PORT #### ####
+####
+
+# deployer_cli_ip: "172.16.190.130" # debug notes : not for playbook
+deployer_cli_ip: "192.168.42.111" # debug notes : not for playbook
+deployer_cli_ssh_port: "22"       # debug notes : not for playbook
+deployer_cli_user: "range42-operator" 
+
+
+# optionnal - additionnal ssh keys for student 
+student_additionnal_keys_count: 5
+
