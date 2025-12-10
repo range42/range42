@@ -2,18 +2,18 @@
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 - name: configure dotfiles
-  become: true
-  become_user: "{{ OPERATOR_USER }}"
+  # become: true
+  # become_user: "{{ DEPLOYER_CLI_USER }}"
 
   block:
     - name: configure dotfile - copy vimrc
       ansible.builtin.copy:
         src: dot_files/vimrc
-        dest: "/home/{{ OPERATOR_USER }}/.vimrc"
+        dest: "/home/{{ DEPLOYER_CLI_USER }}/.vimrc"
         mode: "0644"
 
     - name: configure dotfile - copy zshrc
       ansible.builtin.copy:
         src: dot_files/zshrc
-        dest: "/home/{{ OPERATOR_USER }}/.zshrc"
+        dest: "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
         mode: "0644"

@@ -1,27 +1,27 @@
-- name: configure {{ OPERATOR_USER }} environment
-  become: true
-  become_user: "{{ OPERATOR_USER }}"
+- name: configure {{ DEPLOYER_CLI_USER }} environment
+  # become: true
+  # become_user: "{{ DEPLOYER_CLI_USER }}"
 
   block:
     #
-    - name: configure {{ OPERATOR_USER }} environment  - inject range42 env block in .bashrc
+    - name: configure {{ DEPLOYER_CLI_USER }} environment  - inject range42 env block in .bashrc
       blockinfile:
-        path: "/home/{{ OPERATOR_USER }}/.bashrc"
+        path: "/home/{{ DEPLOYER_CLI_USER }}/.bashrc"
         marker: "# {mark} RANGE42 ENV"
         insertafter: EOF
         block: |
-          source "$HOME/CR42.config/sourced_RANGE42.sh"
+          source "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/sourced_RANGE42.sh"
           export PATH=$PATH:$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR
 
           alias gdk="cd $RANGE42_ANSIBLE_ROLES__DEVKITS_DIR"
 
-    - name: configure {{ OPERATOR_USER }} environment  - inject range42 env block in .zshrc
+    - name: configure {{ DEPLOYER_CLI_USER }} environment  - inject range42 env block in .zshrc
       blockinfile:
-        path: "/home/{{ OPERATOR_USER }}/.zshrc"
+        path: "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
         marker: "# {mark} RANGE42 ENV"
         insertafter: EOF
         block: |
-          source "$HOME/CR42.config/sourced_RANGE42.sh"
+          source "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/sourced_RANGE42.sh"
           export PATH=$PATH:$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR
 
           alias gdk="cd $RANGE42_ANSIBLE_ROLES__DEVKITS_DIR"

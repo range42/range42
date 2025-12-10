@@ -1,15 +1,28 @@
 ---
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
+- name: configure range42 repository - warmup
+  block:
+    #
+    - name: configure range42 repository - mkdir {{ DEPLOYER_CLI__DST_GIT_DIR }}
+      ansible.builtin.file:
+        path: "{{ DEPLOYER_CLI__DST_GIT_DIR }}"
+        state: directory
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0755"
+      become: true
+
+
 - name: configure range42 repository
-  become: true
-  become_user: "{{ OPERATOR_USER }}"
+  # become: true
+  # become_user: "{{ DEPLOYER_CLI_USER }}"
 
   block:
-    - name: configure range42 repository - clone range42 repositories into {{ RANGE_42_GIT_DIR }}
+    - name: configure range42 repository - clone range42 repositories into {{ DEPLOYER_CLI__DST_GIT_DIR }}
       git:
         repo: "{{ item.repo }}"
-        dest: "{{ RANGE_42_GIT_DIR }}/{{ item.name }}"
+        dest: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/{{ item.name }}"
         update: no
       loop:
         - {

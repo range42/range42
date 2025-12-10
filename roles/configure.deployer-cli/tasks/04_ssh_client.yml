@@ -1,74 +1,79 @@
 ---
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-- name: configure ssh client - "{{ OPERATOR_USER }}"
-  become: true
-  become_user: "{{ OPERATOR_USER }}"
+- name: configure ssh client - "{{ DEPLOYER_CLI_USER }}"
+  # become: true
+  # become_user: "{{ DEPLOYER_CLI_USER }}"
 
   block:
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-    # check/create directories in /home/{{OPERATOR_USER}}/.ssh/
+    # check/create directories in /home/{{DEPLOYER_CLI_USER}}/.ssh/
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-    - name: configure ssh client - check /home/{{OPERATOR_USER}}/.ssh dir exists
+    - name: configure ssh client - check /home/{{DEPLOYER_CLI_USER}}/.ssh dir exists
       ansible.builtin.file:
-        path: "{{ SSH_CONFIG_DIR }}"
+        path: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DIR }}"
         state: directory
         mode: "0700"
 
-    - name: configure ssh client - check /home/{{OPERATOR_USER}}/.ssh/config file exists
+    - name: configure ssh client - check /home/{{DEPLOYER_CLI_USER}}/.ssh/config file exists
       ansible.builtin.file:
-        path: "{{ SSH_CONFIG_DEFAULT_FILE }}"
+        path: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE }}"
         state: touch
         mode: "0600"
 
-    - name: configure ssh client - check {{ RANGE_42_SSH_KEYS_BACKEND_DEST_DIR }} dir exists
-      #  check /home/{{OPERATOR_USER}}/.ssh/backend_keys dir exists
+    - name: configure ssh client - check {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }} dir exists
+      #  check /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys dir exists
       ansible.builtin.file:
-        # path: "{{ SSH_CONFIG_DIR }}/backend_keys"
-        path: "{{ RANGE_42_SSH_KEYS_BACKEND_DEST_DIR }}"
+        path: "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
         state: directory
         mode: "0700"
 
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-    # add/inject/create ssh config files in /home/{{OPERATOR_USER}}/.ssh/
+    # add/inject/create ssh config files in /home/{{DEPLOYER_CLI_USER}}/.ssh/
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-    - name: configure ssh client - inject range42 default ssh config in {{ SSH_CONFIG_DEFAULT_FILE }}
+    - name: configure ssh client - inject range42 default ssh config in {{ DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE }}
       blockinfile:
-        path: "{{ SSH_CONFIG_DEFAULT_FILE }}"
-        marker: "#### {mark} RANGE42 CR42 INCLUDE ####"
+        path: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE }}"
+        marker: "#### {mark} RANGE42 INCLUDE - {{ INFRASTRUCTURE_CODENAME }} - {{ INFRASTRUCTURE_SCENARIO }} ####"
         block: |
 
           #### ####  #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-          Include {{ SSH_CONFIG_CR42_FILE }}
+          Include {{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}
 
           #### ####  #### #### #### #### #### #### #### #### #### #### #### #### #### ####
         insertafter: EOF
 
-    - name: configure ssh client - copy range42 default ssh config in {{ SSH_CONFIG_CR42_FILE }}
-      ansible.builtin.copy:
-        src: "ssh_config/template.ssh_config"
-        dest: "{{ SSH_CONFIG_CR42_FILE }}"
+    # - name: configure ssh client - copy range42 default ssh config in {{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}
+    #   ansible.builtin.copy:
+    #     src: "ssh_config/template.ssh_config"
+    #     dest: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}"
+    #     mode: "0600"
+
+    - name: configure ssh client - inject range42 template ssh config in {{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}
+      ansible.builtin.template:
+        src: remote-deployer-cli.j2
+        dest: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}"
         mode: "0600"
 
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
     # add/inject pre-created ssh keys
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-    - name: configure ssh client - copy ssh keys in  {{ RANGE_42_SSH_KEYS_BACKEND_DEST_DIR }}
-      # /home/{{OPERATOR_USER}}/.ssh/backend_keys
+    - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}
+      # /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys
       ansible.builtin.copy:
-        src: "ssh_keys/backend_keys/"
-        dest: "{{ RANGE_42_SSH_KEYS_BACKEND_DEST_DIR }}"
+        src: "{{ DEPLOYER_CLI__SRC_GENERATE_KEYS_DIR }}/backend_keys/"
+        dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
         mode: "0600"
         directory_mode: "0700"
 
-    - name: configure ssh client - copy ssh keys in  {{ RANGE_42_SSH_KEYS_JUMP_DEST_DIR }}
-      # /home/{{OPERATOR_USER}}/.ssh/backend_keys
+    - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}
+      # /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys
       ansible.builtin.copy:
-        src: "ssh_keys/jump_keys/"
-        dest: "{{ RANGE_42_SSH_KEYS_JUMP_DEST_DIR }}"
+        src: "{{ DEPLOYER_CLI__SRC_GENERATE_KEYS_DIR }}/jump_keys/"
+        dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
         mode: "0600"
         directory_mode: "0700"
