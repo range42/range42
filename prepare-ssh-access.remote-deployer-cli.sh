@@ -524,7 +524,7 @@ warmup_ssh_client_configuration() {
 		echo ""
 		echo "#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####"
 		echo ""
-	} >>"$SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI"
+	} >"$SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI"
 
 	ssh-keygen -f "$SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
 	ssh-copy-id -i "$SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI.pub" "$DEPLOYER_CLI_CONFIG_USER@$DEPLOYER_CLI_CONFIG_IP" #-p "$DEPLOYER_CLI_CONFIG_PORT"
@@ -560,7 +560,7 @@ create_remote_deployer_playbook() {
 		echo "    # bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : \"NO\""
 		echo ""
 
-	} >>"$REMOTE_DEPLOYER_CLI_YML_FILE" # "./deploy_remote_deployer-cli.yml"
+	} >"$REMOTE_DEPLOYER_CLI_YML_FILE" # "./deploy_remote_deployer-cli.yml"
 
 	####
 	#### create - playbook runner scripts file
@@ -573,7 +573,7 @@ create_remote_deployer_playbook() {
 		echo " $REMOTE_DEPLOYER_CLI_YML_FILE \\"
 		echo " -K"
 
-	} >>"$REMOTE_DEPLOYER_CLI_SH_FILE" # "./deploy_remote_deployer-cli.sh"
+	} >"$REMOTE_DEPLOYER_CLI_SH_FILE" # "./deploy_remote_deployer-cli.sh"
 
 	chmod +x "$REMOTE_DEPLOYER_CLI_SH_FILE"
 
@@ -588,7 +588,7 @@ create_remote_deployer_playbook() {
 		echo "    init_scripts:"
 		echo "      hosts:"
 		echo "        $DEPLOYER_CLI_CONFIG_SSH_NAME:"
-	} >>"$REMOTE_DEPLOYER_CLI_INVENTORY_FILE" # "/inventories/$DEPLOYER_CLI_CONFIG_SSH_NAME.yml"
+	} >"$REMOTE_DEPLOYER_CLI_INVENTORY_FILE" # "/inventories/$DEPLOYER_CLI_CONFIG_SSH_NAME.yml"
 
 	####
 	#### create - show debuginventory file
@@ -599,7 +599,7 @@ create_remote_deployer_playbook() {
 		echo ""
 		echo "ansible-inventory -i \"./$DEPLOYER_CLI_CONFIG_SSH_NAME.yml\" --graph"
 		echo ""
-	} >>"./inventories/show_inventory.$DEPLOYER_CLI_CONFIG_SSH_NAME.sh"
+	} >"./inventories/show_inventory.$DEPLOYER_CLI_CONFIG_SSH_NAME.sh"
 
 	chmod +x "./inventories/show_inventory.$DEPLOYER_CLI_CONFIG_SSH_NAME.sh"
 }
@@ -635,8 +635,8 @@ case "${1:-}" in
 
 	prepare_environment_credentials
 
-	# warmup_ssh_client_configuration
-	# create_remote_deployer_playbook
+	warmup_ssh_client_configuration
+	create_remote_deployer_playbook
 
 	## start_install
 	;;
