@@ -1,17 +1,69 @@
+#### REMOTE-DEPLOYER-CLI VARIABLES
 
 
 
-OPERATOR_USER: "range42-operator"
+# AUTHORS NOTES : 
+#
+# Configuration workspace layout
+#
+# The directory structure is intentionally designed to encode the execution
+# context directly in the filesystem path.
+#
+# Example:
+#   /home/<user>/RANGE42.config/hv_pp-demo_lab
+#   /home/<user>/RANGE42.config/hv_pp-ctf_game_01
+#   /home/<user>/RANGE42.config/hv_ab-misp_lab
+#   /home/<user>/RANGE42.config/hv_xy-kunai_lab
+#   ... 
+#
+# From this path alone, one can immediately identify:
+#   - WHERE_ we are executing (user workspace)
+#   - WHICH_ infrastructure is targeted (INFRASTRUCTURE_CODENAME)
+#   - WHICH_ scenario / lab / environment is running (INFRASTRUCTURE_SCENARIO)
+#   - WHICH_ configuration, secrets and state belong to this execution
+#
+# This design allows:
+#   - multiple infrastructures to coexist safely
+#   - multiple scenarios per infrastructure (demo, prod, lab, training, …)
+#   - clear separation of configuration and secrets
+#   - easy auditing, debugging and rollback
+#   - zero ambiguity about "which environment is active"
+#
+# The verbosity of paths and variable names is intentional: clarity and safety are preferred over brevity.
+# ------------------------------------------------------------------------------
 
-SSH_CONFIG_DIR: "/home/{{OPERATOR_USER}}/.ssh"
-SSH_CONFIG_DEFAULT_FILE: "{{ SSH_CONFIG_DIR }}/config"
-SSH_CONFIG_CR42_FILE: "{{ SSH_CONFIG_DIR }}/config_CR42"
 
-SRC_KEYS_DIR: "ssh_keys/" # files/ssh_keys
 
-RANGE_42_GIT_DIR: "/home/{{OPERATOR_USER}}/CR42"
-RANGE_42_CONFIG_DIR: "/home/{{OPERATOR_USER}}/CR42.config"
-RANGE_42_PROXMOX_REMOTE_HOST: "FQDN_OR_IP_TO_DEFINE"
+#### #### INFRASTRUCTURE INFORMATION #### ####
 
-RANGE_42_SSH_KEYS_BACKEND_DEST_DIR: "{{ SSH_CONFIG_DIR }}/backend_keys"
-RANGE_42_SSH_KEYS_JUMP_DEST_DIR: "{{ SSH_CONFIG_DIR }}/jump_keys"
+INFRASTRUCTURE_CODENAME: "to_define" # default value : "hv_pp"
+INFRASTRUCTURE_SCENARIO: "to_define" # default value : "demo"
+INFRASTRUCTURE_PROXMOX_ADDRESS:  "ip_or_fqdn"
+
+#### #### DEPLOYER USER / OPERATOR #### ####
+
+DEPLOYER_CLI_USER: "to_define" # default value "range42-operator"
+
+#### #### GIT AND CONFIG DIRECTORIES #### #### 
+
+DEPLOYER_CLI__DST_GIT_DIR: "/home/{{DEPLOYER_CLI_USER}}/range42/{{ INFRASTRUCTURE_CODENAME }}"
+DEPLOYER_CLI__DST_CONFIG_DIR: "/home/{{DEPLOYER_CLI_USER}}/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+
+#### #### GIT CONFIGURATION #### #### 
+
+DEPLOYER_CLI__DST_SSH_CONFIG_DIR: "/home/{{DEPLOYER_CLI_USER}}/.ssh"
+DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DIR }}/config"
+DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DIR }}/range42/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DIR }}/config_range42-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+
+DEPLOYER_CLI__SRC_GENERATE_KEYS_DIR: "ssh_keys/" # files/ssh_keys
+
+
+DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/backend_keys" # operator / admin keys
+DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/jump_keys" # operator / admin keys
+#
+DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/student_keys" # user/student keys
+DEPLOYER_CLI__DST_SSH_KEYS_VULN_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/vulns_keys" # user/student keys
+
+
+
