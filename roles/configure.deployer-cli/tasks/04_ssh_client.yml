@@ -29,6 +29,20 @@
         state: directory
         mode: "0700"
 
+    - name: configure ssh client - check {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }} dir exists
+      #  check /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys dir exists
+      ansible.builtin.file:
+        path: "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
+        state: directory
+        mode: "0700"
+
+    - name: configure ssh client - check {{ DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR }} dir exists
+      #  check /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys dir exists
+      ansible.builtin.file:
+        path: "{{ DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR }}"
+        state: directory
+        mode: "0700"
+
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
     # add/inject/create ssh config files in /home/{{DEPLOYER_CLI_USER}}/.ssh/
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -62,18 +76,18 @@
     # add/inject pre-created ssh keys
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-    - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}
-      # /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys
-      ansible.builtin.copy:
-        src: "{{ DEPLOYER_CLI__SRC_GENERATE_KEYS_DIR }}/backend_keys/"
-        dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
-        mode: "0600"
-        directory_mode: "0700"
+    # - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}
+    #   # /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys
+    #   ansible.builtin.copy:
+    #     src: "{{ DEPLOYER_CLI__SRC_GENERATE_KEYS_DIR }}/backend_keys/"
+    #     dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
+    #     mode: "0600"
+    #     directory_mode: "0700"
 
-    - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}
-      # /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys
-      ansible.builtin.copy:
-        src: "{{ DEPLOYER_CLI__SRC_GENERATE_KEYS_DIR }}/jump_keys/"
-        dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
-        mode: "0600"
-        directory_mode: "0700"
+    # - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}
+    #   # /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys
+    #   ansible.builtin.copy:
+    #     src: "{{ DEPLOYER_CLI__SRC_GENERATE_KEYS_DIR }}/jump_keys/"
+    #     dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
+    #     mode: "0600"
+    #     directory_mode: "0700"
