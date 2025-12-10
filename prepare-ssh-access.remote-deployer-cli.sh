@@ -7,36 +7,53 @@ SCRIPT_NAME="$(basename "$0")"
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 DEPLOYER_CONFIGURATION_FILE_PATH="./config/config_remote-deployer-cli.yml"
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
 INFRASTRUCTURE_CODENAME=$(
 	yq -r '.infrastructure_codename' "$DEPLOYER_CONFIGURATION_FILE_PATH"
 )
 
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-
-SSH_CONFIG_DIR=$(
-	yq -r '.ssh_config_dir' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+INFRASTRUCTURE_SCENARIO=$(
+	yq -r '.infrastructure_scenario' "$DEPLOYER_CONFIGURATION_FILE_PATH"
 )
 
-SSH_CONFIG_FILE__DEFAULT="$SSH_CONFIG_DIR/config"
-#
-SSH_CONFIG_RANGE42_DIR="$SSH_CONFIG_DIR/range42-$INFRASTRUCTURE_CODENAME"
-SSH_CONFIG_FILE__RANGE42_DEPLOYER_CLI="$SSH_CONFIG_RANGE42_DIR/config_range42-$INFRASTRUCTURE_CODENAME"
+INFRASTRUCTURE_PROXMOX_ADDRESS=$(
+	yq -r '.infrastructure_proxmox_address' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
 
-SSH_KEYS_RANGE42_DIR="$SSH_CONFIG_RANGE42_DIR/keys"
-SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI="$SSH_KEYS_RANGE42_DIR/range42.$INFRASTRUCTURE_CODENAME.deployer-cli"
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+SSH_CLIENT__DST_CONFIG_DIR=$(
+	yq -r '.ssh_client__dst_config_dir' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
+
+SSH_CLIENT__DST_CONFIG_FILE__DEFAULT="$SSH_CLIENT__DST_CONFIG_DIR/config"
+#
+SSH_CLIENT__DST_CONFIG_RANGE42_DIR="$SSH_CLIENT__DST_CONFIG_DIR/range42-$INFRASTRUCTURE_CODENAME"
+SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI="$SSH_CLIENT__DST_CONFIG_RANGE42_DIR/config_range42-$INFRASTRUCTURE_CODENAME"
+
+SSH_CLIENT__SSH_KEYS_RANGE42_DIR="$SSH_CLIENT__DST_CONFIG_RANGE42_DIR/keys"
+SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI="$SSH_CLIENT__SSH_KEYS_RANGE42_DIR/range42.$INFRASTRUCTURE_CODENAME.deployer-cli"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 DEPLOYER_CLI_CONFIG_SSH_NAME="range42.$INFRASTRUCTURE_CODENAME.deployer-cli"
-DEPLOYER_CLI_CONFIG_USERNAME=$(
-	yq -r '.deployer_cli_username' "$DEPLOYER_CONFIGURATION_FILE_PATH"
-)
+
 DEPLOYER_CLI_CONFIG_IP=$(
 	yq -r '.deployer_cli_ip' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
+DEPLOYER_CLI_CONFIG_USER=$(
+	yq -r '.deployer_cli_user' "$DEPLOYER_CONFIGURATION_FILE_PATH"
 )
 DEPLOYER_CLI_CONFIG_PORT=$(
 	yq -r '.deployer_cli_ssh_port' "$DEPLOYER_CONFIGURATION_FILE_PATH"
 )
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+
+
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -83,19 +100,21 @@ warmup_mkdir_ssh_config() {
 print_variables() {
 
 	printf 'INFRASTRUCTURE_CODENAME                : %s\n' "$INFRASTRUCTURE_CODENAME"
-	printf 'SSH_CONFIG_DIR                         : %s\n' "$SSH_CONFIG_DIR"
-	printf 'SSH_CONFIG_FILE__DEFAULT               : %s\n' "$SSH_CONFIG_FILE__DEFAULT"
+	printf 'INFRASTRUCTURE_SCENARIO                : %s\n' "$INFRASTRUCTURE_SCENARIO"
+	printf 'INFRASTRUCTURE_PROXMOX_ADDRESS                : %s\n' "$INFRASTRUCTURE_PROXMOX_ADDRESS"
+	printf 'SSH_CLIENT__DST_CONFIG_DIR                         : %s\n' "$SSH_CLIENT__DST_CONFIG_DIR"
+	printf 'SSH_CLIENT__DST_CONFIG_FILE__DEFAULT               : %s\n' "$SSH_CLIENT__DST_CONFIG_FILE__DEFAULT"
 
 	# printf 'SSH_CONFIG_RANGE42_DEPLOYER_FILE         : %s\n' "$SSH_CONFIG_RANGE42_KEYS_DEPLOYER_FILE"
 	echo ''
-	printf 'SSH_CONFIG_RANGE42_DIR                   : %s\n' "$SSH_CONFIG_RANGE42_DIR"
-	printf 'SSH_CONFIG_FILE__RANGE42_DEPLOYER_CLI    : %s\n' "$SSH_CONFIG_FILE__RANGE42_DEPLOYER_CLI"
-	printf 'SSH_KEYS_RANGE42_DIR                     : %s\n' "$SSH_KEYS_RANGE42_DIR"
-	printf 'SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI      : %s\n' "$SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
+	printf 'SSH_CLIENT__DST_CONFIG_RANGE42_DIR                   : %s\n' "$SSH_CLIENT__DST_CONFIG_RANGE42_DIR"
+	printf 'SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI    : %s\n' "$SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI"
+	printf 'SSH_CLIENT__SSH_KEYS_RANGE42_DIR                     : %s\n' "$SSH_CLIENT__SSH_KEYS_RANGE42_DIR"
+	printf 'SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI      : %s\n' "$SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
 
 	echo ''
 
-	printf 'DEPLOYER_CLI_CONFIG_USERNAME  : %s\n' "$DEPLOYER_CLI_CONFIG_USERNAME"
+	printf 'DEPLOYER_CLI_CONFIG_USER  : %s\n' "$DEPLOYER_CLI_CONFIG_USER"
 	printf 'DEPLOYER_CLI_CONFIG_SSH_NAME  : %s\n' "$DEPLOYER_CLI_CONFIG_SSH_NAME"
 	printf 'DEPLOYER_CLI_CONFIG_IP        : %s\n' "$DEPLOYER_CLI_CONFIG_IP"
 	printf 'DEPLOYER_CLI_CONFIG_PORT      : %s\n' "$DEPLOYER_CLI_CONFIG_PORT"
@@ -107,30 +126,30 @@ print_variables() {
 
 warmup_ssh_client_configuration() {
 
-	warmup_mkdir_ssh_config "$SSH_CONFIG_DIR"
-	warmup_mkdir_ssh_config "$SSH_CONFIG_RANGE42_DIR"
-	warmup_mkdir_ssh_config "$SSH_KEYS_RANGE42_DIR"
+	warmup_mkdir_ssh_config "$SSH_CLIENT__DST_CONFIG_DIR"
+	warmup_mkdir_ssh_config "$SSH_CLIENT__DST_CONFIG_RANGE42_DIR"
+	warmup_mkdir_ssh_config "$SSH_CLIENT__SSH_KEYS_RANGE42_DIR"
 
-	if [ ! -f "$SSH_CONFIG_FILE__DEFAULT" ]; then
-		printf ':: CREATING .ssh config file : %s' "$SSH_CONFIG_FILE__DEFAULT"
-		touch "$SSH_CONFIG_FILE__DEFAULT"
+	if [ ! -f "$SSH_CLIENT__DST_CONFIG_FILE__DEFAULT" ]; then
+		printf ':: CREATING .ssh config file : %s' "$SSH_CLIENT__DST_CONFIG_FILE__DEFAULT"
+		touch "$SSH_CLIENT__DST_CONFIG_FILE__DEFAULT"
 	fi
 
-	# chmod 600 "$SSH_CONFIG_FILE__DEFAULT"
+	# chmod 600 "$SSH_CLIENT__DST_CONFIG_FILE__DEFAULT"
 
 	#
 	# INCLUDE IF MISSING
 	#
 
-	if ! grep -q "Include $SSH_CONFIG_FILE__RANGE42_DEPLOYER_CLI" "$SSH_CONFIG_FILE__DEFAULT"; then
+	if ! grep -q "Include $SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI" "$SSH_CLIENT__DST_CONFIG_FILE__DEFAULT"; then
 		{
 			echo ""
 			echo "#### ####  #### #### #### #### #### #### #### #### #### #### #### #### #### ####"
 			echo ""
-			echo "Include $SSH_CONFIG_FILE__RANGE42_DEPLOYER_CLI"
+			echo "Include $SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI"
 			echo ""
 			echo "#### ####  #### #### #### #### #### #### #### #### #### #### #### #### #### ####"
-		} >>"$SSH_CONFIG_FILE__DEFAULT"
+		} >>"$SSH_CLIENT__DST_CONFIG_FILE__DEFAULT"
 	fi
 
 	# mkdir -p "$SSH_CONFIG_RANGE42_KEYS_DIR/backend_keys/"
@@ -142,19 +161,19 @@ warmup_ssh_client_configuration() {
 		echo ""
 		echo "Host $DEPLOYER_CLI_CONFIG_SSH_NAME"
 		echo "  Hostname $DEPLOYER_CLI_CONFIG_IP"
-		echo "  User $DEPLOYER_CLI_CONFIG_USERNAME"
+		echo "  User $DEPLOYER_CLI_CONFIG_USER"
 		echo "  Port $DEPLOYER_CLI_CONFIG_PORT"
-		echo "  IdentityFile $SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
+		echo "  IdentityFile $SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
 		echo ""
 		echo "#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####"
 		echo ""
-	} >>"$SSH_CONFIG_FILE__RANGE42_DEPLOYER_CLI"
+	} >>"$SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI"
 
-	ssh-keygen -f "$SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
-	ssh-copy-id -i "$SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI.pub" "$DEPLOYER_CLI_CONFIG_USERNAME@$DEPLOYER_CLI_CONFIG_IP" #-p "$DEPLOYER_CLI_CONFIG_PORT"
+	ssh-keygen -f "$SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
+	ssh-copy-id -i "$SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI.pub" "$DEPLOYER_CLI_CONFIG_USER@$DEPLOYER_CLI_CONFIG_IP" #-p "$DEPLOYER_CLI_CONFIG_PORT"
 	# ssh "$DEPLOYER_CLI_CONFIG_SSH_NAME" 'whoami'/
 
-	# echo " do : ssh-add $SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
+	# echo " do : ssh-add $SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI"
 	# echo " do : ssh $DEPLOYER_CLI_CONFIG_SSH_NAME 'whoami'"
 }
 
@@ -175,7 +194,10 @@ create_remote_deployer_playbook() {
 		echo "  roles:"
 		echo "    - configure.deployer-cli "
 		echo "  vars:"
-		echo "    OPERATOR_USER : \"$DEPLOYER_CLI_CONFIG_USERNAME\""
+		echo "    DEPLOYER_CLI_USER : \"$DEPLOYER_CLI_CONFIG_USER\""
+		echo "    INFRASTRUCTURE_CODENAME : \"$INFRASTRUCTURE_CODENAME\""
+		echo "    INFRASTRUCTURE_SCENARIO : \"$INFRASTRUCTURE_SCENARIO\""
+		echo "    INFRASTRUCTURE_PROXMOX_ADDRESS : \"$INFRASTRUCTURE_PROXMOX_ADDRESS\""
 		echo "    # bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : \"NO\""
 		echo ""
 
