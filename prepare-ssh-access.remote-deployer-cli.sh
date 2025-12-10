@@ -47,6 +47,10 @@ SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI="$SSH_CLIENT__DST_CONFIG_RANGE
 SSH_CLIENT__SSH_KEYS_RANGE42_DIR="$SSH_CLIENT__DST_CONFIG_RANGE42_DIR/keys"
 SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI="$SSH_CLIENT__SSH_KEYS_RANGE42_DIR/range42.$INFRASTRUCTURE_CODENAME.deployer-cli"
 
+STUDENT_ADDITIONNAL_KEYS_COUNT=$(
+	yq -r '.student_additionnal_keys_count' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
+
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 DEPLOYER_CLI_CONFIG_SSH_NAME="range42.$INFRASTRUCTURE_CODENAME.deployer-cli"
@@ -133,10 +137,15 @@ generate_ssh_key_if_missing() {
 	#### Check if key already exists
 
 	if [ -f "$KEY_PATH" ]; then
-		print_red ':: WARNING ::'
-		printf ':: SSH key exists and will not be overwrited => %s\n' "$KEY_PATH"
+		print_red ' :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: ::'
+		print_red ' ::::                            WARNING                                    ::'
+		print_red ' :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: :::: ::'
 		echo ""
-		print_red "Press ENTER to continue, or Ctrl+C to abort and clean the directory manually."
+		printf ' :: SSH key exists and will not be overwrited => %s\n' "$KEY_PATH"
+		echo ""
+		print_red "   Press ENTER to continue, or Ctrl+C to abort and clean the directory manually."
+		echo ""
+		echo ""
 		echo ""
 
 		read -r
@@ -236,17 +245,29 @@ prepare_environment_credentials() {
 	# WORKSPACE
 	###########################################################################
 
-	mkdir -p "$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL"
-	chmod 700 "$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL"
+	mkdir -p "$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/jump_keys"
+	mkdir -p "$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/backend_keys"
+	mkdir -p "$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/student_keys/additionnal_students/"
+
+	# I want avoid chmod -R ...
+	#
+	chmod 700 "$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL" \
+		"$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/jump_keys" \
+		"$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/backend_keys" \
+		"$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/student_keys" \
+		"$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/student_keys/additionnal_students/"
 
 	###########################################################################
 	# SSH KEYS
 	###########################################################################
 
-	SSH_KEY_PX_ROOT="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/px.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-ssh_cli.root"
-	SSH_KEY_PX_JUMP="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/px.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-ssh_cli.jump_user"
-	SSH_KEY_DEPLOYER_ADMIN_ALICE="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/r42.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-deployer-key_alice"
-	SSH_KEY_STUDENT_USER_BOB="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/r42.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-student-key_bob"
+	SSH_KEY_PX_ROOT="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/jump_keys/px.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-ssh_cli.root"
+	SSH_KEY_PX_JUMP="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/jump_keys/px.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-ssh_cli.jump_user"
+	SSH_KEY_DEPLOYER_ADMIN_ALICE="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/backend_keys/r42.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-deployer-key_alice"
+	SSH_KEY_STUDENT_USER_BOB="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/student_keys/r42.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-student-key_bob"
+
+	SSH_KEYS_STUDENT_ADDITIONNAL_DIR="$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL/student_keys/additionnal.students/"
+	# r42.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-student-key_bob"
 
 	if [ "$GENERATE_SSH_KEYS" = "yes" ]; then
 
@@ -315,6 +336,41 @@ prepare_environment_credentials() {
 			STUDENT_PASSPHRASE="$TEMP_PASS"
 		fi
 
+		for i in $(seq 1 "$STUDENT_ADDITIONNAL_KEYS_COUNT"); do
+
+			STUDENT_KEY_PATH="${SSH_KEYS_STUDENT_ADDITIONNAL_DIR}/r42.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-student-key_bob_${i}"
+
+			TEMP_PASS="$(generate_password)"
+
+			if generate_ssh_key_if_missing \
+				"$STUDENT_KEY_PATH" \
+				"r42 student (user) - bob [extra ${i}] ${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}" \
+				"$TEMP_PASS"; then
+				STUDENT_EXTRA_KEYS_PATHS+=("$STUDENT_KEY_PATH")
+				STUDENT_EXTRA_KEYS_PASSPHRASES+=("(unchanged)")
+			else
+				STUDENT_EXTRA_KEYS_PATHS+=("$STUDENT_KEY_PATH")
+				STUDENT_EXTRA_KEYS_PASSPHRASES+=("$TEMP_PASS")
+			fi
+
+		done
+
+		# for i in $(seq 1 "$STUDENT_ADDITIONNAL_KEYS_COUNT"); do
+
+		# 	STUDENT_KEY_PATH="${SSH_KEYS_STUDENT_ADDITIONNAL_DIR}/r42.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-student-key_bob_${i}"
+		# 	TEMP_PASS="$(generate_password)"
+
+		# 	if generate_ssh_key_if_missing \
+		# 		"$STUDENT_KEY_PATH" \
+		# 		"r42 student (user) - bob  - extra ${i}] ${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}" \
+		# 		"$TEMP_PASS"; then
+		# 		printf '  :: extra %s - passphrase : (unchanged)\n' "$i"
+		# 	else
+		# 		printf '  :: extra %s - passphrase : %s\n' "$i" "$TEMP_PASS"
+		# 	fi
+
+		# done
+
 	else
 		warn_custom_setup
 		print_red 'Skipping SSH key generation'
@@ -370,6 +426,19 @@ prepare_environment_credentials() {
 		printf '    alice (deployer/admin) pwd  : %s\n' "$ALICE_USER_PASSWORD"
 		printf '    bob   (student/user) pwd    : %s\n' "$BOB_USER_PASSWORD"
 		echo ""
+
+		#### extra keys :
+
+		echo ""
+		echo "    ---- ADDITIONAL STUDENT SSH KEYS ----"
+		echo ""
+
+		for i in "${!STUDENT_EXTRA_KEYS_PATHS[@]}"; do
+			printf '    STUDENT EXTRA bob_%02d SSH keys : %s - %s\n' \
+				"$((i + 1))" \
+				"${STUDENT_EXTRA_KEYS_PASSPHRASES[$i]}" \
+				"${STUDENT_EXTRA_KEYS_PATHS[$i]}"
+		done
 
 		chmod 600 "$INFRASTRUCTURE__AUTO_GENERATED__PASSWORDS_FILE_LOCAL"
 
@@ -486,6 +555,8 @@ create_remote_deployer_playbook() {
 		echo "    INFRASTRUCTURE_CODENAME : \"$INFRASTRUCTURE_CODENAME\""
 		echo "    INFRASTRUCTURE_SCENARIO : \"$INFRASTRUCTURE_SCENARIO\""
 		echo "    INFRASTRUCTURE_PROXMOX_ADDRESS : \"$INFRASTRUCTURE_PROXMOX_ADDRESS\""
+		echo "    INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL : \"$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL\""
+
 		echo "    # bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb : \"NO\""
 		echo ""
 
@@ -566,6 +637,7 @@ case "${1:-}" in
 
 	# warmup_ssh_client_configuration
 	# create_remote_deployer_playbook
+
 	## start_install
 	;;
 esac
