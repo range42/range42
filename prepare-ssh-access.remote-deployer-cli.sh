@@ -82,6 +82,7 @@ DEPLOYER_CLI_CONFIG_PORT=$(
 
 INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL="./config/${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}"
 INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL="${INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL}/ssh_keys"
+INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL="${INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL}/vault"
 INFRASTRUCTURE__AUTO_GENERATED__PASSWORDS_FILE_LOCAL="${INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL}/passwords.env"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -534,6 +535,80 @@ warmup_ssh_client_configuration() {
 	# echo " do : ssh $DEPLOYER_CLI_CONFIG_SSH_NAME 'whoami'"
 }
 
+prepare_environment_ansible_vault() {
+
+	print_red ":: Preparing Ansible vault"
+	echo ""
+
+	local VAULT_DIR="$INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL"
+	local VAULT_FILE="$VAULT_DIR/default_vault.yml"
+	local VAULT_PASS_FILE="$VAULT_DIR/.vault_pass"
+
+	mkdir -p "$VAULT_DIR"
+	chmod 700 "$VAULT_DIR"
+
+	# Generate vault password
+	local VAULT_PASSWORD
+	VAULT_PASSWORD="$(generate_password)"
+
+	printf '%s\n' "$VAULT_PASSWORD" >"$VAULT_PASS_FILE"
+	chmod 600 "$VAULT_PASS_FILE"
+
+	####
+
+	local SSH_KEY_PX_ROOT_PUB_CONTENT
+	local SSH_KEY_PX_JUMP_PUB_CONTENT
+	local SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT
+	local SSH_KEY_STUDENT_USER_PUB_CONTENT
+
+	SSH_KEY_PX_ROOT_PUB_CONTENT="$(cat "${SSH_KEY_PX_ROOT}.pub")"
+	SSH_KEY_PX_JUMP_PUB_CONTENT="$(cat "${SSH_KEY_PX_JUMP}.pub")"
+	SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT="$(cat "${SSH_KEY_DEPLOYER_ADMIN_ALICE}.pub")"
+	SSH_KEY_STUDENT_USER_PUB_CONTENT="$(cat "${SSH_KEY_STUDENT_USER_BOB}.pub")"
+
+	# NOTE FOR LATER ::: NO DONT PUT THIS.
+	# DEPLOYER_USER="$(yq -r '.deployer_user' "$DEPLOYER_CONFIGURATION_FILE_PATH")" # NO DONT PUT THIS.
+
+	# CREATE VAULT FILE - (before encryption)
+	cat >"$VAULT_FILE" <<EOF
+
+# AUTO-GENERATED – DO NOT COMMIT
+# Infrastructure: ${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}
+
+infrastructure_codename: "${INFRASTRUCTURE_CODENAME}"
+infrastructure_scenario: "${INFRASTRUCTURE_SCENARIO}"
+
+proxmox_address: "${INFRASTRUCTURE_PROXMOX_ADDRESS}"
+
+# SSH KEYS
+ssh_key_px_root: "${SSH_KEY_PX_ROOT}" 
+ssh_key_px_jump: "${SSH_KEY_PX_JUMP}"
+ssh_key_deployer_admin: "${SSH_KEY_DEPLOYER_ADMIN_ALICE}"
+ssh_key_student_user: "${SSH_KEY_STUDENT_USER_BOB}"
+
+# PUB KEYS
+
+ssh_key_px_root_pub_key: "${SSH_KEY_PX_ROOT_PUB_CONTENT}"
+ssh_key_px_jump_pub_key: "${SSH_KEY_PX_JUMP_PUB_CONTENT}"
+ssh_key_deployer_admin_pub_key: "${SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT}"
+ssh_key_student_user_pub_key: "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
+
+EOF
+
+	# ENCRYP VAULT
+	ansible-vault encrypt \
+		"$VAULT_FILE" \
+		--vault-password-file "$VAULT_PASS_FILE"
+
+	echo ""
+	echo ""
+	print_red ":: VAULT created and encrypted"
+	echo ""
+	echo "  - Vault file      : $VAULT_FILE"
+	echo "  - Vault password  : $VAULT_PASS_FILE"
+	echo ""
+}
+
 create_remote_deployer_playbook() {
 
 	REMOTE_DEPLOYER_CLI_INVENTORY_FILE="./inventories/$DEPLOYER_CLI_CONFIG_SSH_NAME.yml"
@@ -634,6 +709,8 @@ case "${1:-}" in
 	print_variables
 
 	prepare_environment_credentials
+
+	prepare_environment_ansible_vault
 
 	warmup_ssh_client_configuration
 	create_remote_deployer_playbook
