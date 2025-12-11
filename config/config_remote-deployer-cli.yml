@@ -1,33 +1,147 @@
+################################################################################
+# RANGE42 — DEPLOYER-CLI CONFIGURATION FILE
+# -----------------------------------------
+# This file defines:
+#   - workstation SSH paths
+#   - infrastructure identification
+#   - deployer-cli connection parameters
+#   - Proxmox API access configuration
+#   - default cloud-init users for VMs
+#   - Tailscale / Wazuh secrets
 #
-# default SSH configuration location
+# IMPORTANT:
+#   - Do _NOT_ rename keys (used programmatically)
+#   - Keep this file secrets private (avoid commit passwords / tokens)
 #
+#
+#
+################################################################################
+# PASSWORD / SECRET FORMAT RECOMMENDATION
+# ---------------------------------------
+# For all fields containing passwords, secrets, API tokens, or cryptographic
+# values, it is strongly recommended to use ONLY the following characters:
+#
+#     a–z   A–Z   0–9   -   _
+#
+# This avoids parsing issues with:
+#   - YAML loaders, Jinja2 templates
+#   - Ansible variable expansion
+#   - shell quoting
+#   - cloud-init userdata
+#
+# Examples of valid passwords:
+#   twenty_one_good_password_123
+#   Alpha42_Trainee_Key
+#   SECURE-KEY-77_hx_demo
+#
+# Examples to ___AVOID__ (it will break YAML or Jinja2):
+#   bad$pwd!
+#   pa:ss/word
+#   key with spaces
+#   something"quoted
+#
+# IMPORTANT:
+#   - Avoid symbols such as: $ { } \ ! % @ * " ' < > | &
+#   - Length recommendation: 20+ characters
+################################################################################
 
-ssh_client__dst_config_dir: "/home/dev/.ssh" # YOUR WORKSTATION SSH DIRECTORY ; not the deployer-cli ssh directory.
-# ssh_config_default_file: "config"
+################################################################################
+# 1) WORKSTATION SETTINGS (LOCAL SSH)
+# --------------------------------------------------------------------------
+# ::
+# :: This path refers to YOUR workstation, not the deployer-cli VM.
+# ::
+################################################################################
 
-#
-# REMOTE deployer-cli init variables
-# ------
-#
+ssh_client__dst_config_dir: "/home/dev/.ssh"
 
-####
-#### #### INFRASTRUCTURE INFORMATION #### ####
-####
+################################################################################
+# 2) INFRASTRUCTURE IDENTIFICATION
+# --------------------------------------------------------------------------
+# ::
+# :: Defines which hypervisor environment and which scenario are being deployed.
+# ::
+# ::                            **** values will be stored inside Ansible Vault.
+################################################################################
 
 infrastructure_codename: "hv_hx"
-infrastructure_scenario: "demo_lab"
-infrastructure_proxmox_address: "redacted"
+infrastructure_scenario: "demo_lab" # default deployed scenario
+# infrastructure_proxmox_address: "redacted"
+infrastructure_proxmox_address: "192.168.42.242"
 
-####
-#### #### DEPLOYER-CLI IP/USER/PORT #### ####
-####
+################################################################################
+# 3) DEPLOYER-CLI CONNECTION DETAILS (REMOTE VM)
+# --------------------------------------------------------------------------
+# ::
+# :: Used only for bootstrapping; not consumed by playbooks directly.
+# ::
+################################################################################
 
-# deployer_cli_ip: "172.16.190.130" # debug notes : not for playbook
-deployer_cli_ip: "192.168.42.111" # debug notes : not for playbook
-deployer_cli_ssh_port: "22"       # debug notes : not for playbook
-deployer_cli_user: "range42-operator" 
+deployer_cli_ip: "192.168.42.111"
+deployer_cli_ssh_port: "22"
+deployer_cli_user: "range42-operator" # default deployer-cli username
 
-
-# optionnal - additionnal ssh keys for student 
+# Optional — auto-generation of additional SSH keys for students
 student_additionnal_keys_count: 5
+
+# DEBUG NOTE :
+# must be rename to deployer_cli_user_ssh_known_hosts
+
+VAULT_operator_ssh_config_known_hosts: "/home/range42-operator/.ssh/known_hosts" # :: **** values will be stored inside Ansible Vault.
+
+################################################################################
+# 4) PROXMOX API ACCESS
+# --------------------------------------------------------------------------
+# ::
+# ::  proxmox_api_host:
+# ::     If using SSH port-forwarding:
+# ::       127.0.0.1:<redirected_port>
+# ::     Otherwise, use the hypervisor direct IP:port
+# ::
+# ::                            **** values will be stored inside Ansible Vault. - done
+################################################################################
+
+# proxmox_api_host: "127.0.0.1:18007"
+proxmox_api_host: "192.168.42.111:8006" # proxmox direct mode
+
+proxmox_api_user: "API_master@pam"
+proxmox_api_token_id: "API_master"
+proxmox_api_token_secret: "aaaaa6-....-...-...-..."
+proxmox_node: "px-testing"
+
+################################################################################
+# 5) DEFAULT CLOUD-INIT USERS FOR DEPLOYER & TRAINEE VMs
+# --------------------------------------------------------------------------
+# ::
+# :: Used for provisioning internal lab machines (Alice / Bob).
+# ::
+# ::                            **** values will be stored inside Ansible Vault.
+################################################################################
+
+# --- AMINISTRATOR/DEPLOYER VM - Alice ( backend range42 infrastructure administrator )
+default_admin_vm_ci_user: "alice"
+default_admin_vm_ci_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
+default_admin_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC1lZ...............redacted................................... user@host"
+
+# --- Student VM - Bob ( backend range42 infrastructure student )
+default_trainee_vm_ci_user: "bob"
+default_trainee_vm_ci_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
+default_trainee_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC................redacted................................... user@host"
+
+################################################################################
+# 6) VAULT SECRETS (TAILSCALE, WAZUH, ETC.)
+# --------------------------------------------------------------------------
+# ::
+# :: These values will be stored inside the generated Ansible Vault.
+# ::
+# ::                            **** values will be stored inside Ansible Vault.
+################################################################################
+
+vault_tailscale_authkey: "tskey-auth-aaaaaaaaaaa...................." # dev note :  must be rename to infrastructure_tailscale_authkey
+vault_tailscale_apikey:
+  "tskey-api-bbbbbbbbbbb...................." # dev note :  must be rename to infrastructure_tailscale_apikey
+
+
+  # dev note :  must be rename to infrastructure_wazuh_admin_password
+WAZUH_PASSWORD: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
 
