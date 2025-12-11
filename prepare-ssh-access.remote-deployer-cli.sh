@@ -4,6 +4,13 @@ set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 
+DEBUG_PROXMOX_API_USER=""
+DEBUG_PROXMOX_API_TOKEN_ID=""
+DEBUG_PROXMOX_API_TOKEN_SECRET=""
+
+SSH_KEY_PX_ROOT=""
+SSH_KEY_PX_JUMP=""
+
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # CONTEXT
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -86,6 +93,51 @@ INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL="${INFRASTRUCTURE__AUTO_
 INFRASTRUCTURE__AUTO_GENERATED__PASSWORDS_FILE_LOCAL="${INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL}/passwords.env"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+# VAULT injected values - 4 PROXMOX API ACCESS
+#
+
+INFRASTRUCTURE_PROXMOX_API_HOST=$(
+	yq -r '.proxmox_api_host' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
+INFRASTRUCTURE_PROXMOX_NODE_NAME=$(
+	yq -r '.proxmox_node' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
+INFRASTRUCTURE_PROXMOX_API_USER=$(
+	yq -r '.proxmox_api_user' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
+INFRASTRUCTURE_PROXMOX_API_TOKEN_ID=$(
+	yq -r '.proxmox_api_token_id' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
+INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET=$(
+	yq -r '.proxmox_api_token_secret' "$DEPLOYER_CONFIGURATION_FILE_PATH"
+)
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+# VAULT injected values - 5 - CLOUD-INIT USERS FOR DEPLOYER & TRAINEE VMs
+#
+# default_admin_vm_ci_user       - to_process
+# default_admin_vm_ci_password   - to_process
+#
+# default_trainee_vm_ci_user     - to_process
+# default_trainee_vm_ci_password - to_process
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+# VAULT injected values - 6 - TAILSCALE, WAZUH, ETC.
+#
+INFRASTRUCTURE_TAILSCALE_AUTHKEY=$(
+	yq -r '.vault_tailscale_authkey' "$DEPLOYER_CONFIGURATION_FILE_PATH" # dev note :  must be rename to infrastructure_tailscale_authkey
+)
+INFRASTRUCTURE_TAILSCALE_APIKEY=$(
+	yq -r '.vault_tailscale_apikey' "$DEPLOYER_CONFIGURATION_FILE_PATH" # dev note :  must be rename to infrastructure_tailscale_apikey
+)
+INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD=$(
+	yq -r '.WAZUH_PASSWORD' "$DEPLOYER_CONFIGURATION_FILE_PATH" #  dev note :  must be rename to infrastructure_wazuh_admin_password
+)
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 usage() {
 	printf '\n\n'
@@ -102,15 +154,23 @@ usage() {
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-print_red() {
+print_color() {
+	local COLOR_CODE="$1"
+	local MESSAGE="$2"
+
 	if [ -t 1 ]; then
-
-		printf '\033[31m%s\033[0m\n' "$1"
-
-	else # remove color in logs files.
-		printf '%s\n' "$1"
+		printf "\033[%sm%s\033[0m\n" "$COLOR_CODE" "$MESSAGE"
+	else
+		printf '%s\n' "$MESSAGE"
 	fi
 }
+
+print_red() { print_color "31" "$1"; }
+print_green() { print_color "32" "$1"; }
+print_blue() { print_color "34" "$1"; }
+print_cyan() { print_color "36" "$1"; } # because i like cyan too :)
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 warn_custom_setup() {
 	echo ""
@@ -395,7 +455,7 @@ prepare_environment_credentials() {
 		{
 			echo "#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### "
 			echo "#"
-			print_red "# AUTO-GENERATED - DO NOT COMMIT :) "
+			printf "# AUTO-GENERATED - DO NOT COMMIT :) "
 			echo "#"
 			echo "#  - infrastructure : ${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}"
 			echo "#  - scenario       : ${INFRASTRUCTURE_SCENARIO}"
@@ -403,14 +463,14 @@ prepare_environment_credentials() {
 			echo "#"
 			echo "#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### "
 			echo ""
-			echo "    ---- SSH KEY PASSPHRASES ----"
+			printf "    ---- SSH KEY PASSPHRASES ----"
 			echo ""
 			printf '    PX_ROOT_SSH_PASSPHRASE=%s    - %s \n' "$PX_ROOT_PASSPHRASE" "$SSH_KEY_PX_ROOT"
 			printf '    PX_JUMP_SSH_PASSPHRASE=%s    - %s \n' "$PX_JUMP_PASSPHRASE" "$SSH_KEY_PX_JUMP"
 			printf '    DEPLOYER_SSH_PASSPHRASE=%s   - %s \n' "$DEPLOYER_PASSPHRASE" "$SSH_KEY_DEPLOYER_ADMIN_ALICE"
 			printf '    STUDENT_SSH_PASSPHRASE=%s    - %s \n' "$STUDENT_PASSPHRASE" "$SSH_KEY_STUDENT_USER_BOB"
 			echo ""
-			echo "    ---- USER PASSWORDS ----"
+			printf "    ---- USER PASSWORDS ----"
 			echo ""
 			printf '    ALICE_USER_PASSWORD=%s\n' "$ALICE_USER_PASSWORD"
 			printf '    BOB_USER_PASSWORD=%s\n' "$BOB_USER_PASSWORD"
@@ -431,7 +491,7 @@ prepare_environment_credentials() {
 		#### extra keys :
 
 		echo ""
-		echo "    ---- ADDITIONAL STUDENT SSH KEYS ----"
+		print_cyan "    ---- ADDITIONAL STUDENT SSH KEYS ----"
 		echo ""
 
 		for i in "${!STUDENT_EXTRA_KEYS_PATHS[@]}"; do
@@ -473,7 +533,7 @@ prepare_environment_credentials() {
 	###########################################################################
 
 	echo ""
-	print_red ':: Preparation completed'
+	print_cyan ':: Preparation completed'
 	echo ""
 	printf '    Environment : %s-%s\n' "$INFRASTRUCTURE_CODENAME" "$INFRASTRUCTURE_SCENARIO"
 	printf '    SSH keys    : %s\n' "$INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL"
@@ -535,6 +595,245 @@ warmup_ssh_client_configuration() {
 	# echo " do : ssh $DEPLOYER_CLI_CONFIG_SSH_NAME 'whoami'"
 }
 
+proxmox_load_root_ssh_key() {
+
+	local SSH_KEY_PATH="$1" # /path/to/px.hv-demo-ssh_cli.root
+	local SSH_USER="$2"     # root
+	local PROXMOX_HOST="$3" # 192.168.42.xxx
+
+	local SSH_PUB="${SSH_KEY_PATH}.pub"
+
+	printf "\n:: Managing SSH access for %s@%s\n" "$SSH_USER" "$PROXMOX_HOST"
+
+	#
+	# check if ssh-agent is running
+	#
+
+	if [ -z "$SSH_AUTH_SOCK" ] || [ ! -S "$SSH_AUTH_SOCK" ]; then
+		print_red " - No ssh-agent running, starting a new one"
+		eval "$(ssh-agent -s)" >/dev/null
+	fi
+
+	#
+	# check if key already loaded in ssh-agent
+	#
+
+	if ssh-add -l | grep -q "$(ssh-keygen -lf "$SSH_KEY_PATH" | awk '{print $2}')"; then
+		printf " - SSH key already loaded in agent: %s\n" "$SSH_KEY_PATH"
+	else
+		printf " - Loading SSH key into agent: %s\n" "$SSH_KEY_PATH"
+		ssh-add "$SSH_KEY_PATH"
+	fi
+
+	#
+	# check if pub key already existing on proxmox
+	#
+
+	printf " - Checking whether public key is already installed\n"
+
+	if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
+		"${SSH_USER}@${PROXMOX_HOST}" true 2>/dev/null; then
+
+		printf "   -> Public key already installed (authentication succeeded)\n"
+		return 0
+	fi
+
+	#
+	# if require, scp ssh key
+	#
+
+	printf " - Copying public key to Proxmox\n"
+	ssh-copy-id -i "$SSH_PUB" "${SSH_USER}@${PROXMOX_HOST}"
+
+	if [ $? -eq 0 ]; then
+		printf "   -> Public key successfully installed\n"
+	else
+		print_red "ERROR: Failed to install public key on Proxmox"
+		exit 1
+	fi
+}
+
+proxmox_fix_remote_locale() {
+
+	local SSH_TARGET="$1" # root@192.168.42.xxx
+	local FIX_LOCALE
+
+	FIX_LOCALE="C.UTF-8"
+	printf " - Using locale: %s\n" "$FIX_LOCALE"
+
+	#
+	# fixing /etc/default/locale on proxmox
+	#
+
+	ssh "$SSH_TARGET" "bash -c '
+        echo \"LANG=$FIX_LOCALE\" > /etc/default/locale
+        echo \"LC_ALL=$FIX_LOCALE\" >> /etc/default/locale
+        echo \"LANGUAGE=$FIX_LOCALE\" >> /etc/default/locale
+    '"
+
+	#
+	# exec local-gen on proxmox
+	#
+
+	ssh "$SSH_TARGET" "locale-gen $FIX_LOCALE 2>/dev/null || true"
+
+	#
+	# export local in remote session (temp fix)
+	#
+
+	ssh "$SSH_TARGET" "export LANG=$FIX_LOCALE LC_ALL=$FIX_LOCALE LANGUAGE=$FIX_LOCALE"
+
+	printf " - Remote locale fixed successfully\n"
+}
+
+proxmox_generate_api_credentials() {
+
+	local API_USER="$1"   # API_master
+	local TOKEN_ID="$2"   # API_master
+	local SSH_TARGET="$3" # root@192.168.42.xxx
+
+	printf '\n:: Generating Proxmox API credentials (idempotent)\n\n'
+
+	#
+	# check if provided proxmox user exists
+	#
+
+	if ssh "$SSH_TARGET" "pveum user list | grep -q '^${API_USER}@pam'"; then
+		printf " - User '${API_USER}@pam' already exists\n"
+	else
+		printf " - Creating user: ${API_USER}@pam\n"
+		ssh "$SSH_TARGET" "pveum user add ${API_USER}@pam"
+	fi
+
+	#
+	# assign provided user administrator privileges
+	#
+
+	printf " - Assigning 'Administrator' role to ${API_USER}@pam\n"
+	ssh "$SSH_TARGET" \
+		"pveum aclmod / -user ${API_USER}@pam -role Administrator"
+
+	#
+	# check if api token already exists
+	#
+
+	printf " - Checking if token '${TOKEN_ID}' already exists…\n"
+
+	local TOKEN_INFO
+	TOKEN_INFO=$(ssh "$SSH_TARGET" \
+		"pveum user token list ${API_USER}@pam | grep '^${API_USER}@pam!${TOKEN_ID}'" || true)
+
+	if [ -n "$TOKEN_INFO" ]; then
+		printf "   -> Token already exists, retrieving secret…\n"
+
+		#
+		# in case token exists :
+		#   - try to fetch the existing token secret
+		#     warning => Proxmox stores token secret only once !
+		#
+
+		local TOKEN_SECRET
+		TOKEN_SECRET=$(ssh "$SSH_TARGET" \
+			"pveum user token list ${API_USER}@pam --output json" |
+			jq -r ".[] | select(.token=='${TOKEN_ID}') | .value")
+
+		if [ -z "$TOKEN_SECRET" ] || [ "$TOKEN_SECRET" = "null" ]; then
+			echo ""
+			echo ""
+			print_red "   ERROR: Token exists but secret is not retrievable. (token was created manually ?)"
+			print_red "   =====> You must delete the token or specify a new one with a different ID in the configuration."
+			echo ""
+			echo ""
+			exit 1
+		fi
+
+		PROXMOX_API_TOKEN_ID="$TOKEN_ID"
+		PROXMOX_API_TOKEN_SECRET="$TOKEN_SECRET"
+
+		printf "   -> Token details : \n"
+		printf "      Token ID      : %s\n" "$PROXMOX_API_TOKEN_ID"
+		printf "      Token SECRET  : %s\n" "$PROXMOX_API_TOKEN_SECRET"
+
+		return 0
+	fi
+
+	#
+	# create new token (since it does not exist yet (best case :) )
+	#
+
+	printf " - Creating new token '${TOKEN_ID}' (JSON mode)\n"
+
+	local TOKEN_JSON
+	TOKEN_JSON=$(
+		ssh "$SSH_TARGET" \
+			"pveum user token add ${API_USER}@pam ${TOKEN_ID} --privsep 0 --output-format json"
+	)
+
+	local TOKEN_SECRET
+	TOKEN_SECRET=$(echo "$TOKEN_JSON" | jq -r '.["value"]')
+
+	if [ -z "$TOKEN_SECRET" ] || [ "$TOKEN_SECRET" = "null" ]; then
+		print_red "ERROR: Failed to extract Proxmox API token secret (JSON parsing failed)"
+		echo "$TOKEN_JSON"
+		exit 1
+	fi
+
+	#
+	# output printing
+	#
+
+	PROXMOX_API_TOKEN_ID="$TOKEN_ID"
+	PROXMOX_API_TOKEN_SECRET="$TOKEN_SECRET"
+
+	printf "   -> Token created successfully\n"
+	printf "      Token ID     : %s\n" "$PROXMOX_API_TOKEN_ID"
+	printf "      Token SECRET : %s\n" "$PROXMOX_API_TOKEN_SECRET"
+
+	DEBUG_PROXMOX_API_USER="${API_USER}@pam"
+	DEBUG_PROXMOX_API_TOKEN_ID="$PROXMOX_API_TOKEN_ID"
+	DEBUG_PROXMOX_API_TOKEN_SECRET="$PROXMOX_API_TOKEN_SECRET"
+
+}
+
+proxmox_api_call_test() {
+
+	local PROXMOX_HOST="$1" # 192.168.42.242
+	local API_USER="$2"     # API_master
+	local TOKEN_ID="$3"     # API_master
+	local TOKEN_SECRET="$4" # aaaaa....
+
+	printf "\n:: Testing Proxmox API token on host %s\n\n" "$PROXMOX_HOST"
+
+	local RESPONSE
+	RESPONSE=$(
+		curl --silent --show-error --insecure \
+			"https://${PROXMOX_HOST}:8006/api2/json/nodes" \
+			-H "Authorization: PVEAPIToken=${API_USER}@pam!${TOKEN_ID}=${TOKEN_SECRET}"
+	)
+
+	#
+	# check for curl erorrs
+	#
+
+	if [ $? -ne 0 ]; then
+		printf "\nERROR: Connection to Proxmox failed\n"
+		return 1
+	fi
+
+	#
+	# detect if promox returned an authentication failure
+	#
+
+	if echo "$RESPONSE" | grep -q '"errors"'; then
+		printf "\nERROR: Proxmox API returned an error:\n"
+		echo "$RESPONSE" | jq .
+		return 1
+	fi
+
+	print_green ":: Proxmox API call successful! :: \n\n"
+	echo "$RESPONSE" | jq '.'
+}
+
 prepare_environment_ansible_vault() {
 
 	print_red ":: Preparing Ansible vault"
@@ -547,7 +846,10 @@ prepare_environment_ansible_vault() {
 	mkdir -p "$VAULT_DIR"
 	chmod 700 "$VAULT_DIR"
 
-	# Generate vault password
+	#
+	# pwgen a vault password
+	#
+
 	local VAULT_PASSWORD
 	VAULT_PASSWORD="$(generate_password)"
 
@@ -572,26 +874,92 @@ prepare_environment_ansible_vault() {
 	# CREATE VAULT FILE - (before encryption)
 	cat >"$VAULT_FILE" <<EOF
 
-# AUTO-GENERATED – DO NOT COMMIT
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####  
+#
+#                      VAULT AUTO-GENERATED VAULT FILE 
+#                           !!! DO NOT COMMIT !!! 
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####  
+#
 # Infrastructure: ${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}
+# scenario      : ${INFRASTRUCTURE_SCENARIO}
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####  
+
+
+
+###############################################################################
+# 1 - INFRASTRUCTURE INFORMATION
+###############################################################################
 
 infrastructure_codename: "${INFRASTRUCTURE_CODENAME}"
 infrastructure_scenario: "${INFRASTRUCTURE_SCENARIO}"
 
 proxmox_address: "${INFRASTRUCTURE_PROXMOX_ADDRESS}"
+proxmox_node: "${INFRASTRUCTURE_PROXMOX_NODE_NAME}"
 
-# SSH KEYS
-ssh_key_px_root: "${SSH_KEY_PX_ROOT}" 
-ssh_key_px_jump: "${SSH_KEY_PX_JUMP}"
+proxmox_api_host: "${INFRASTRUCTURE_PROXMOX_API_HOST}"
+proxmox_api_user: "${INFRASTRUCTURE_PROXMOX_API_USER}"
+proxmox_api_token_id: "${INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}"
+proxmox_api_token_secret: "${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
+
+
+###############################################################################
+# 2 - SSH KEY PATHS 
+###############################################################################
+# ssh_key_px_root: "${SSH_KEY_PX_ROOT}"   # unused in vault
+# ssh_key_px_jump: "${SSH_KEY_PX_JUMP}"   # unused in vault
+
 ssh_key_deployer_admin: "${SSH_KEY_DEPLOYER_ADMIN_ALICE}"
-ssh_key_student_user: "${SSH_KEY_STUDENT_USER_BOB}"
+ssh_key_student_user:   "${SSH_KEY_STUDENT_USER_BOB}"
 
-# PUB KEYS
 
-ssh_key_px_root_pub_key: "${SSH_KEY_PX_ROOT_PUB_CONTENT}"
-ssh_key_px_jump_pub_key: "${SSH_KEY_PX_JUMP_PUB_CONTENT}"
+###############################################################################
+# 3 - SSH PUBLIC KEY CONTENT
+###############################################################################
+# ssh_key_px_root_pub_key: "${SSH_KEY_PX_ROOT_PUB_CONTENT}"  # unused in vault
+# ssh_key_px_jump_pub_key: "${SSH_KEY_PX_JUMP_PUB_CONTENT}"  # unused in vault
+
 ssh_key_deployer_admin_pub_key: "${SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT}"
-ssh_key_student_user_pub_key: "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
+ssh_key_student_user_pub_key:   "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
+
+
+###############################################################################
+# 4 - CLOUD-INIT USERS CONFIGURATION
+###############################################################################
+# --- Administrator VM (alice)
+default_admin_vm_ci_user:        "alice"
+default_admin_vm_ci_password:    "cmFuZ2UtNDIK"   # default password => echo range-42 | base64
+default_admin_vm_ci_ssh_key:     "${SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT}"
+
+# --- Student VM (bob)
+default_trainee_vm_ci_user:      "bob"
+default_trainee_vm_ci_password:  "cmFuZ2UtNDIK"   # default password => echo range-42 | base64
+default_trainee_vm_ci_ssh_key:   "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
+
+
+###############################################################################
+# 5 - MISC 
+###############################################################################
+
+#
+# DEV NOTE: 
+#  - The follwing variables must be renamed to  deployer_cli_user_ssh_known_hosts
+#
+
+VAULT_operator_ssh_config_known_hosts: "${DEPLOYER_CLI_CONFIG_USER}"
+
+vault_tailscale_apikey: "${INFRASTRUCTURE_TAILSCALE_APIKEY}"
+vault_tailscale_authkey:"${INFRASTRUCTURE_TAILSCALE_AUTHKEY}"
+WAZUH_PASSWORD:"${INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD}"
+
+
+#
+# VAULT_operator_ssh_config_known_hosts differ from backend_operator users (default_admin_vm_ci_user)
+#
+
+
 
 EOF
 
@@ -692,6 +1060,9 @@ case "${1:-}" in
 	;;
 *)
 
+	#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+	require_binary ssh-add
 	require_binary ssh-keygen
 	require_binary ssh-copy-id
 	#
@@ -699,12 +1070,11 @@ case "${1:-}" in
 
 	if [ "$GENERATE_PASSWORDS" = "yes" ]; then
 		require_binary pwgen
-
 	else
-		echo "ok"
 		exit 1
-
 	fi
+
+	#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 	print_variables
 
@@ -713,8 +1083,29 @@ case "${1:-}" in
 	prepare_environment_ansible_vault
 
 	warmup_ssh_client_configuration
-	create_remote_deployer_playbook
 
+	proxmox_load_root_ssh_key \
+		"$SSH_KEY_PX_ROOT" \
+		"root" \
+		"$INFRASTRUCTURE_PROXMOX_ADDRESS"
+
+	proxmox_fix_remote_locale "root@${INFRASTRUCTURE_PROXMOX_ADDRESS}"
+
+	proxmox_generate_api_credentials \
+		"fffffff" \
+		"fffffff" \
+		"root@${INFRASTRUCTURE_PROXMOX_ADDRESS}"
+
+	proxmox_api_call_test \
+		"192.168.42.242" \
+		"$DEBUG_PROXMOX_API_USER" \
+		"$DEBUG_PROXMOX_API_TOKEN_ID" \
+		"$DEBUG_PROXMOX_API_TOKEN_SECRET"
+
+	# create_remote_deployer_playbook
+
+	#
+	#
 	## start_install
 	;;
 esac
