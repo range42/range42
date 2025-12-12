@@ -981,8 +981,11 @@ create_remote_deployer_playbook() {
 
 	REMOTE_DEPLOYER_CLI_INVENTORY_FILE="./inventories/$DEPLOYER_CLI_CONFIG_SSH_NAME.yml"
 
-	REMOTE_DEPLOYER_CLI_SH_FILE="./deploy_remote_deployer-cli.sh"
-	REMOTE_DEPLOYER_CLI_YML_FILE="./deploy_remote_deployer-cli.yml"
+	# REMOTE_DEPLOYER_CLI_SH_FILE="./deploy_remote_deployer-cli.sh"
+	# REMOTE_DEPLOYER_CLI_YML_FILE="./deploy_remote_deployer-cli.yml"
+
+	REMOTE_DEPLOYER_CLI_SH_FILE="./deploy.$DEPLOYER_CLI_CONFIG_SSH_NAME-$INFRASTRUCTURE_SCENARIO.sh"
+	REMOTE_DEPLOYER_CLI_YML_FILE="./deploy.$DEPLOYER_CLI_CONFIG_SSH_NAME-$INFRASTRUCTURE_SCENARIO.yml"
 
 	####
 	#### create - playbook yml file
