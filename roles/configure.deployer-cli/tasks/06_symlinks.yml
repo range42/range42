@@ -100,62 +100,63 @@
     # previous :
     #
 
-    - name: upload ssh keys/secrets files - create archive secrets.tar.gz
-      ansible.builtin.archive:
-        path: "{{ role_path }}/files/secrets/"
-        dest: "/tmp/secrets.tar.gz"
-      delegate_to: localhost
-      become: false # we don't want use sudo on localhost.
-
-    - name: copy secrets archive to remote
-      ansible.builtin.copy:
-        src: "/tmp/secrets.tar.gz"
-        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets.tar.gz"
-        mode: "0600"
-
-    - name: extract secrets archive
-      ansible.builtin.unarchive:
-        src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets.tar.gz"
-        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/"
-        remote_src: true
-
-    # - name: cleanup secrets archive
-    #   ansible.builtin.file:
-    #     path: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets.tar.gz"
-    #     state: absent
-
-    # - name: copy ssh keys dir -  DEBUG TEMP TASK
-    #   ansible.builtin.copy:
-    #     src: "ssh_keys/"
-    #     dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/ssh_keys"
-    #     mode: "0600"
-    #     directory_mode: "0700"
-
-    ########################################### TO KEEP
-
-    # - name: upload ssh keys/secrets files - create archive (from workstation) - /tmp/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz
+    # - name: upload ssh keys/secrets files - create archive secrets.tar.gz
     #   ansible.builtin.archive:
-    #     path: "{{ INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL }}/secrets/"
-    #     dest: "/tmp/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+    #     path: "{{ role_path }}/files/secrets/"
+    #     dest: "/tmp/secrets.tar.gz"
     #   delegate_to: localhost
-    #   become: false
+    #   become: false # we don't want use sudo on localhost.
 
-    # - name: upload ssh keys/secrets files - copy secrets archive to remote
+    # - name: copy secrets archive to remote
     #   ansible.builtin.copy:
-    #     src: "/tmp/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
-    #     dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+    #     src: "/tmp/secrets.tar.gz"
+    #     dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets.tar.gz"
     #     mode: "0600"
 
-    # - name: upload ssh keys/secrets files - extract secrets archive
+    # - name: extract secrets archive
     #   ansible.builtin.unarchive:
-    #     src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+    #     src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets.tar.gz"
     #     dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/"
     #     remote_src: true
 
-    # # - name: upload ssh keys/secrets files - cleanup secrets archive
+    # # - name: cleanup secrets archive
     # #   ansible.builtin.file:
-    # #     path: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+    # #     path: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets.tar.gz"
     # #     state: absent
+
+    # # - name: copy ssh keys dir -  DEBUG TEMP TASK
+    # #   ansible.builtin.copy:
+    # #     src: "ssh_keys/"
+    # #     dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/ssh_keys"
+    # #     mode: "0600"
+    # #     directory_mode: "0700"
+
+    ########################################### TO KEEP
+
+    - name: create archive - ssh keys/secrets files - create archive (from workstation) - from - {{ INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL }}/secrets/ to /tmp/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz
+      ansible.builtin.archive:
+        path: "{{ INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL }}/secrets/"
+        # path: "{{ INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL }}/"
+        dest: "/tmp/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+      delegate_to: localhost
+      become: false # we don't want use sudo on localhost.
+
+    - name: upload ssh keys/secrets files - copy secrets archive to remote
+      ansible.builtin.copy:
+        src: "/tmp/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+        mode: "0600"
+
+    - name: upload ssh keys/secrets files - extract secrets archive
+      ansible.builtin.unarchive:
+        src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/"
+        remote_src: true
+
+    # - name: upload ssh keys/secrets files - cleanup secrets archive
+    #   ansible.builtin.file:
+    #     path: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.tar.gz"
+    #     state: absent
 
 ########################################### TO KEEP
 
@@ -181,7 +182,7 @@
         src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/backend_keys/"
         dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
         owner: "{{ DEPLOYER_CLI_USER }}"
-        group: "{{ DEPLOYER_CLI_USER }}"        
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0600"
         directory_mode: "0700"
 
@@ -191,7 +192,7 @@
         src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/jump_keys/"
         dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
         owner: "{{ DEPLOYER_CLI_USER }}"
-        group: "{{ DEPLOYER_CLI_USER }}"        
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0600"
         directory_mode: "0700"
 
@@ -201,6 +202,6 @@
         src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/student_keys/"
         dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR }}"
         owner: "{{ DEPLOYER_CLI_USER }}"
-        group: "{{ DEPLOYER_CLI_USER }}"        
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0600"
         directory_mode: "0700"
