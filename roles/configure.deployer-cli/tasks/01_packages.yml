@@ -49,3 +49,18 @@
         name:
           - ansible
         state: present
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: basics configuration - check en_US.UTF-8 locale exists
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+
+- name: basic configuration - set default locale to en_US.UTF-8
+  ansible.builtin.lineinfile:
+    path: /etc/default/locale
+    regexp: "^LANG="
+    line: "LANG=en_US.UTF-8"
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
