@@ -46,6 +46,21 @@
 ################################################################################
 
 ################################################################################
+# 0) PASSWORDS
+# --------------------------------------------------------------------------
+# ::
+# :: by default the script will generate ssh key passphrase and various passwords
+# :: all password a write in RED.
+#
+################################################################################
+
+context_auto_generate_ssh_keys: "YES"
+context_auto_generate_vm_passwords: "YES"
+
+# Optional — auto-generation of additional SSH keys for students
+student_additionnal_keys_count: 5
+
+################################################################################
 # 1) WORKSTATION SETTINGS (LOCAL SSH)
 # --------------------------------------------------------------------------
 # ::
@@ -64,7 +79,7 @@ ssh_client__dst_config_dir: "/home/dev/.ssh"
 # ::                            **** values will be stored inside Ansible Vault.
 ################################################################################
 
-infrastructure_codename: "hv_hx"
+infrastructure_codename: "hv_hx" # recommended format max 6 chars...
 infrastructure_scenario: "demo_lab" # default deployed scenario
 # infrastructure_proxmox_address: "redacted"
 infrastructure_proxmox_address: "192.168.42.242"
@@ -80,9 +95,6 @@ infrastructure_proxmox_address: "192.168.42.242"
 deployer_cli_ip: "192.168.42.111"
 deployer_cli_ssh_port: "22"
 deployer_cli_user: "range42-operator" # default deployer-cli username
-
-# Optional — auto-generation of additional SSH keys for students
-student_additionnal_keys_count: 5
 
 # DEBUG NOTE :
 # must be rename to deployer_cli_user_ssh_known_hosts
@@ -104,10 +116,34 @@ VAULT_operator_ssh_config_known_hosts: "/home/range42-operator/.ssh/known_hosts"
 # proxmox_api_host: "127.0.0.1:18007"
 proxmox_api_host: "192.168.42.242:8006" # proxmox direct mode
 
-proxmox_api_user: "wdkkkkkkkjutf@pam"
-proxmox_api_token_id: "djkkkkkkkudju"
-proxmox_api_token_secret: "kkdkkkjukkdjuwtf"
-proxmox_node: "px-testing"
+proxmox_api_user: "api_master@pam"
+proxmox_api_token_id: "api_master"
+proxmox_api_token_secret: "api_master" # don't touch this one ;) It will be reset on creation or imported from child configuration.
+
+proxmox_node: "px-testing" # STRICT proxmox node name - IMPORTANT
+
+################################################################################
+# 4.1) PROXMOX JUMP USER
+# --------------------------------------------------------------------------
+# ::
+# :: Defines jumper host details
+# ::
+# ::
+################################################################################
+
+jump_on_proxmox: "YES" # default value
+
+#
+# if set to YES, the user will be create via prepare-infrastructure script
+#
+#
+# WARNING : if set to NO, the jump_user must exist on the jump_host.
+#
+
+jump_host: "192.168.42.242" # by default jumper user is on proxmox server (you can of course modify this value)
+jump_user: "jump_user"
+jump_port: "22"
+jump_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
 
 ################################################################################
 # 5) DEFAULT CLOUD-INIT USERS FOR DEPLOYER & TRAINEE VMs
