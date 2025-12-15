@@ -706,7 +706,14 @@ warmup_ssh_client_configuration() {
 		echo ""
 	} >"${SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI}"
 
+	print_step "creating deployer-cli ssh keys (${DEPLOYER_CLI_CONFIG_USER}@${DEPLOYER_CLI_CONFIG_IP})"
+	echo ""
+
 	ssh-keygen -f "${SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI}" 2>&1
+
+	print_step "copying ssh to deployer-cli (${DEPLOYER_CLI_CONFIG_USER}@${DEPLOYER_CLI_CONFIG_IP})"
+	echo ""
+
 	ssh-copy-id -i "${SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI}.pub" "${DEPLOYER_CLI_CONFIG_USER}@${DEPLOYER_CLI_CONFIG_IP}"
 
 }
@@ -740,8 +747,10 @@ proxmox_load_root_ssh_key() {
 	if ssh-add -l | grep -q "$(ssh-keygen -lf "${SSH_KEY_PATH}" | awk '{print $2}')"; then
 		print_check "SSH key already loaded in agent: %s" "${SSH_KEY_PATH}"
 	else
-		print_check "Loading SSH key into agent: %s" "${SSH_KEY_PATH}"
-		ssh-add "${SSH_KEY_PATH}" | indent_cmd_output
+		print_check "Loading SSH key into agent: %s" "${SSH_KEY_PATH} - (${SSH_USER}@${PROXMOX_HOST})"
+		print_red "passphrase has been generated previously. SEE PREVIOUS RED LINES. "
+
+		ssh-add "${SSH_KEY_PATH}" # | indent_cmd_output
 	fi
 
 	####
@@ -749,18 +758,18 @@ proxmox_load_root_ssh_key() {
 	####
 
 	echo ""
-	print_step "Checking whether public key is already installed"
+	print_step "Checking whether public key is already installed - (%s@%s)" "${SSH_USER}" "${PROXMOX_HOST}"
 
 	if ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
 		"${SSH_USER}@${PROXMOX_HOST}" true 2>/dev/null | indent_cmd_output; then
 
-		print_check "Public key already installed (authentication succeeded)"
+		print_check "Public key already installed (authentication succeeded) - (%s@%s)" "${SSH_USER}" "${PROXMOX_HOST}"
 		return 0
 	fi
 
 	####  if require, scp ssh key
 
-	print_step "Copying public key to Proxmox\n"
+	print_step "Copying public key to Proxmox - ${SSH_USER}@${PROXMOX_HOST} \n"
 	ssh-copy-id -i "${SSH_PUB}" "${SSH_USER}@${PROXMOX_HOST}" | indent_cmd_output
 
 	if [ $? -eq 0 ]; then
@@ -769,6 +778,145 @@ proxmox_load_root_ssh_key() {
 		print_fail "ERROR: Failed to install public key on Proxmox"
 		exit 1
 	fi
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+proxmox_load_jump_ssh_key() {
+
+	JUMP_ON_PROXMOX=$(
+		yq -r '.jump_on_proxmox' "${DEPLOYER_CONFIGURATION_FILE_PATH}" |
+			tr '[:lower:]' '[:upper:]'
+	)
+
+	INFRASTRUCTURE_JUMP_USER=$(yq -r '.jump_user' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+	INFRASTRUCTURE_JUMP_USER_WITH_PAM="({$INFRASTRUCTURE_JUMP_USER}@pam)"
+	INFRASTRUCTURE_JUMP_PASSWORD=$(yq -r '.jump_password' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+	INFRASTRUCTURE_JUMP_HOST=$(yq -r '.jump_host' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+	INFRASTRUCTURE_JUMP_PORT=$(yq -r '.jump_port' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+
+	print_step "Managing SSH keys for ${INFRASTRUCTURE_JUMP_USER}@${INFRASTRUCTURE_JUMP_HOST}"
+
+	####################################################################################################
+	####################################################################################################
+	#
+	# this will not work... we need a ssh user.
+	#
+
+	# if ssh "root@${INFRASTRUCTURE_JUMP_HOST}" "pveum user show ${INFRASTRUCTURE_JUMP_USER}@pam >/dev/null 2>&1"; then
+	# 	print_check "User %s@pam already exists" "${INFRASTRUCTURE_JUMP_USER}"
+	# else
+	# 	print_step "Creating user: %s@pam" "${INFRASTRUCTURE_JUMP_USER}"
+
+	# 	print_step "pveum user add ${INFRASTRUCTURE_JUMP_USER}@pam"
+
+	# 	if ssh "root@${INFRASTRUCTURE_JUMP_HOST}" "pveum user add ${INFRASTRUCTURE_JUMP_USER}@pam"; then
+	# 		print_check "User %s@pam successfully created" "${INFRASTRUCTURE_JUMP_USER}"
+	# 	else
+	# 		print_fail "Failed to create Proxmox user %s@pam" "${INFRASTRUCTURE_JUMP_USER}"
+	# 		# return 1
+	# 	fi
+	# fi
+
+	# print_step "pveum passwd ${INFRASTRUCTURE_JUMP_USER_WITH_PAM}"
+
+	# ssh "root@${INFRASTRUCTURE_JUMP_HOST}" \
+	# 	"printf '%s\n%s\n' '${INFRASTRUCTURE_JUMP_PASSWORD}' '${INFRASTRUCTURE_JUMP_PASSWORD}' \
+	# 	| pveum passwd ${INFRASTRUCTURE_JUMP_USER_WITH_PAM}" ||
+	# 	true
+
+	####################################################################################################
+	####################################################################################################
+
+	# check if user already exists.
+
+	if [[ "${JUMP_ON_PROXMOX}" == "YES" ]]; then
+
+		print_step "Is  %s already exists ? " "${INFRASTRUCTURE_JUMP_USER}"
+
+		if ssh "root@${INFRASTRUCTURE_JUMP_HOST}" \
+			"id ${INFRASTRUCTURE_JUMP_USER} >/dev/null 2>&1"; then
+
+			print_check "User %s already exists" "${INFRASTRUCTURE_JUMP_USER}"
+
+		else
+			print_step "Creating user: %s - " "${INFRASTRUCTURE_JUMP_USER}"
+
+			# print_step "useradd -m -s /bin/bash ${INFRASTRUCTURE_JUMP_USER}"
+
+			if ssh "root@${INFRASTRUCTURE_JUMP_HOST}" \
+				"useradd -m -s /bin/bash ${INFRASTRUCTURE_JUMP_USER}"; then
+
+				print_check "User %s successfully created" "${INFRASTRUCTURE_JUMP_USER}"
+			else
+
+				print_fail "Failed to create Linux user %s" "${INFRASTRUCTURE_JUMP_USER}"
+			fi
+		fi
+
+		print_step "Setting password for ${INFRASTRUCTURE_JUMP_USER}"
+
+		ssh "root@${INFRASTRUCTURE_JUMP_HOST}" \
+			"echo '${INFRASTRUCTURE_JUMP_USER}:${INFRASTRUCTURE_JUMP_PASSWORD}' | chpasswd" ||
+			true
+
+		echo ""
+
+		####
+		#### upload ssh key
+		####
+		####
+
+		####################################################################################################
+		####################################################################################################
+
+		#
+		# if jump_on_proxmox is YES - we can use root key to prevent user interactions :
+		#
+
+		print_step "mkdir -p .ssh directory - /home/%s/.ssh" "${INFRASTRUCTURE_JUMP_USER}"
+
+		ssh "root@${INFRASTRUCTURE_JUMP_HOST}" \
+			"mkdir -p /home/${INFRASTRUCTURE_JUMP_USER}/.ssh && chmod 700 /home/${INFRASTRUCTURE_JUMP_USER}/.ssh"
+
+		print_step "Updating public key %s to Proxmox /home/%s/.ssh/authorized_keys" "${INFRASTRUCTURE_JUMP_USER}"
+
+		ssh "root@${INFRASTRUCTURE_JUMP_HOST}" \
+			"grep -qxF '$(cat "${SSH_KEY_PX_JUMP}.pub")' /home/${INFRASTRUCTURE_JUMP_USER}/.ssh/authorized_keys \
+	|| echo '$(cat "${SSH_KEY_PX_JUMP}.pub")' >> /home/${INFRASTRUCTURE_JUMP_USER}/.ssh/authorized_keys"
+
+		print_step "chmod/chown .ssh directory %s to %s" "${SSH_KEY_PX_JUMP}" "/home/${INFRASTRUCTURE_JUMP_USER}"
+		print_check "${INFRASTRUCTURE_JUMP_USER}@${INFRASTRUCTURE_JUMP_HOST}} permission rests on /home/${INFRASTRUCTURE_JUMP_USER}/.ssh/ "
+
+		ssh "root@${INFRASTRUCTURE_JUMP_HOST}" \
+			"chmod 600 /home/${INFRASTRUCTURE_JUMP_USER}/.ssh/authorized_keys && \
+			chown -R ${INFRASTRUCTURE_JUMP_USER}:${INFRASTRUCTURE_JUMP_USER} /home/${INFRASTRUCTURE_JUMP_USER}/.ssh"
+
+		print_check "${INFRASTRUCTURE_JUMP_USER} created on ${INFRASTRUCTURE_JUMP_HOST} "
+
+		# replicate ssh-copy-id output.
+		#
+		echo ""
+		echo "Number of key added: 1"
+		echo ""
+		printf "Now try logging into the machine, with:   ssh '%s@%s' \n" "${INFRASTRUCTURE_JUMP_USER}" "${INFRASTRUCTURE_JUMP_HOST}"
+		echo "and check to make sure that only the keys you wanted were added."
+		echo ""
+
+	else
+
+		print_red_warning "did you already create %s on %s ? " "${INFRASTRUCTURE_JUMP_USER}" "${INFRASTRUCTURE_JUMP_HOST}"
+
+		print_step "copying ssh key via ssh-copyid -i ${SSH_KEY_PX_JUMP}  ${INFRASTRUCTURE_JUMP_USER}@${INFRASTRUCTURE_JUMP_HOST}"
+
+		ssh-copy-id -i "${SSH_KEY_PX_JUMP}" "${INFRASTRUCTURE_JUMP_USER}@${INFRASTRUCTURE_JUMP_HOST}" \
+			"printf '%s\n' '${INFRASTRUCTURE_JUMP_PASSWORD}'"
+
+	fi
+
+	echo ""
+
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -916,8 +1064,6 @@ proxmox_generate_api_credentials() {
 			ssh "${SSH_TARGET}" \
 				"pveum user token add ${API_USER}@pam ${TOKEN_ID} --privsep 0 --output-format json" || true
 		)
-
-		echo "here"
 
 		TOKEN_SECRET=$(echo "${TOKEN_CREATE_JSON}" | jq -r '.value')
 		# fi
@@ -1357,6 +1503,8 @@ case "${1:-}" in
 		"${SSH_KEY_PX_ROOT}" \
 		"root" \
 		"${INFRASTRUCTURE_PROXMOX_ADDRESS}"
+
+	proxmox_load_jump_ssh_key
 
 	proxmox_fix_remote_locale "root@${INFRASTRUCTURE_PROXMOX_ADDRESS}"
 
