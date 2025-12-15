@@ -8,13 +8,6 @@ SSH_KEY_PX_ROOT=""
 SSH_KEY_PX_JUMP=""
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# CONTEXT
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-
-GENERATE_SSH_KEYS="${GENERATE_SSH_KEYS:-yes}"
-GENERATE_PASSWORDS="${GENERATE_PASSWORDS:-yes}"
-
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # INPUT CONFIG FILE - (local)
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -24,19 +17,36 @@ DEPLOYER_CONFIGURATION_FILE_PATH="./config/config_remote-deployer-cli.TEMPLATE.y
 #### IMPORTED VARIABLES FROM CONFIG FILE
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
+#### #### ##### ##### CONTEXT - PASSWORG AUTO GENERATION
+
+# GENERATE_SSH_KEYS="${GENERATE_SSH_KEYS:-yes}"
+# GENERATE_PASSWORDS="${GENERATE_PASSWORDS:-yes}"
+
+GENERATE_SSH_KEYS_PASSWORD=$(
+	yq -r '.context_auto_generate_ssh_keys' "${DEPLOYER_CONFIGURATION_FILE_PATH}" |
+		tr '[:lower:]' '[:upper:]'
+)
+
+GENERATE_VM_PASSWORD=$(
+	yq -r '.context_auto_generate_vm_passwords' "${DEPLOYER_CONFIGURATION_FILE_PATH}" |
+		tr '[:lower:]' '[:upper:]'
+)
+
 INFRASTRUCTURE_CODENAME=$(
-	yq -r '.infrastructure_codename' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+	yq -r '.infrastructure_codename' "${DEPLOYER_CONFIGURATION_FILE_PATH}" |
+		tr '[:upper:]' '[:lower:]'
 )
 
 INFRASTRUCTURE_SCENARIO=$(
-	yq -r '.infrastructure_scenario' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+	yq -r '.infrastructure_scenario' "${DEPLOYER_CONFIGURATION_FILE_PATH}" |
+		tr '[:upper:]' '[:lower:]'
 )
 
 INFRASTRUCTURE_PROXMOX_ADDRESS=$(
 	yq -r '.infrastructure_proxmox_address' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
 )
 
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### ##### ##### CONTEXT - SSH KEYS
 
 SSH_CLIENT__DST_CONFIG_DIR=$(
 	yq -r '.ssh_client__dst_config_dir' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
@@ -54,7 +64,7 @@ STUDENT_ADDITIONNAL_KEYS_COUNT=$(
 	yq -r '.student_additionnal_keys_count' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
 )
 
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### ##### ##### CONTEXT - DEPLOYER CLI
 
 DEPLOYER_CLI_CONFIG_SSH_NAME="range42.${INFRASTRUCTURE_CODENAME}.deployer-cli"
 
@@ -68,7 +78,8 @@ DEPLOYER_CLI_CONFIG_PORT=$(
 	yq -r '.deployer_cli_ssh_port' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
 )
 
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### ##### ##### CONTEXT - FINAL FILES AND DIR LOCATIONS
+
 # reminder naming structure
 #
 # <SCOPE>__<ORIGIN>__<TYPE>__<ROLE>__<SIDE>
@@ -88,7 +99,8 @@ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL="${INFRASTRUCTURE__AUTO_GENER
 INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL="${INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL}/secrets"
 INFRASTRUCTURE__AUTO_GENERATED__PASSWORDS_FILE_LOCAL="${INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL}/passwords.env"
 
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### ##### ##### VAULT VALUES
+
 #
 # VAULT injected values - 4 PROXMOX API ACCESS
 #
@@ -109,26 +121,28 @@ INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET=$(
 	yq -r '.proxmox_api_token_secret' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
 )
 
-## TODO - adapt the following.
-
-DEBUG_PROXMOX_API_USER="${INFRASTRUCTURE_PROXMOX_API_USER}"
-DEBUG_PROXMOX_API_TOKEN_ID="${INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}"
-DEBUG_PROXMOX_API_TOKEN_SECRET="${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
-
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 #
 # VAULT injected values - 5 - CLOUD-INIT USERS FOR DEPLOYER & TRAINEE VMs
 #
-# default_admin_vm_ci_user       - to_process
-# default_admin_vm_ci_password   - to_process
-#
-# default_trainee_vm_ci_user     - to_process
-# default_trainee_vm_ci_password - to_process
-#
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_USER=$(
+	yq -r '.default_admin_vm_ci_user' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+)
+INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_PASSWORD=$(
+	yq -r '.default_admin_vm_ci_password' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+)
+
+INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_USER=$(
+	yq -r '.default_trainee_vm_ci_user' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+)
+INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD=$(
+	yq -r '.default_trainee_vm_ci_password' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+)
+
 #
 # VAULT injected values - 6 - TAILSCALE, WAZUH, ETC.
 #
+
 INFRASTRUCTURE_TAILSCALE_AUTHKEY=$(
 	yq -r '.vault_tailscale_authkey' "${DEPLOYER_CONFIGURATION_FILE_PATH}" # dev note :  must be rename to infrastructure_tailscale_authkey
 )
@@ -140,8 +154,14 @@ INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD=$(
 )
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+#### #### ##### ##### LOCAL CONFIGURATION FILES OUTPUT FILES
 
 DEPLOYER_CONFIGURATION_DST_FILE_PATH="./config/config_remote-deployer-cli.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}.yml"
+# DEPLOYER_CONFIGURATION_PASSWORDS_DST_FILE_PATH="./config/config_remote-deployer-cli.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}.passwords"
+DEPLOYER_CONFIGURATION_PARENT_FILE_PATH="./config/parent_config_remote-deployer-cli.${INFRASTRUCTURE_CODENAME}.parent.yml"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -212,7 +232,8 @@ print_fail() {
 print_red_warning() {
 	local FORMAT="$1"
 	shift
-	printf "    \033[31m:: ${FORMAT}\033[0m\n" "$@"
+	printf "    \033[31m▲\033[0m ${FORMAT}\n" "$@"
+
 }
 
 print_red() {
@@ -251,10 +272,8 @@ generate_ssh_key_if_missing() {
 	if [ -f "$KEY_PATH" ]; then
 
 		echo ""
-		print_red_warning "  :: WARNING ::"
-		print_red_warning "     SSH key already exists : %s " "$KEY_PATH"
-		echo ""
-		print_red_warning "                      Press ENTER to continue or Ctrl+C to abort and clean the directory manually."
+		print_red_warning "WARNING : SSH key already exists : %s " "$KEY_PATH"
+		print_red_warning "          Press ENTER to continue or Ctrl+C to abort and clean the directory manually."
 		read -r
 		return 0
 	fi
@@ -383,7 +402,33 @@ print_variables() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-prepare_environment_credentials() {
+prepare_environment_passwords() {
+
+	if [ "${GENERATE_VM_PASSWORD}" = "yes" ]; then
+
+		INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_PASSWORD="$(generate_password)"
+		INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD="$(generate_password)"
+		INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD="$(generate_password)"
+
+		# loaded in globals ...
+		#
+		# else
+		# 	INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_USER=$(yq -r '.default_admin_vm_ci_user' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		# 	INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_PASSWORD=$(yq -r '.default_admin_vm_ci_password' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		# 	INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_USER=$(yq -r '.default_trainee_vm_ci_user' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		# 	INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD=$(yq -r '.default_trainee_vm_ci_password' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		# 	INFRASTRUCTURE_TAILSCALE_AUTHKEY=$(yq -r '.vault_tailscale_authkey' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		# 	INFRASTRUCTURE_TAILSCALE_APIKEY=$(yq -r '.vault_tailscale_apikey' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		# 	INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD=$(yq -r '.WAZUH_PASSWORD' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		#
+	fi
+
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+prepare_environment_ssh_keys() {
 
 	print_section 'Preparing environment credentials'
 
@@ -415,7 +460,7 @@ prepare_environment_credentials() {
 	SSH_KEYS_STUDENT_ADDITIONNAL_DIR="${INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL}/student_keys/additionnal.students/"
 	# r42.${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}-student-key_bob"
 
-	if [ "${GENERATE_SSH_KEYS}" = "yes" ]; then
+	if [ "${GENERATE_SSH_KEYS_PASSWORD}" = "YES" ]; then
 
 		echo ""
 		print_step 'Generating SSH keys'
@@ -491,7 +536,7 @@ prepare_environment_credentials() {
 	# PASSWORD / PASSPHRASE GENERATION
 	###########################################################################
 
-	if [ "${GENERATE_PASSWORDS}" = "yes" ]; then
+	if [ "${GENERATE_SSH_KEYS_PASSWORD}" = "YES" ]; then # yes, again this condition ; it's easier to manage like this.
 
 		print_step ':: Generating SSH key passphrases and user passwords'
 		echo ""
@@ -579,10 +624,40 @@ prepare_environment_credentials() {
 	###########################################################################
 
 	print_check 'Preparation completed'
-	echo ""
-	print_red '    - Environment : %s-%s' "${INFRASTRUCTURE_CODENAME}" "${INFRASTRUCTURE_SCENARIO}"
-	print_red '    - SSH keys    : %s' "${INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL}"
-	print_red '    - Passwords   : %s' "${INFRASTRUCTURE__AUTO_GENERATED__PASSWORDS_FILE_LOCAL}"
+
+	if [ "${GENERATE_SSH_KEYS_PASSWORD}" = "YES" ]; then
+
+		echo ""
+		print_red '    - Environment : %s-%s' "${INFRASTRUCTURE_CODENAME}" "${INFRASTRUCTURE_SCENARIO}"
+		print_red '    - SSH keys    : %s' "${INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL}"
+		print_red '    - Passwords   : %s' "${INFRASTRUCTURE__AUTO_GENERATED__PASSWORDS_FILE_LOCAL}"
+		echo ""
+	else
+		echo ""
+		print_red '    - Environment : %s-%s' "${INFRASTRUCTURE_CODENAME}" "${INFRASTRUCTURE_SCENARIO}"
+		print_red '    - SSH keys    : manual_mode '
+		print_red '    - Passwords   : manual_mode '
+
+		warn_custom_setup
+
+		for ssh_key_file in \
+			"$SSH_KEY_PX_ROOT" \
+			"$SSH_KEY_PX_JUMP" \
+			"$SSH_KEY_DEPLOYER_ADMIN_ALICE" \
+			"$SSH_KEY_STUDENT_USER_BOB"; do
+
+			print_step "check ssh key access : ${ssh_key_file}"
+
+			if [[ -z "$ssh_key_file" || ! -f "$ssh_key_file" ]]; then
+
+				print_fail "error: missing or invalid key file: $ssh_key_file"
+				exit 1
+			fi
+
+		done
+
+	fi
+
 	echo ""
 
 }
@@ -746,10 +821,14 @@ proxmox_generate_api_credentials() {
 
 	print_section 'Create user '
 
+	print_step "pveum user show ${API_USER}@pam "
+
 	if ssh "${SSH_TARGET}" "pveum user show ${API_USER}@pam >/dev/null 2>&1"; then
 		print_check "User %s@pam already exists" "${API_USER}"
 	else
 		print_step "Creating user: %s@pam" "${API_USER}"
+
+		print_step "pveum user add ${API_USER}@pam"
 
 		if ssh "${SSH_TARGET}" "pveum user add ${API_USER}@pam"; then
 			print_check "User %s@pam successfully created" "${API_USER}"
@@ -771,7 +850,11 @@ proxmox_generate_api_credentials() {
 
 	TOKEN_EXISTS=false
 
-	# Query existing tokens in JSON
+	#
+	# check existing tokens in JSON
+	#
+	print_step "pveum user token list ${API_USER}@pam --output-format json"
+
 	TOKEN_JSON_LIST=$(ssh "${SSH_TARGET}" \
 		"pveum user token list ${API_USER}@pam --output-format json" 2>/dev/null || true)
 
@@ -805,39 +888,36 @@ proxmox_generate_api_credentials() {
 		fi
 
 		print_step "Configuration file contains a token secret:"
-		print_red "    ${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
+
 		echo ""
 
-		print_red_warning "Do you want to continue using this secret?"
-		print_red_warning "Press ENTER to continue or Ctrl+C to abort."
+		print_red_warning "WARNING : Do you want to continue using this secret? "
+		print_red_warning "              - ${INFRASTRUCTURE_PROXMOX_API_HOST} "
+		print_red_warning "              - ${FULL_TOKENID}"
+		print_red_warning "              - ${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
+
+		print_red_warning "          Press ENTER to continue or Ctrl+C to abort."
 		read -r
 
-		# PROXMOX_API_TOKEN_ID="${TOKEN_ID}"
-		# PROXMOX_API_TOKEN_ID="${TOKEN_ID}"
-		# PROXMOX_API_TOKEN_SECRET="${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
-
-	# return 0
 	else
+
 		# update_yaml_key "proxmox_api_user" "${API_USER}@pam" "${DEPLOYER_CONFIGURATION_FILE_PATH}"
 		# update_yaml_key "proxmox_api_token_id" "${TOKEN_ID}" "${DEPLOYER_CONFIGURATION_FILE_PATH}"
 		# update_yaml_key "proxmox_api_token_secret""${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}" "${DEPLOYER_CONFIGURATION_FILE_PATH}"
-
-		echo "22222222222222.222"
 
 		####
 		#### Token does NOT exist then create new one
 		####
 
 		print_step "Creating new token '%s' on Proxmox" "${TOKEN_ID}"
-
-		echo "33333333333333"
-
-		echo "pveum user token add ${API_USER}@pam ${TOKEN_ID} --privsep 0 --output-format json"
+		print_step "pveum user token add ${API_USER}@pam ${TOKEN_ID} --privsep 0 --output-format json"
 
 		TOKEN_CREATE_JSON=$(
 			ssh "${SSH_TARGET}" \
-				"pveum user token add ${API_USER}@pam ${TOKEN_ID} --privsep 0 --output-format json"
+				"pveum user token add ${API_USER}@pam ${TOKEN_ID} --privsep 0 --output-format json" || true
 		)
+
+		echo "here"
 
 		TOKEN_SECRET=$(echo "${TOKEN_CREATE_JSON}" | jq -r '.value')
 		# fi
@@ -847,14 +927,44 @@ proxmox_generate_api_credentials() {
 		####
 
 		if [ -z "${TOKEN_SECRET}" ] || [ "${TOKEN_SECRET}" = "null" ]; then
-			print_red "WARNING :: Could not extract token secret from Proxmox creation response."
+			# print_red "WARNING :: Could not extract token secret from Proxmox creation response."
 
-			print_step "Falling back to secret from configuration file:"
-			print_red "    ${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
+			print_step "Falling back to secret from configuration file."
+
+			if [[ -f "${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}" && -r "${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}" ]]; then
+				print_check "Configuration file exists at location ${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}"
+
+				print_step "Importing proxmox settings from configuration file"
+
+				INFRASTRUCTURE_PROXMOX_API_HOST=$(
+					yq -r '.proxmox_api_host' "${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}"
+				)
+				INFRASTRUCTURE_PROXMOX_NODE_NAME=$(
+					yq -r '.proxmox_node' "${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}"
+				)
+				INFRASTRUCTURE_PROXMOX_API_USER=$(
+					yq -r '.proxmox_api_user' "${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}"
+				)
+				INFRASTRUCTURE_PROXMOX_API_TOKEN_ID=$(
+					yq -r '.proxmox_api_token_id' "${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}"
+				)
+				INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET=$(
+					yq -r '.proxmox_api_token_secret' "${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}"
+				)
+
+			else
+				print_fail "ERROR : parent configuration file  ${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH} not found" >&2
+				exit 1
+			fi
+
 			echo ""
 
-			print_red_warning "Do you want to continue using this fallback secret?"
-			print_red_warning "Press ENTER to continue or Ctrl+C to abort."
+			print_red_warning "WARNING : Do you want to continue using this secret? "
+			print_red_warning "              - ${INFRASTRUCTURE_PROXMOX_API_HOST} "
+			print_red_warning "              - ${INFRASTRUCTURE_PROXMOX_API_USER}"
+			print_red_warning "              - ${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
+			print_red_warning "          Press ENTER to continue or Ctrl+C to abort."
+
 			read -r
 
 		else
@@ -1033,13 +1143,13 @@ ssh_key_student_user_pub_key:   "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
 # 4 - CLOUD-INIT USERS CONFIGURATION
 ###############################################################################
 # --- Administrator VM (alice)
-default_admin_vm_ci_user:        "alice"
-default_admin_vm_ci_password:    "cmFuZ2UtNDIK"   # default password => echo range-42 | base64
+default_admin_vm_ci_user:        "${INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_USER}"
+default_admin_vm_ci_password:    "${INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_PASSWORD}" # default password => echo range-42 | base64
 default_admin_vm_ci_ssh_key:     "${SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT}"
 
 # --- Student VM (bob)
-default_trainee_vm_ci_user:      "bob"
-default_trainee_vm_ci_password:  "cmFuZ2UtNDIK"   # default password => echo range-42 | base64
+default_trainee_vm_ci_user:      "${INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_USER}" 
+default_trainee_vm_ci_password:  "${INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD}" # default password => echo range-42 | base64
 default_trainee_vm_ci_ssh_key:   "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
 
 
@@ -1228,7 +1338,7 @@ case "${1:-}" in
 	#
 	require_binary yq
 
-	if [ "${GENERATE_PASSWORDS}" = "yes" ]; then
+	if [[ "${GENERATE_SSH_KEYS_PASSWORD}" == "YES" || "${GENERATE_VM_PASSWORD}" == "YES" ]]; then
 		require_binary pwgen
 	else
 		exit 1
@@ -1238,9 +1348,8 @@ case "${1:-}" in
 
 	print_variables
 
-	prepare_environment_credentials
-
-	# prepare_environment_ansible_vault
+	prepare_environment_passwords
+	prepare_environment_ssh_keys
 
 	warmup_ssh_client_configuration
 
@@ -1263,8 +1372,11 @@ case "${1:-}" in
 		"${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
 
 	prepare_environment_ansible_vault
+
 	create_remote_deployer_playbook
+
 	backup_configuration_file "${DEPLOYER_CONFIGURATION_FILE_PATH}" "${DEPLOYER_CONFIGURATION_DST_FILE_PATH}"
+	backup_configuration_file "${DEPLOYER_CONFIGURATION_FILE_PATH}" "${DEPLOYER_CONFIGURATION_PARENT_FILE_PATH}" # parent will be use for child config to import proxmox settings.
 
 	#
 	#
@@ -1278,10 +1390,15 @@ case "${1:-}" in
 	printf 'INFRASTRUCTURE_SCENARIO                            : %s\n' "${INFRASTRUCTURE_SCENARIO}"
 	printf 'INFRASTRUCTURE_PROXMOX_ADDRESS                     : %s\n' "${INFRASTRUCTURE_PROXMOX_ADDRESS}"
 	printf 'SSH_CLIENT__DST_CONFIG_DIR                         : %s\n' "${SSH_CLIENT__DST_CONFIG_DIR}"
+
 	echo ""
 	echo ""
 	echo ""
 
 	print_check "Preparation completed - ready to deploy "
+
+	echo ""
+	echo ""
+	echo ""
 	;;
 esac
