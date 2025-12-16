@@ -1,7 +1,7 @@
 ---
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-- name: configure ohmyzsh
+- name: configure ohmyzsh for [ "{{ DEPLOYER_CLI_USER }}" ]
   # become: true
   # become_user: "{{ DEPLOYER_CLI_USER }}"
 
@@ -29,6 +29,33 @@
     - name: configure ohmyzsh - set zsh as default for '{{ DEPLOYER_CLI_USER }}'
       user:
         name: "{{ DEPLOYER_CLI_USER }}"
+        shell: /usr/bin/zsh
+      when: zsh_found
+      become: true
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: configure ohmyzsh for [ root ]
+
+  block:
+    - name: copy oh-my-zsh from user to root
+      ansible.builtin.copy:
+        src: "/home/{{ DEPLOYER_CLI_USER }}/.oh-my-zsh"
+        dest: "/root/.oh-my-zsh"
+        remote_src: true
+        owner: root
+        group: root
+        mode: preserve
+      become: true
+
+    #
+    - name: configure ohmyzsh - set_fact variable - zsh_check
+      set_fact:
+        zsh_found: "{{ zsh_check.results | map(attribute='stat.exists') | select | list | length > 0 }}"
+
+    - name: configure ohmyzsh - set zsh as default for [ root ]
+      user:
+        name: "root"
         shell: /usr/bin/zsh
       when: zsh_found
       become: true

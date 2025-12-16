@@ -8,4 +8,6 @@
 - import_tasks: 04_ssh_client.yml
 - import_tasks: 05_git.yml
 - import_tasks: 06_symlinks.yml
+- import_tasks: 07_deploy_secrets.yml
 - import_tasks: 07_shell_env.yml
+- import_tasks: 08_shell_env_patch.yml

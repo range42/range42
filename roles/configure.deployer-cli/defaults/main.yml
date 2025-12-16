@@ -1,8 +1,6 @@
 #### REMOTE-DEPLOYER-CLI VARIABLES
 
-
-
-# AUTHORS NOTES : 
+# AUTHORS NOTES :
 #
 # Configuration workspace layout
 #
@@ -14,7 +12,7 @@
 #   /home/<user>/RANGE42.config/hv_pp-ctf_game_01
 #   /home/<user>/RANGE42.config/hv_ab-misp_lab
 #   /home/<user>/RANGE42.config/hv_xy-kunai_lab
-#   ... 
+#   ...
 #
 # From this path alone, one can immediately identify:
 #   - WHERE_ we are executing (user workspace)
@@ -32,24 +30,25 @@
 # The verbosity of paths and variable names is intentional: clarity and safety are preferred over brevity.
 # ------------------------------------------------------------------------------
 
-
-
 #### #### INFRASTRUCTURE INFORMATION #### ####
 
 INFRASTRUCTURE_CODENAME: "to_define" # default value : "hv_pp"
 INFRASTRUCTURE_SCENARIO: "to_define" # default value : "demo"
-INFRASTRUCTURE_PROXMOX_ADDRESS:  "ip_or_fqdn"
+INFRASTRUCTURE_PROXMOX_ADDRESS: "ip_or_fqdn"
 
 #### #### DEPLOYER USER / OPERATOR #### ####
 
 DEPLOYER_CLI_USER: "to_define" # default value "range42-operator"
 
-#### #### GIT AND CONFIG DIRECTORIES #### #### 
+#### #### GIT AND CONFIG DIRECTORIES #### ####
 
-DEPLOYER_CLI__DST_GIT_DIR: "/home/{{DEPLOYER_CLI_USER}}/range42/{{ INFRASTRUCTURE_CODENAME }}"
+DEPLOYER_CLI__DST_GIT_DIR: "/home/{{DEPLOYER_CLI_USER}}/range42/"
+#
+# to manage over multiple git repo (one per infrastructure_codename ) => # DEPLOYER_CLI__DST_GIT_DIR: "/home/{{DEPLOYER_CLI_USER}}/range42/{{ INFRASTRUCTURE_CODENAME }}"
+#
 DEPLOYER_CLI__DST_CONFIG_DIR: "/home/{{DEPLOYER_CLI_USER}}/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
 
-#### #### GIT CONFIGURATION #### #### 
+#### #### GIT CONFIGURATION #### ####
 
 DEPLOYER_CLI__DST_SSH_CONFIG_DIR: "/home/{{DEPLOYER_CLI_USER}}/.ssh"
 DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DIR }}/config"
@@ -59,13 +58,15 @@ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DIR 
 # DEPLOYER_CLI__SRC_GENERATE_KEYS_DIR: "ssh_keys/" # files/ssh_keys
 INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL: "path_to_define"
 
-
 DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/backend_keys" # operator / admin keys
 DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/jump_keys" # operator / admin keys
 #
 DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/student_keys" # user/student keys
 # DEPLOYER_CLI__DST_SSH_KEYS_VULN_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/vulns_keys" # user/student keys
 
-
-
+#### dev variables ####
+####
+####
+git_branch: "main" # (default)
+# git_branch: "dev"
 

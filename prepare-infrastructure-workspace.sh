@@ -11,7 +11,7 @@ SSH_KEY_PX_JUMP=""
 # INPUT CONFIG FILE - (local)
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-DEPLOYER_CONFIGURATION_FILE_PATH="./config/config_remote-deployer-cli.TEMPLATE.yml"
+DEPLOYER_CONFIGURATION_FILE_PATH="./config/config_remote-deployer-cli.MASTER_FILE.yml"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 #### IMPORTED VARIABLES FROM CONFIG FILE
@@ -707,11 +707,18 @@ warmup_ssh_client_configuration() {
 	} >"${SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI}"
 
 	print_step "creating deployer-cli ssh keys (${DEPLOYER_CLI_CONFIG_USER}@${DEPLOYER_CLI_CONFIG_IP})"
+
+	echo ""
+	print_red_warning "Generate SSH keys for : (${DEPLOYER_CLI_CONFIG_USER}@${DEPLOYER_CLI_CONFIG_IP})"
 	echo ""
 
 	ssh-keygen -f "${SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI}" 2>&1
 
 	print_step "copying ssh to deployer-cli (${DEPLOYER_CLI_CONFIG_USER}@${DEPLOYER_CLI_CONFIG_IP})"
+	echo ""
+
+	echo ""
+	print_red_warning "Authentication will be required to push SSH keys on : (${DEPLOYER_CLI_CONFIG_USER}@${DEPLOYER_CLI_CONFIG_IP})"
 	echo ""
 
 	ssh-copy-id -i "${SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI}.pub" "${DEPLOYER_CLI_CONFIG_USER}@${DEPLOYER_CLI_CONFIG_IP}"
@@ -747,8 +754,10 @@ proxmox_load_root_ssh_key() {
 	if ssh-add -l | grep -q "$(ssh-keygen -lf "${SSH_KEY_PATH}" | awk '{print $2}')"; then
 		print_check "SSH key already loaded in agent: %s" "${SSH_KEY_PATH}"
 	else
-		print_check "Loading SSH key into agent: %s" "${SSH_KEY_PATH} - (${SSH_USER}@${PROXMOX_HOST})"
-		print_red "passphrase has been generated previously. SEE PREVIOUS RED LINES. "
+		echo ""
+		print_red_warning "Loading SSH key into agent for __Proxmox__ server -  %s" "${SSH_KEY_PATH} - (${SSH_USER}@${PROXMOX_HOST})"
+		print_red_warning "Use passphrase has been generated previously. SEE PREVIOUS RED LINES. "
+		echo ""
 
 		ssh-add "${SSH_KEY_PATH}" # | indent_cmd_output
 	fi
@@ -769,7 +778,7 @@ proxmox_load_root_ssh_key() {
 
 	####  if require, scp ssh key
 
-	print_step "Copying public key to Proxmox - ${SSH_USER}@${PROXMOX_HOST} \n"
+	print_step "Copying public key to __Proxmox__ - ${SSH_USER}@${PROXMOX_HOST} \n"
 	ssh-copy-id -i "${SSH_PUB}" "${SSH_USER}@${PROXMOX_HOST}" | indent_cmd_output
 
 	if [ $? -eq 0 ]; then
@@ -1543,8 +1552,14 @@ case "${1:-}" in
 	echo ""
 	echo ""
 
-	print_check "Preparation completed - ready to deploy "
+	print_check "Preparation completed"
 
+	echo ""
+	echo ""
+	print_section "Next step"
+
+	print_red_warning "To deploy configuration on %s" "${DEPLOYER_CLI_CONFIG_SSH_NAME}"
+	print_red_warning "run %s" "${REMOTE_DEPLOYER_CLI_SH_FILE}"
 	echo ""
 	echo ""
 	echo ""

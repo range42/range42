@@ -14,19 +14,37 @@
       ansible.builtin.file:
         path: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DIR }}"
         state: directory
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0700"
 
     - name: configure ssh client - check /home/{{DEPLOYER_CLI_USER}}/.ssh/config file exists
       ansible.builtin.file:
         path: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE }}"
         state: touch
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0600"
+
+    - name: configure ssh client - check /home/{{DEPLOYER_CLI_USER}}/.ssh/authorized_keys file exists
+      ansible.builtin.file:
+        path: "/home/{{ DEPLOYER_CLI_USER }}/.ssh/authorized_keys"
+        state: touch
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+
+    ####
+    ####
+    ####
 
     - name: configure ssh client - check {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }} dir exists
       #  check /home/{{DEPLOYER_CLI_USER}}/.ssh/backend_keys dir exists
       ansible.builtin.file:
         path: "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
         state: directory
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0700"
 
     - name: configure ssh client - check {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }} dir exists
@@ -34,6 +52,8 @@
       ansible.builtin.file:
         path: "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
         state: directory
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0700"
 
     - name: configure ssh client - check {{ DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR }} dir exists
@@ -41,6 +61,8 @@
       ansible.builtin.file:
         path: "{{ DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR }}"
         state: directory
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0700"
 
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -60,16 +82,12 @@
           #### ####  #### #### #### #### #### #### #### #### #### #### #### #### #### ####
         insertafter: EOF
 
-    # - name: configure ssh client - copy range42 default ssh config in {{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}
-    #   ansible.builtin.copy:
-    #     src: "ssh_config/template.ssh_config"
-    #     dest: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}"
-    #     mode: "0600"
-
     - name: configure ssh client - inject range42 template ssh config in {{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}
       ansible.builtin.template:
         src: remote-deployer-cli.j2
         dest: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}"
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0600"
 
     #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
