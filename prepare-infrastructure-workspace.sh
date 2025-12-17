@@ -1281,7 +1281,7 @@ proxmox_api_token_secret: "${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
 # ssh_key_px_jump: "${SSH_KEY_PX_JUMP}"   # unused in vault
 
 ssh_key_deployer_admin: "${SSH_KEY_DEPLOYER_ADMIN_ALICE}"
-ssh_key_student_user:   "${SSH_KEY_STUDENT_USER_BOB}"
+ssh_key_student_user: "${SSH_KEY_STUDENT_USER_BOB}"
 
 
 ###############################################################################
@@ -1291,21 +1291,21 @@ ssh_key_student_user:   "${SSH_KEY_STUDENT_USER_BOB}"
 # ssh_key_px_jump_pub_key: "${SSH_KEY_PX_JUMP_PUB_CONTENT}"  # unused in vault
 
 ssh_key_deployer_admin_pub_key: "${SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT}"
-ssh_key_student_user_pub_key:   "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
+ssh_key_student_user_pub_key: "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
 
 
 ###############################################################################
 # 4 - CLOUD-INIT USERS CONFIGURATION
 ###############################################################################
 # --- Administrator VM (alice)
-default_admin_vm_ci_user:        "${INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_USER}"
-default_admin_vm_ci_password:    "${INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_PASSWORD}" # default password => echo range-42 | base64
-default_admin_vm_ci_ssh_key:     "${SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT}"
+default_admin_vm_ci_user: "${INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_USER}"
+default_admin_vm_ci_password: "${INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_PASSWORD}" # default password => echo range-42 | base64
+default_admin_vm_ci_ssh_key: "${SSH_KEY_DEPLOYER_ADMIN_PUB_CONTENT}"
 
 # --- Student VM (bob)
-default_trainee_vm_ci_user:      "${INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_USER}" 
-default_trainee_vm_ci_password:  "${INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD}" # default password => echo range-42 | base64
-default_trainee_vm_ci_ssh_key:   "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
+default_trainee_vm_ci_user: "${INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_USER}" 
+default_trainee_vm_ci_password: "${INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD}" # default password => echo range-42 | base64
+default_trainee_vm_ci_ssh_key: "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
 
 
 ###############################################################################
