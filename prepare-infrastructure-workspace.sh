@@ -1077,6 +1077,13 @@ proxmox_generate_api_credentials() {
 		TOKEN_SECRET=$(echo "${TOKEN_CREATE_JSON}" | jq -r '.value')
 		# fi
 
+		#### modify / route ACL for ${API_USER}
+		#### ==> grant admin role.
+		####
+
+		ssh "${SSH_TARGET}" \
+			"pveum acl modify / -user ${API_USER}@pam -role Administrator"
+
 		####
 		#### if proxmox failed to return secret - should not happen
 		####
