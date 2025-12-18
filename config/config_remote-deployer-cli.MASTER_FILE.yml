@@ -79,7 +79,7 @@ ssh_client__dst_config_dir: "/home/dev/.ssh"
 # ::                            **** values will be stored inside Ansible Vault.
 ################################################################################
 
-infrastructure_codename: "hv_hx" # recommended format max 6 chars...
+infrastructure_codename: "hv-hx" # recommended format max 6 chars...
 infrastructure_scenario: "demo_lab" # default deployed scenario
 # infrastructure_proxmox_address: "redacted"
 infrastructure_proxmox_address: "192.168.42.242"
@@ -116,11 +116,11 @@ VAULT_operator_ssh_config_known_hosts: "/home/range42-operator/.ssh/known_hosts"
 # proxmox_api_host: "127.0.0.1:18007"
 proxmox_api_host: "192.168.42.242:8006" # proxmox direct mode
 
-proxmox_api_user: "api_master3@pam"
-proxmox_api_token_id: "api_master3"
-proxmox_api_token_secret: "api_master3" # This field will be reset on api_token creation or imported from child configuration.
+proxmox_api_user: "abnaaaa_api_master01@pam"
+proxmox_api_token_id: "aanabaaa_api_master01"
+proxmox_api_token_secret: "aaabana_api_master01" # This field will be reset on api_token creation or imported from child configuration.
 
-proxmox_node: "px-testing" # STRICT proxmox node name - IMPORTANT
+proxmox_node: "hv-hx" # STRICT proxmox node name - IMPORTANT
 
 ################################################################################
 # 4.1) PROXMOX JUMP USER

@@ -8,6 +8,11 @@
 - import_tasks: 04_ssh_client.yml
 - import_tasks: 05_git.yml
 - import_tasks: 06_symlinks.yml
-- import_tasks: 07_deploy_secrets.yml
-- import_tasks: 07_shell_env.yml
-- import_tasks: 08_shell_env_patch.yml
+
+- import_tasks: ./07_01_deploy_inventory.yml
+- import_tasks: ./07_02_deploy_ssh_keys.yml
+- import_tasks: ./07_03_deploy_secrets.yml
+- import_tasks: ./07_04_deploy_sources_file.yml
+- import_tasks: ./08_clean_up.yml
+
+- import_tasks: ./09_dirty_fixes.yml 

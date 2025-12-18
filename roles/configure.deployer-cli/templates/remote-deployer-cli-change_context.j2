@@ -1,0 +1,401 @@
+#!/bin/bash
+
+CONFIG_FILE="$HOME/.ssh/config"
+
+BEGIN_MARK='^#### BEGIN RANGE42 INCLUDE'
+END_MARK='^#### END RANGE42 INCLUDE'
+
+# DEFAULT_TARGET="${RANGE42_DEFAULT_TARGET:-hv-hx2-demo_lab}"
+# INFRASTRUCTURE_CODENAME="${DEFAULT_TARGET%-*}" # reminder : aka sed 's/-.*//'
+# INFRASTRUCTURE_SCENARIO="${DEFAULT_TARGET#*-}" # reminder : aka sed 's/.*-//')
+
+# via j2
+INFRASTRUCTURE_CODENAME="{{ INFRASTRUCTURE_CODENAME }}"
+INFRASTRUCTURE_SCENARIO="{{ INFRASTRUCTURE_SCENARIO }}"
+DEFAULT_TARGET="${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}"
+
+# via bash directlry 
+#INFRASTRUCTURE_CODENAME="hv-hx2"
+#INFRASTRUCTURE_SCENARIO="demo_lab"
+#DEFAULT_TARGET="${INFRASTRUCTURE_CODENAME}-${INFRASTRUCTURE_SCENARIO}"
+# DEPLOYER_CLI_USER="range42-operator"
+
+SCRIPT_NAME=$(basename "$0")
+
+usage() {
+	printf "\n\n"
+	printf "Usage:\n"
+	printf "  %s -l | --env-list\n" "${SCRIPT_NAME}"
+	printf "      List available infrastructures (infra-scenario)"
+	echo ""
+	echo ""
+
+	printf "  %s -s <target> | --env-set <target>\n" "${SCRIPT_NAME}"
+	printf "      Set active infrastructure (example: hv-hx2-demo_lab)"
+	echo ""
+	echo ""
+
+	printf "  %s -c | --env-current\n" "${SCRIPT_NAME}"
+	printf "      Show currently active infrastructure"
+	echo ""
+	echo ""
+
+	printf "  %s -r | --ssh-reload\n" "${SCRIPT_NAME}"
+	printf "      Reload SSH configuration and keys for the active workspace\n"
+	printf "      This will:\n"
+	printf "        - unload all keys from ssh-agent\n"
+	printf "        - load SSH keys defined by the active workspace"
+	echo ""
+	echo ""
+
+	printf "  %s\n" "${SCRIPT_NAME}"
+	printf "      Switch to the default infrastructure (%s)\n" "${DEFAULT_TARGET}"
+	printf "      This will:\n"
+	printf "        - activate the default workspace\n"
+	printf "        - update SSH configuration (Include / source)\n"
+	printf "        - reload SSH keys for this workspace\n"
+	printf "      Manual step required:\n"
+	printf "        - run: zsh -c 'source ~/.zshrc && devkit_ansible.open_vault.to.file.sh'"
+	echo ""
+	echo ""
+
+	printf "  %s -h | --help\n" "${SCRIPT_NAME}"
+	printf "      Show this help message\n\n"
+
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+indent_cmd_output() {
+	# when possible : indent/reformat/prefix external cmd output
+	# do use this for cmd c
+
+	local PREFIX="        " # 8 spaces
+
+	while IFS= read -r line; do
+		printf '         >  %s%s\n' "${PREFIX}" "${line}"
+	done
+}
+
+print_color_format() {
+	local COLOR_CODE="$1"
+	shift
+	local FORMAT="$1"
+	shift
+
+	if [ -t 1 ]; then
+		printf "\033[%sm${FORMAT}\033[0m\n" "${COLOR_CODE}" "$@"
+	else
+		printf "${FORMAT}\n" "$@"
+	fi
+}
+
+print_section() {
+	local FORMAT="$1"
+	shift
+	printf "\n\033[34m----[ ${FORMAT} ]----\033[0m\n\n" "$@"
+}
+
+print_step() {
+	local FORMAT="$1"
+	shift
+	printf "    \033[34m➜\033[0m ${FORMAT}\n" "$@"
+}
+
+print_check() {
+	local FORMAT="$1"
+	shift
+	printf "    \033[32m✓\033[0m ${FORMAT}\n" "$@"
+}
+
+print_fail() {
+	local FORMAT="$1"
+	shift
+	printf "    \033[31m✗\033[0m ${FORMAT}\n" "$@"
+}
+
+print_red_warning() {
+	local FORMAT="$1"
+	shift
+	printf "    \033[31m▲\033[0m ${FORMAT}\n" "$@"
+
+}
+
+print_red() {
+	local FORMAT="$1"
+	shift
+	printf "    \033[31m- ${FORMAT}\033[0m\n" "$@"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+sed_i() {
+	if sed --version >/dev/null 2>&1; then
+		sed -i "$@"
+	else
+		sed -i '' "$@"
+	fi
+}
+
+current_target() {
+
+	local active_targets
+
+	active_targets="$(
+		sed -n \
+			"/$BEGIN_MARK/,/$END_MARK/ {
+        /^[[:space:]]*Include / {
+          s@.*config_range42-@@
+          s@[[:space:]].*@@
+          p
+        }
+      }" "$CONFIG_FILE" | sort -u
+	)"
+
+	if [[ -z "$active_targets" ]]; then
+		print_red_warning "Active workspace is: NOT SET ! "
+		exit 1
+	# else
+	# 	print_check "Active workspace is: %s" "$active_targets"
+	# fi
+	fi
+
+	printf "%s\n" "${active_targets}"
+	return 0
+}
+
+list_targets() {
+
+	print_section "List available workspaces : "
+
+	sed -n \
+		"/$BEGIN_MARK/,/$END_MARK/{
+      /^[[:space:]]*#*[[:space:]]*Include /{
+        s@.*config_range42-@@
+        s@[[:space:]].*@@
+        p
+      }
+    }" "$CONFIG_FILE" | sort -u
+
+	echo ""
+	echo ""
+}
+
+switch_target() {
+
+	local TARGET_WORKSPACE="$1"
+
+	print_section "Switching to %s" "${TARGET_WORKSPACE}"
+
+	####
+	#### ssh config switch
+	####
+
+	# Comment all active Include lines
+
+	sed_i \
+		"/$BEGIN_MARK/,/$END_MARK/ s/^Include /# Include /" \
+		"$CONFIG_FILE"
+
+	print_step "comment all active Include lines from %s" "${CONFIG_FILE}"
+
+	# Uncomment only selected TARGET_WORKSPACE
+
+	sed_i \
+		"/$BEGIN_MARK/,/$END_MARK/ s/^# Include \(.*config_range42-${TARGET_WORKSPACE}.*\)/Include \1/" \
+		"$CONFIG_FILE"
+
+	print_step "uncomment only requested target from  %s" "${CONFIG_FILE}"
+
+	####
+	#### zsh_rc switch
+	####
+
+	# Comment all active Include lines
+
+	sed_i \
+		's|^[# ]*source "\(.*sourced_range42\.sh\)"|#source "\1"|' \
+		"$HOME/.zshrc"
+
+	print_step "comment all active sourced files from %s  " "${HOME}/.zshrc"
+
+	# Uncomment only selected TARGET_WORKSPACE
+
+	sed_i \
+		"s|^#source \"\(.*\/${TARGET_WORKSPACE}\/sourced_range42\.sh\)\"|source \"\1\"|" \
+		"$HOME/.zshrc"
+
+	print_step "uncomment only requested sourced from  %s " "${HOME}/.zshrc"
+
+	#
+	# done.
+	#
+
+	echo ""
+	echo ""
+	print_check "Active workspace is now : %s " "${TARGET_WORKSPACE}"
+	echo ""
+	echo ""
+
+}
+
+####
+#### ssh agent and keys checks and utils
+####
+
+ssh_is_ssh_agent_running() {
+
+	print_section "SSH agent checks"
+
+	if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+		print_fail "ssh-agent is not running (SSH_AUTH_SOCK not set)"
+		return 1
+	fi
+
+	if ! ssh-add -l >/dev/null 2>&1; then
+		print_fail "ssh-agent is running but no keys are loaded"
+		return 1
+	fi
+
+	print_check "ssh-agent is running"
+	print_check "Loaded SSH keys:"
+	echo ""
+	echo ""
+
+	ssh-add -l
+
+	echo ""
+	echo ""
+
+	return 0
+}
+
+ssh_force_reload_ssh_keys_and_zsh() {
+
+	print_section "Force reload SSH keys"
+
+	print_step "Unload all SSH keys first."
+	echo ""
+
+	if ssh-add -l >/dev/null 2>&1; then
+		ssh-add -D
+	else
+		print_red_warning "No ssh-agent running!"
+		exit 1
+	fi
+
+	####
+
+	local workspace
+
+	workspace="$(current_target)" || {
+		print_red_warning "Cannot reload SSH keys: no active workspace"
+		return 1
+	}
+
+	echo ""
+	print_step "Let's load SSH keys for the workspace: %s" "$workspace"
+	echo ""
+
+	grep '^Include ' config |
+		grep 'config_range42' |
+		grep -v '^#' |
+		sed 's/^Include //' |
+		sort -u |
+		while read -r config_file; do
+
+			grep 'IdentityFile ' "$config_file" |
+				sed 's/IdentityFile //' |
+				sort -u |
+				while read -r identity_file; do
+
+					echo ""
+					print_red_warning "Loading SSH key: %s" "$identity_file"
+					echo ""
+					ssh-add "$identity_file"
+
+				done
+			echo ""
+		done
+	echo ""
+
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+#
+# quick actions to normalize everything.
+#
+
+for arg in "$@"; do
+	shift
+	case "$arg" in
+	--env-list) set -- "$@" -l ;;
+	--env-set) set -- "$@" -s ;;
+	--env-current) set -- "$@" -c ;;
+	--env-reload-ssh) set -- "$@" -r ;;
+	--help) set -- "$@" -h ;;
+	*) set -- "$@" "$arg" ;;
+	esac
+done
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+if [[ $# -eq 0 ]]; then
+
+	print_red_warning "No option provided, using default: $DEFAULT_TARGET"
+	switch_target "$DEFAULT_TARGET"
+
+	exit 0
+fi
+
+while getopts ":lcs:rh" opt; do
+
+	case "$opt" in
+	l)
+		list_targets
+		exit 0
+		;;
+	c)
+		current_target
+		exit 0
+		;;
+	s)
+		switch_target "$OPTARG"
+
+		# force ssh / zsh reload.
+		ssh_is_ssh_agent_running
+		ssh_force_reload_ssh_keys
+
+		echo ""
+		echo ""
+
+		print_step
+		print_step "Please run the following command to finalize changes:"
+		print_step
+
+		print_red_warning ""
+		print_red_warning " zsh -c 'source ~/.zshrc && devkit_ansible.open_vault.to.file.sh'"
+		print_red_warning ""
+		echo ""
+		echo ""
+		exit 0
+		;;
+	r)
+		ssh_is_ssh_agent_running
+		ssh_force_reload_ssh_keys
+		exit 0
+		;;
+	h)
+		usage
+		exit 0
+		;;
+	*)
+		usage
+		exit 1
+		;;
+	esac
+done

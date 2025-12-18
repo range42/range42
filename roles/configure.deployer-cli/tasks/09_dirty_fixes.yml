@@ -1,0 +1,28 @@
+- name: on going fixes
+
+  block:
+    - name: on going fixes - INVENTORY file renaming to /off_cr_42.yml
+      ansible.builtin.template:
+        src: inventory.demo_lab.j2
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/inventory/off_cr_42.yml"
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+
+    - name: on going fixes - SECRET file renaming to /off_cr_42.yml
+      ansible.builtin.copy:
+        src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/default_vault.yml"
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/off_cr_42.yml"
+        remote_src: true
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+
+    - name: on going fixes - SECRET file renaming to px-testing.cr42_tailscale.yml
+      ansible.builtin.copy:
+        src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/default_vault.yml"
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/px-testing.cr42_tailscale.yml"
+        remote_src: true
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
