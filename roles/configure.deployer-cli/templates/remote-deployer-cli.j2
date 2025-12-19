@@ -70,7 +70,7 @@ Host r42.admin-web-deployer-ui
 
 Host r42.admin* r42.testing*
     User alice
-    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice"
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice
     # # # # # # # # /home/range42-operator/.ssh/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice"
     Port 22
     ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
@@ -82,7 +82,7 @@ Host r42.student-box-01
 
 Host r42.student*
     User alice
-    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice"
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice
     # # # # # # # # /home/range42-operator/.ssh/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice"
     Port 22
     ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
@@ -106,7 +106,7 @@ Host r42.vuln-box-04
 
 Host r42.vuln-box-*
     User alice
-    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice"
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice
     # # # # # # # # /home/range42-operator/.ssh/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice"
     Port 22
     ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
