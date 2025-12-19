@@ -2,7 +2,20 @@
 ####
 ####
 
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- import_tasks: 00_dev_mode.yml
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
 - import_tasks: 01_packages.yml
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
 - import_tasks: 02_shell.yml
 - import_tasks: 03_dot_files.yml
 - import_tasks: 04_ssh_client.yml
@@ -15,4 +28,7 @@
 - import_tasks: ./07_04_deploy_sources_file.yml
 - import_tasks: ./08_clean_up.yml
 
-- import_tasks: ./09_dirty_fixes.yml 
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# to fix
+#
+- import_tasks: ./09_dirty_fixes.yml

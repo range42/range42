@@ -1,20 +1,6 @@
 ---
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-# - name: apt update/upgrade
-#   become: true
-
-#   block:
-#     - name: apt update/upgrade - update cache
-#       apt:
-#         update_cache: yes
-
-#     - name: apt update/upgrade - upgrade system
-#       apt:
-#         upgrade: dist
-
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-
 - name: systemd-timesyncd task - extra tasks - cover cases =>  vm usage/revert to snapshot
   block:
     #
@@ -38,7 +24,10 @@
         enabled: true
         state: started
 
-  when: ansible_facts.distribution == 'Ubuntu'
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+      
 
 #
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -64,11 +53,13 @@
         fail_msg: " clock is NOT sync!"
         success_msg: " clock is sync !"
 
-  when: ansible_facts.distribution == 'Ubuntu'
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-- name: apt update/upgrade - again.
+- name: apt update/upgrade
   become: true
 
   block:
@@ -79,6 +70,10 @@
     - name: apt update/upgrade - upgrade system
       apt:
         upgrade: dist
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -134,6 +129,10 @@
         apt-get update -y
         apt-get install -y python3 ansible
 
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 - name: basics configuration - check en_US.UTF-8 locale exists
@@ -146,5 +145,10 @@
     path: /etc/default/locale
     regexp: "^LANG="
     line: "LANG=en_US.UTF-8"
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
 #
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####

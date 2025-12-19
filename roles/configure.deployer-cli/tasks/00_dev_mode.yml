@@ -1,0 +1,120 @@
+---
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: developer mode tasks
+  when:
+    - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
+
+  block:
+    #
+    # create groups, users ect for :
+    # - {{ DEV_MODE_DEPLOYER_GROUP }}
+    # - {{ DEV_MODE_DEPLOYER_USER }}
+    #
+    - name: check if / create {{ DEV_MODE_DEPLOYER_GROUP }} exists
+      ansible.builtin.group:
+        name: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        state: present
+
+    - name: check if {{ DEV_MODE_DEPLOYER_USER }} exists
+      ansible.builtin.user:
+        name: "{{ DEV_MODE_DEPLOYER_USER }}"
+        groups: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        append: true
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: check {{ DEV_MODE_DAILY_USAGE_USER }} exists and is in deployer group
+      ansible.builtin.user:
+        name: "{{ DEV_MODE_DAILY_USAGE_USER }}"
+        groups: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        append: true
+        state: present
+
+    #
+    # perm checks - /home/{{ DEV_MODE_DEPLOYER_USER }}
+    #
+    - name: permissions, group and ownership - user {{ DEV_MODE_DEPLOYER_USER }} -  group {{ DEV_MODE_DEPLOYER_GROUP }}"
+      ansible.builtin.file:
+        path: "/home/{{ DEV_MODE_DEPLOYER_USER }}"
+        group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        recurse: true
+
+    #
+    # setgit on /home/{{ DEV_MODE_DEPLOYER_USER }}
+    #
+
+    - name: permissions, group and ownership - set perm with setgid on /home/{{ DEV_MODE_DEPLOYER_USER }}
+      ansible.builtin.file:
+        path: "/home/{{ DEV_MODE_DEPLOYER_USER }}"
+        mode: "2775"
+
+    #
+    # additionnal checks - got sudo ?
+    #
+
+    - name: check { DEV_MODE_DEPLOYER_USER }}  user exists
+      ansible.builtin.command: "id {{ DEV_MODE_DEPLOYER_USER }}"
+      register: deployer_user_check
+      changed_when: false
+      failed_when: deployer_user_check.rc != 0
+
+    - name: check { DEV_MODE_DEPLOYER_USER }} user has sudo
+      ansible.builtin.command: "sudo -l -U {{ DEV_MODE_DEPLOYER_USER }}"
+      register: deployer_sudo_check
+      changed_when: false
+      failed_when: deployer_sudo_check.rc != 0
+
+    #
+    # git configuration - from j2 template
+    #
+
+    - name: gitconfig {{ DEV_MODE_DEPLOYER_USER }} - add .gitconfig file - /home/{{ DEV_MODE_DEPLOYER_USER }}/.gitconfig"
+      ansible.builtin.template:
+        src: "dev_mode/gitconfig.j2"
+        dest: "/home/{{ DEV_MODE_DEPLOYER_USER }}/.gitconfig"
+        owner: "{{ DEV_MODE_DEPLOYER_USER }}"
+        group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        mode: "0644"
+
+    - name: gitconfig {{ DEV_MODE_DEPLOYER_USER }} - add included config file - .{{ DEV_MODE_GITCONFIG_FILE }}
+      ansible.builtin.template:
+        src: "dev_mode/gitconfig_include.j2"
+        dest: "/home/{{ DEV_MODE_DEPLOYER_USER }}/.{{ DEV_MODE_GITCONFIG_FILE }}"
+        owner: "{{ DEV_MODE_DEPLOYER_USER }}"
+        group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        mode: "0644"
+
+  ##
+  ## rescue message
+  ##
+
+  rescue:
+    - name: DEBUG - if setup fail
+      ansible.builtin.debug:
+        msg: |
+          DEVELOPERS MODE SETUP FAILED. 
+
+          Check manually the following
+
+          - USER GROUP  : 
+
+            sudo groupadd {{ DEV_MODE_DEPLOYER_GROUP }}
+            sudo useradd -m -s /bin/bash {{ DEV_MODE_DEPLOYER_USER }}
+            sudo usermod -aG {{ DEV_MODE_DEPLOYER_GROUP }} {{ DEV_MODE_DEPLOYER_USER }}
+            sudo usermod -aG {{ DEV_MODE_DEPLOYER_GROUP }} {{ DEV_MODE_DAILY_USAGE_USER }}
+
+          - SUDO FOR {{ DEV_MODE_DEPLOYER_USER }} : 
+            sudo usermod -aG sudo {{ DEV_MODE_DEPLOYER_USER }}
+            sudo -l -U {{ DEV_MODE_DEPLOYER_USER }}
+
+          - PERMISSIONS (user/group): 
+
+            sudo chgrp -R {{ DEV_MODE_DEPLOYER_GROUP }} /home/{{ DEV_MODE_DEPLOYER_USER }}
+            sudo chmod -R 2775 /home/{{ DEV_MODE_DEPLOYER_USER }}
+
+          - GIT CONFIGURATION FILES : 
+
+            /home/{{ DEV_MODE_DEPLOYER_USER }}/.gitconfig
+            /home/{{ DEV_MODE_DEPLOYER_USER }}/.{{ DEV_MODE_GITCONFIG_FILE }}
