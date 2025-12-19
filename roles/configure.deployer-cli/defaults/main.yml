@@ -64,9 +64,44 @@ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE
 DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/student_keys" # user/student keys
 # DEPLOYER_CLI__DST_SSH_KEYS_VULN_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/vulns_keys" # user/student keys
 
-#### dev variables ####
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+####
+#### developers variables ####
 ####
 ####
-git_branch: "main" # (default)
-# git_branch: "dev"
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
+# dev_mode_skip_jump_host_ansible_packages: "NO" # YES will not install packags - NO will install packages on system
+# dev_mode_skip_setup_on_localhost: "YES" # YES will skip dev user setup on localhost - NO will not install dev user setup on localhost
+
+DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES: "YES"
+#
+# YES = install packages      (DEFAULT VALUE )
+# NO  = do not install packages
+
+DEV_MODE_SETUP_LOCALHOST_USER: "NO"
+#
+# NO  = do not setup dev user (DEFAULT VALUE)
+# YES = setup dev user on localhost
+
+#
+GIT_BRANCH: "main" # (default)
+# GIT_BRANCH: "dev"
+#
+# main - default value
+# dev  - will get dev branch
+#
+
+#
+# IF DEV_MODE_SETUP_LOCALHOST_USER IS "YES"
+#
+
+DEV_MODE_DAILY_USAGE_USER: "johndoe"
+DEV_MODE_DEPLOYER_USER: "range42-operator"
+DEV_MODE_DEPLOYER_GROUP: "range42-dev-mode-group"
+
+DEV_MODE_GIT_DIRECTORY: "/home/range42-operator/range42"
+DEV_MODE_GITCONFIG_FILE: "gitconfig_range42_dev_mode"
+DEV_MODE_GITCONFIG_NAME: "johndoe"
+DEV_MODE_GITCONFIG_EMAIL: "johndoe@example.com"
+DEV_MODE_GITHUB_SSH_KEY_FILE_PATH: "/home/range42-operator/.ssh/range42_dev_mode_github"
