@@ -24,9 +24,9 @@
       ansible.builtin.git:
         repo: "{{ item.repo }}"
         dest: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/{{ item.name }}"
-        version: "{{ git_branch | default(omit) }}"
-        update: "{{ git_branch is defined and git_branch != 'main' }}"
-        force: "{{ git_branch is defined and git_branch != 'main' }}"        
+        version: "{{ GIT_BRANCH | default(omit) }}"
+        update: "{{ GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"
+        force: "{{ GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"        
 
       loop:
         - {
