@@ -33,3 +33,13 @@
     dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/scenario"
     state: link
     force: yes
+
+##
+
+- name: configure workspace - add unlock ssh script - unlock-sshkeys.sh
+  ansible.builtin.template:
+    src: unlock-sshkeys.j2
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/bin/unlock-sshkeys.sh"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0700"
