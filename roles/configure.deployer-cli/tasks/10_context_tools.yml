@@ -1,0 +1,35 @@
+---
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: configure workspace - add context script
+  ansible.builtin.template:
+    src: remote-deployer-cli-change_context.j2
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/workspace_utils.sh"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0700"
+
+- name: configure workspace - mkdir {{ DEPLOYER_CLI__DST_CONFIG_DIR }}/bin
+  ansible.builtin.file:
+    path: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/bin"
+    state: directory
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0700"
+  become: true
+
+- name: configure workspace - create symlink to workspace_utils.sh in workspace bin
+  ansible.builtin.file:
+    src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/workspace_utils.sh"
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/bin/workspace_utils.sh"
+    state: link
+    force: yes
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: configure workspace - create symlink to current scenario -  {{ INFRASTRUCTURE_SCENARIO }}
+  ansible.builtin.file:
+    src: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/range42-playbooks/scenarios/{{ INFRASTRUCTURE_SCENARIO }}"
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/scenario"
+    state: link
+    force: yes
