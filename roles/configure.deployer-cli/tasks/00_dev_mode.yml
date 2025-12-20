@@ -35,20 +35,76 @@
     #
     # perm checks - /home/{{ DEV_MODE_DEPLOYER_USER }}
     #
-    - name: permissions, group and ownership - user {{ DEV_MODE_DEPLOYER_USER }} -  group {{ DEV_MODE_DEPLOYER_GROUP }}"
-      ansible.builtin.file:
-        path: "/home/{{ DEV_MODE_DEPLOYER_USER }}"
-        group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
-        recurse: true
+    # - name: permissions, group and ownership - user {{ DEV_MODE_DEPLOYER_USER }} -  group {{ DEV_MODE_DEPLOYER_GROUP }}"
+    #   ansible.builtin.file:
+    #     path: "/home/{{ DEV_MODE_DEPLOYER_USER }}"
+    #     group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+    #     recurse: true
+
+    # to avoid break .ssh directory (and ansible flow...)
+
+    # - name: permissions, group and ownership - mkdir directory  /home/{{ DEV_MODE_DEPLOYER_USER }}/range42-xxx
+    #   ansible.builtin.file:
+    #     path: "/home/{{ DEV_MODE_DEPLOYER_USER }}/{{ item }}"
+    #     state: directory
+    #     owner: "{{ DEV_MODE_DEPLOYER_USER }}"
+    #     group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+    #     mode: "2775"
+    #   loop:
+    #     - range42.config
+    #     - range42
+
+    # - name: permissions, group and ownership - fix permissions and group on /home/{{ DEV_MODE_DEPLOYER_USER }}/range42-xxx
+    #   ansible.builtin.file:
+    #     path: "/home/{{ DEV_MODE_DEPLOYER_USER }}/{{ item }}"
+    #     owner: "{{ DEV_MODE_DEPLOYER_USER }}"
+    #     group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+    #     mode: "2775"
+    #     recurse: true
+    #   loop:
+    #     - range42.config
+    #     - range42
 
     #
     # setgit on /home/{{ DEV_MODE_DEPLOYER_USER }}
     #
 
-    - name: permissions, group and ownership - set perm with setgid on /home/{{ DEV_MODE_DEPLOYER_USER }}
+    # - name: permissions, group and ownership - set perm with setgid on /home/{{ DEV_MODE_DEPLOYER_USER }}
+    #   ansible.builtin.file:
+    #     path: "/home/{{ DEV_MODE_DEPLOYER_USER }}"
+    #     mode: "2775"
+
+    - name: permissions, group and ownership - set group on dev working directories
       ansible.builtin.file:
-        path: "/home/{{ DEV_MODE_DEPLOYER_USER }}"
-        mode: "2775"
+        path: "/home/{{ DEV_MODE_DEPLOYER_USER }}/{{ item }}"
+        group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        state: directory
+      loop:
+        - range42
+        - range42.config
+
+    - name: permissions, group and ownership - add setgid on dev working directories
+      ansible.builtin.file:
+        path: "/home/{{ DEV_MODE_DEPLOYER_USER }}/{{ item }}"
+        mode: "g+s"
+      loop:
+        - range42
+        - range42.config
+
+    ####
+
+    # - name: permissions, group and ownership - fix SSH directory permissions
+    #   ansible.builtin.file:
+    #     path: "/home/{{ DEV_MODE_DEPLOYER_USER }}/.ssh"
+    #     owner: "{{ DEV_MODE_DEPLOYER_USER }}"
+    #     group: "{{ DEV_MODE_DEPLOYER_USER }}"
+    #     mode: "0700"
+
+    # - name: permissions, group and ownership - fix SSH files permissions
+    #   ansible.builtin.file:
+    #     path: "/home/{{ DEV_MODE_DEPLOYER_USER }}/.ssh"
+    #     recurse: true
+    #     mode: "0600"
 
     #
     # additionnal checks - got sudo ?
@@ -86,6 +142,23 @@
         group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
         mode: "0644"
 
+    ##
+    ##
+    ##
+
+    - name: cleanup previous dev environment - clean up vault dir and debug file
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/vault
+        - /tmp/debug
+
+    - name: cleanup previous dev environment - remove previous archvie
+      ansible.builtin.file:
+        path: /tmp/secrets-hv-hx-demo_lab.tar.gz
+        state: absent
+
   ##
   ## rescue message
   ##
@@ -111,8 +184,13 @@
 
           - PERMISSIONS (user/group): 
 
-            sudo chgrp -R {{ DEV_MODE_DEPLOYER_GROUP }} /home/{{ DEV_MODE_DEPLOYER_USER }}
-            sudo chmod -R 2775 /home/{{ DEV_MODE_DEPLOYER_USER }}
+            sudo chgrp -R {{ DEV_MODE_DEPLOYER_GROUP }} /home/{{ DEV_MODE_DEPLOYER_USER }}/range42
+            sudo chgrp -R {{ DEV_MODE_DEPLOYER_GROUP }} /home/{{ DEV_MODE_DEPLOYER_USER }}/range42.config
+
+
+            NEVER NEVER 
+            NEVER NEVER RUN THIS : sudo chmod -R 2775 /home/{{ DEV_MODE_DEPLOYER_USER }}
+            NEVER NEVER
 
           - GIT CONFIGURATION FILES : 
 
