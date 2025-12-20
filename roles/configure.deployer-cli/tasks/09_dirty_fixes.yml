@@ -26,3 +26,63 @@
         owner: "{{ DEPLOYER_CLI_USER }}"
         group: "{{ DEPLOYER_CLI_USER }}"
         mode: "0600"
+
+    #####
+
+- name: on going fixes - dev mode
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
+
+  block:
+    #
+    - name: change group write + setgid on all dev directories
+      ansible.builtin.command: >
+        find /home/{{ DEV_MODE_DEPLOYER_USER }}/{{ item }}
+        -type d
+        -exec chmod g+ws {} +
+      loop:
+        - range42
+        - range42.config
+      changed_when: false
+
+    - name: on going fixes - dev mode - create quick perm fix script
+      ansible.builtin.copy:
+        dest: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/fix_dev_permissions.sh"
+        owner: "{{ DEV_MODE_DEPLOYER_USER }}"
+        group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+
+
+          echo "Fixing dev permissions for {{ DEV_MODE_DEPLOYER_USER }}"
+
+          BASE_DIR="/home/{{ DEV_MODE_DEPLOYER_USER }}"
+          GROUP="{{ DEV_MODE_DEPLOYER_GROUP }}"
+
+          for dir in range42 range42.config; do
+
+            TARGET="${BASE_DIR}/${dir}"
+
+            if [ ! -d "${TARGET}" ]; then
+              echo " Skipping ${TARGET} (not found)"
+              continue
+            fi
+
+            echo ":: fixing directories permissions on ${TARGET}"
+            find "${TARGET}" -type d -exec chmod g+ws {} +
+
+            echo ":: fixing group ownership on ${TARGET}"
+            chgrp -R "${GROUP}" "${TARGET}"
+          done
+
+          echo
+          echo "perm fixed."
+          echo
+          echo "!!! IMPORTANT !!!"
+          echo "You MUST refresh your group membership:"
+          echo
+          echo "    newgrp {{ DEV_MODE_DEPLOYER_GROUP }}  or logout / login"
+          echo

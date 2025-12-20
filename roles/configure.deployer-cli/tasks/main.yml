@@ -9,7 +9,6 @@
     - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
 
-
 - import_tasks: 01_packages.yml
   when:
     - ansible_facts.distribution == 'Ubuntu'
@@ -35,3 +34,21 @@
 - import_tasks: ./09_dirty_fixes.yml
 
 - import_tasks: ./10_context_tools.yml
+
+- name: DEV MODE WARNING NOTICE - REMINDER - refresh group membership
+  ansible.builtin.debug:
+    msg: |
+      !!! !!! !!! IMPORTANT
+
+      After adding a user to the group: range42-dev-mode-group
+      You MUST refresh the group membership for the current session:
+
+        via : 
+          - newgrp range42-dev-mode-group
+          - or logout / login.
+
+      Otherwise, permissions will NOT be applied correctly.
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'

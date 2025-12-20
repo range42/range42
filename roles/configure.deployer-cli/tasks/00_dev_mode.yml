@@ -91,6 +91,23 @@
         - range42
         - range42.config
 
+    - name: Ensure dev working directories are group writable
+      ansible.builtin.file:
+        path: "/home/{{ DEV_MODE_DEPLOYER_USER }}/{{ item }}"
+        mode: "g+w"
+      loop:
+        - range42
+        - range42.config
+
+    - name: Ensure setgid on dev working directories
+      ansible.builtin.file:
+        path: "/home/{{ DEV_MODE_DEPLOYER_USER }}/{{ item }}"
+        mode: "g+s"
+      loop:
+        - range42
+        - range42.config
+
+
     ####
 
     # - name: permissions, group and ownership - fix SSH directory permissions
