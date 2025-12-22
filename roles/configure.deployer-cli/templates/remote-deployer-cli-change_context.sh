@@ -251,6 +251,7 @@ ssh_is_ssh_agent_running() {
 
 	if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
 		print_fail "ssh-agent is not running (SSH_AUTH_SOCK not set)"
+		print_red_warning 'type : eval `keychain --eval id_rsa`'
 		return 1
 	fi
 
@@ -276,14 +277,11 @@ ssh_force_reload_ssh_keys_and_zsh() {
 
 	print_section "Force reload SSH keys"
 
-	print_step "Unload all SSH keys first."
 	echo ""
 
 	if ssh-add -l >/dev/null 2>&1; then
+		print_step "Unload all SSH keys first."
 		ssh-add -D
-	else
-		print_red_warning "No ssh-agent running!"
-		exit 1
 	fi
 
 	####
@@ -299,7 +297,7 @@ ssh_force_reload_ssh_keys_and_zsh() {
 	print_step "Let's load SSH keys for the workspace: %s" "$workspace"
 	echo ""
 
-	grep '^Include ' config |
+	grep '^Include ' "$HOME/.ssh/config" |
 		grep 'config_range42' |
 		grep -v '^#' |
 		sed 's/^Include //' |
@@ -314,13 +312,22 @@ ssh_force_reload_ssh_keys_and_zsh() {
 					echo ""
 					print_red_warning "Loading SSH key: %s" "$identity_file"
 					echo ""
-					ssh-add "$identity_file"
+					ssh-add "$identity_file" </dev/tty
 
 				done
 			echo ""
 		done
 	echo ""
 
+	echo ""
+	print_step "Load/Reload the vault password file for workspace: %s" "$workspace"
+	echo ""
+
+	devkit_ansible.open_vault.to.file.sh
+
+	echo ""
+	echo ""
+	echo ""
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -368,7 +375,7 @@ while getopts ":lcs:rh" opt; do
 
 		# force ssh / zsh reload.
 		ssh_is_ssh_agent_running
-		ssh_force_reload_ssh_keys
+		ssh_force_reload_ssh_keys_and_zsh
 
 		echo ""
 		echo ""
@@ -386,7 +393,7 @@ while getopts ":lcs:rh" opt; do
 		;;
 	r)
 		ssh_is_ssh_agent_running
-		ssh_force_reload_ssh_keys
+		ssh_force_reload_ssh_keys_and_zsh
 		exit 0
 		;;
 	h)

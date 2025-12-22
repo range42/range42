@@ -46,6 +46,18 @@ INFRASTRUCTURE_PROXMOX_ADDRESS=$(
 	yq -r '.infrastructure_proxmox_address' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
 )
 
+INFRASTRUCTURE_PROXMOX_DEST_ISO_STORAGE_NAME=$(
+	yq -r '.infrastructure_proxmox_dest_iso_storage_name' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+)
+
+INFRASTRUCTURE_PROXMOX_DEST_VM_STORAGE_NAME=$(
+	yq -r '.infrastructure_proxmox_dest_vm_storage_name' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+)
+
+INFRASTRUCTURE_PROXMOX_DEFAULT_NETWORK_CARD_INTERFACE=$(
+	yq -r '.infrastructure_proxmox_default_network_card_interface' "${DEPLOYER_CONFIGURATION_FILE_PATH}"
+)
+
 #### #### ##### ##### CONTEXT - SSH KEYS
 
 SSH_CLIENT__DST_CONFIG_DIR=$(
@@ -144,10 +156,10 @@ INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD=$(
 #
 
 INFRASTRUCTURE_TAILSCALE_AUTHKEY=$(
-	yq -r '.vault_tailscale_authkey' "${DEPLOYER_CONFIGURATION_FILE_PATH}" # dev note :  must be rename to infrastructure_tailscale_authkey
+	yq -r '.infrastructure_tailscale_authkey' "${DEPLOYER_CONFIGURATION_FILE_PATH}" # dev note :  must be rename to infrastructure_tailscale_authkey
 )
 INFRASTRUCTURE_TAILSCALE_APIKEY=$(
-	yq -r '.vault_tailscale_apikey' "${DEPLOYER_CONFIGURATION_FILE_PATH}" # dev note :  must be rename to infrastructure_tailscale_apikey
+	yq -r '.infrastructure_tailscale_apikey' "${DEPLOYER_CONFIGURATION_FILE_PATH}" # dev note :  must be rename to infrastructure_tailscale_apikey
 )
 INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD=$(
 	yq -r '.WAZUH_PASSWORD' "${DEPLOYER_CONFIGURATION_FILE_PATH}" #  dev note :  must be rename to infrastructure_wazuh_admin_password
@@ -417,8 +429,8 @@ prepare_environment_passwords() {
 		# 	INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_PASSWORD=$(yq -r '.default_admin_vm_ci_password' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
 		# 	INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_USER=$(yq -r '.default_trainee_vm_ci_user' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
 		# 	INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD=$(yq -r '.default_trainee_vm_ci_password' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
-		# 	INFRASTRUCTURE_TAILSCALE_AUTHKEY=$(yq -r '.vault_tailscale_authkey' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
-		# 	INFRASTRUCTURE_TAILSCALE_APIKEY=$(yq -r '.vault_tailscale_apikey' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		# 	INFRASTRUCTURE_TAILSCALE_AUTHKEY=$(yq -r '.infrastructure_tailscale_authkey' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
+		# 	INFRASTRUCTURE_TAILSCALE_APIKEY=$(yq -r '.infrastructure_tailscale_apikey' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
 		# 	INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD=$(yq -r '.WAZUH_PASSWORD' "${DEPLOYER_CONFIGURATION_FILE_PATH}")
 		#
 	fi
@@ -1280,6 +1292,10 @@ proxmox_api_user: "${INFRASTRUCTURE_PROXMOX_API_USER}"
 proxmox_api_token_id: "${INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}"
 proxmox_api_token_secret: "${INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET}"
 
+proxmox_dest_iso_storage_name: "${INFRASTRUCTURE_PROXMOX_DEST_ISO_STORAGE_NAME}"
+proxmox_dest_vm_storage_name: "${INFRASTRUCTURE_PROXMOX_DEST_VM_STORAGE_NAME}" 
+proxmox_default_network_card_interface: "${INFRASTRUCTURE_PROXMOX_DEFAULT_NETWORK_CARD_INTERFACE}"
+
 
 ###############################################################################
 # 2 - SSH KEY PATHS 
@@ -1324,11 +1340,15 @@ default_trainee_vm_ci_ssh_key: "${SSH_KEY_STUDENT_USER_PUB_CONTENT}"
 #  - The follwing variables must be renamed to  deployer_cli_user_ssh_known_hosts
 #
 
-VAULT_operator_ssh_config_known_hosts: "${DEPLOYER_CLI_CONFIG_USER}"
+deployer_cli_user_ssh_known_hosts: "/home/${DEPLOYER_CLI_CONFIG_USER}/.ssh/known_hosts"
 
-vault_tailscale_apikey: "${INFRASTRUCTURE_TAILSCALE_APIKEY}"
-vault_tailscale_authkey: "${INFRASTRUCTURE_TAILSCALE_AUTHKEY}"
-WAZUH_PASSWORD: "${INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD}"
+# infrastructure_tailscale_apikey: "${INFRASTRUCTURE_TAILSCALE_APIKEY}"
+infrastructure_tailscale_apikey: "${INFRASTRUCTURE_TAILSCALE_APIKEY}"
+
+# infrastructure_tailscale_authkey: "${INFRASTRUCTURE_TAILSCALE_AUTHKEY}"
+infrastructure_tailscale_authkey: "${INFRASTRUCTURE_TAILSCALE_AUTHKEY}"
+# WAZUH_PASSWORD: "${INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD}"
+infrastructure_wazuh_admin_password:  "${INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD}"
 
 
 #

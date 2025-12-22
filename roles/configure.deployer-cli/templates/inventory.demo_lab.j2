@@ -45,7 +45,8 @@ all:
 
         ####
 
-        px-testing: # must be rename as proxmox
+        #px-testing: # must be rename as proxmox
+        proxmox:
           hosts:
             {{ INFRASTRUCTURE_CODENAME }}:
               ansible_host: {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}:8006
@@ -53,6 +54,6 @@ all:
               ansible_connection: local # to force usage of API and not ssh
               ansible_python_interpreter: /usr/bin/python3 # potentially to avoid compatibility issue
 
-        px-testing-cli:  # must be rename as proxmox-cli
+        proxmox-cli:  # must be rename as proxmox-cli
           hosts:
             {{ INFRASTRUCTURE_CODENAME }}-cli:

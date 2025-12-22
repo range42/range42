@@ -84,6 +84,13 @@ infrastructure_scenario: "demo_lab" # default deployed scenario
 # infrastructure_proxmox_address: "redacted"
 infrastructure_proxmox_address: "192.168.42.242"
 
+# INFRASTRUCTURE STORAGE
+
+infrastructure_proxmox_dest_iso_storage_name: "local" # storage for img (cloudinit) and iso files
+infrastructure_proxmox_dest_vm_storage_name: "local-lvm" # storage for virtual machines files
+
+infrastructure_proxmox_default_network_card_interface: "enp3s0" # will be used as for NAT networks
+
 ################################################################################
 # 3) DEPLOYER-CLI CONNECTION DETAILS (REMOTE VM)
 # --------------------------------------------------------------------------
@@ -99,7 +106,7 @@ deployer_cli_user: "range42-operator" # default deployer-cli username
 # DEBUG NOTE :
 # must be rename to deployer_cli_user_ssh_known_hosts
 
-VAULT_operator_ssh_config_known_hosts: "/home/range42-operator/.ssh/known_hosts" # :: **** values will be stored inside Ansible Vault.
+deployer_cli_user_ssh_known_hosts: "/home/range42-operator/.ssh/known_hosts" # :: **** values will be stored inside Ansible Vault.
 
 ################################################################################
 # 4) PROXMOX API ACCESS
@@ -173,11 +180,21 @@ default_trainee_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC................redacted..
 # ::                            **** values will be stored inside Ansible Vault.
 ################################################################################
 
-vault_tailscale_authkey: "tskey-auth-aaaaaaaaaaa...................." # dev note :  must be rename to infrastructure_tailscale_authkey
-vault_tailscale_apikey:
+infrastructure_tailscale_authkey: "tskey-auth-aaaaaaaaaaa...................." # dev note :  must be rename to infrastructure_tailscale_authkey
+infrastructure_tailscale_apikey:
     "tskey-api-bbbbbbbbbbb...................." # dev note :  must be rename to infrastructure_tailscale_apikey
 
 
     # dev note :  must be rename to infrastructure_wazuh_admin_password
 WAZUH_PASSWORD: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
 
+################################################################################
+# 7) DEVELOPERS MODE
+# --------------------------------------------------------------------------
+# ::
+# :: You should avoid to modify the following except if you know why :)
+# ::
+# ::
+##
+
+dev_mode_jump_host_ansible_packages: "SKIP"
