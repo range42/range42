@@ -1,0 +1,154 @@
+---
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: systemd-timesyncd task - extra tasks - cover cases =>  vm usage/revert to snapshot
+  block:
+    #
+    - name: remove ntp and ntpdate if present
+      apt:
+        name:
+          - ntp
+          - ntpdate
+        state: absent
+
+    #
+    - name: check systemd-timesyncd is installed - ubuntu
+      apt:
+        name: systemd-timesyncd
+        state: present
+
+    #
+    - name: enable and start systemd-timesyncd - ubuntu
+      systemd:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+      
+
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+
+- name: install ntp package - time sync - time is now !
+
+  block:
+    #
+    - name: wait time drift - ubuntu
+      command: timedatectl show -p NTPSynchronized --value
+      register: ntp_sync_check
+      until: ntp_sync_check.stdout == "yes"
+      retries: 10
+      delay: 5
+      changed_when: false
+
+    #
+    - name: assert - time is sync - ubuntu
+      assert:
+        that:
+          - ntp_sync_check.stdout == "yes"
+        fail_msg: " clock is NOT sync!"
+        success_msg: " clock is sync !"
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: apt update/upgrade
+  become: true
+
+  block:
+    - name: apt update/upgrade - update cache
+      apt:
+        update_cache: yes
+
+    - name: apt update/upgrade - upgrade system
+      apt:
+        upgrade: dist
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: install packages
+  become: true
+
+  block:
+    - name: install packages - base packages
+      apt:
+        name:
+          - curl
+          - net-tools
+          - keychain
+
+        state: present
+    - name: install packages - utils packages
+      apt:
+        name:
+          - yq
+          - jq
+          - vim
+          - git
+          - zsh
+        state: present
+
+    - name: install packages - extra packages
+      apt:
+        name:
+          - nmap
+          - tcpdump
+        state: present
+
+    # ###############################################
+    #
+    # NOTE THE FOLLOWING WILL NOT ALWAYS WORK
+    #
+    # - name: install packages - install ansible
+    #   apt:
+    #     name:
+    #       - ansible
+    #     state: present
+    #
+    # ###############################################
+    # Fix :
+    #
+    #   The following task will NOT call apt-mark that can cause issue during
+    #   installation on remote system without ansible
+    #
+    #
+
+    - name: install packages - install ansible - bootstrapping
+      ansible.builtin.raw: |
+        apt-get update -y
+        apt-get install -y python3 ansible
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: basics configuration - check en_US.UTF-8 locale exists
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+
+- name: basic configuration - set default locale to en_US.UTF-8
+  ansible.builtin.lineinfile:
+    path: /etc/default/locale
+    regexp: "^LANG="
+    line: "LANG=en_US.UTF-8"
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####

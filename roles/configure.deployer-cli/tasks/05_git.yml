@@ -1,0 +1,58 @@
+---
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: configure range42 repository - warmup
+  block:
+    #
+    - name: configure range42 repository - mkdir {{ DEPLOYER_CLI__DST_GIT_DIR }}
+      ansible.builtin.file:
+        path: "{{ DEPLOYER_CLI__DST_GIT_DIR }}"
+        state: directory
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0755"
+      become: true
+
+
+- name: configure range42 repository
+  become: true
+  become_user: "{{ DEPLOYER_CLI_USER }}"
+
+  block:
+
+    - name: configure range42 repository - clone range42 repositories into {{ DEPLOYER_CLI__DST_GIT_DIR }}
+      ansible.builtin.git:
+        repo: "{{ item.repo }}"
+        dest: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/{{ item.name }}"
+        version: "{{ GIT_BRANCH | default(omit) }}"
+        update: "{{ GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"
+        force: "{{ GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"        
+
+      loop:
+        - {
+            name: range42-ansible_roles-proxmox_controller,
+            repo: "https://github.com/range42/range42-ansible_roles-proxmox_controller.git",
+          }
+        - {
+            name: range42-catalog,
+            repo: "https://github.com/range42/range42-catalog.git"
+           }
+        - { 
+            name: range42-playbooks,
+            repo: "https://github.com/range42/range42-playbooks.git"
+          }
+        - {
+            name: range42-ansible_roles-debug-devkit,
+            repo: "https://github.com/range42/range42-ansible_roles-debug-devkit.git",
+          }
+        - { 
+            name: range42-deployer-ui,
+            repo: "https://github.com/range42/range42-deployer-ui.git" 
+          }
+        - { 
+            name: range42-backend-api,
+            repo: "https://github.com/range42/range42-backend-api.git"
+          }
+      #
+      # add throttle: 1 # to avoid to exceed rate limit ?
+      #
