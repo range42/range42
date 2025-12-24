@@ -1,0 +1,200 @@
+################################################################################
+# RANGE42 — DEPLOYER-CLI CONFIGURATION FILE
+# -----------------------------------------
+# This file defines:
+#   - workstation SSH paths
+#   - infrastructure identification
+#   - deployer-cli connection parameters
+#   - Proxmox API access configuration
+#   - default cloud-init users for VMs
+#   - Tailscale / Wazuh secrets
+#
+# IMPORTANT:
+#   - Do _NOT_ rename keys (used programmatically)
+#   - Keep this file secrets private (avoid commit passwords / tokens)
+#
+#
+#
+################################################################################
+# PASSWORD / SECRET FORMAT RECOMMENDATION
+# ---------------------------------------
+# For all fields containing passwords, secrets, API tokens, or cryptographic
+# values, it is strongly recommended to use ONLY the following characters:
+#
+#     a–z   A–Z   0–9   -   _
+#
+# This avoids parsing issues with:
+#   - YAML loaders, Jinja2 templates
+#   - Ansible variable expansion
+#   - shell quoting
+#   - cloud-init userdata
+#
+# Examples of valid passwords:
+#   twenty_one_good_password_123
+#   Alpha42_Trainee_Key
+#   SECURE-KEY-77_hx_demo
+#
+# Examples to ___AVOID__ (it will break YAML or Jinja2):
+#   bad$pwd!
+#   pa:ss/word
+#   key with spaces
+#   something"quoted
+#
+# IMPORTANT:
+#   - Avoid symbols such as: $ { } \ ! % @ * " ' < > | &
+#   - Length recommendation: 20+ characters
+################################################################################
+
+################################################################################
+# 0) PASSWORDS
+# --------------------------------------------------------------------------
+# ::
+# :: by default the script will generate ssh key passphrase and various passwords
+# :: all password a write in RED.
+#
+################################################################################
+
+context_auto_generate_ssh_keys: "YES"
+context_auto_generate_vm_passwords: "YES"
+
+# Optional — auto-generation of additional SSH keys for students
+student_additionnal_keys_count: 5
+
+################################################################################
+# 1) WORKSTATION SETTINGS (LOCAL SSH)
+# --------------------------------------------------------------------------
+# ::
+# :: This path refers to YOUR workstation, not the deployer-cli VM.
+# ::
+################################################################################
+
+ssh_client__dst_config_dir: "/home/dev/.ssh"
+
+################################################################################
+# 2) INFRASTRUCTURE IDENTIFICATION
+# --------------------------------------------------------------------------
+# ::
+# :: Defines which hypervisor environment and which scenario are being deployed.
+# ::
+# ::                            **** values will be stored inside Ansible Vault.
+################################################################################
+
+infrastructure_codename: "hv-hx" # recommended format max 6 chars...
+infrastructure_scenario: "demo_lab" # default deployed scenario
+# infrastructure_proxmox_address: "redacted"
+infrastructure_proxmox_address: "192.168.42.242"
+
+# INFRASTRUCTURE STORAGE
+
+infrastructure_proxmox_dest_iso_storage_name: "local" # storage for img (cloudinit) and iso files
+infrastructure_proxmox_dest_vm_storage_name: "local-lvm" # storage for virtual machines files
+
+infrastructure_proxmox_default_network_card_interface: "enp3s0" # will be used as for NAT networks
+
+################################################################################
+# 3) DEPLOYER-CLI CONNECTION DETAILS (REMOTE VM)
+# --------------------------------------------------------------------------
+# ::
+# :: Used only for bootstrapping; not consumed by playbooks directly.
+# ::
+################################################################################
+
+deployer_cli_ip: "192.168.42.111"
+deployer_cli_ssh_port: "22"
+deployer_cli_user: "range42-operator" # default deployer-cli username
+
+# DEBUG NOTE :
+# must be rename to deployer_cli_user_ssh_known_hosts
+
+deployer_cli_user_ssh_known_hosts: "/home/range42-operator/.ssh/known_hosts" # :: **** values will be stored inside Ansible Vault.
+
+################################################################################
+# 4) PROXMOX API ACCESS
+# --------------------------------------------------------------------------
+# ::
+# ::  proxmox_api_host:
+# ::     If using SSH port-forwarding:
+# ::       127.0.0.1:<redirected_port>
+# ::     Otherwise, use the hypervisor direct IP:port
+# ::
+# ::                            **** values will be stored inside Ansible Vault. - done
+################################################################################
+
+# proxmox_api_host: "127.0.0.1:18007"
+proxmox_api_host: "192.168.42.242:8006" # proxmox direct mode
+
+proxmox_api_user: "abnaaaa_api_master01@pam"
+proxmox_api_token_id: "aanabaaa_api_master01"
+proxmox_api_token_secret: "aaabana_api_master01" # This field will be reset on api_token creation or imported from child configuration.
+
+proxmox_node: "hv-hx" # STRICT proxmox node name - IMPORTANT
+
+################################################################################
+# 4.1) PROXMOX JUMP USER
+# --------------------------------------------------------------------------
+# ::
+# :: Defines jumper host details
+# ::
+# ::
+################################################################################
+
+jump_on_proxmox: "YES" # default value
+
+#
+# if set to YES, the user will be create via prepare-infrastructure script
+#
+#
+# WARNING : if set to NO, the jump_user must exist on the jump_host.
+#
+
+jump_host: "192.168.42.242" # by default jumper user is on proxmox server (you can of course modify this value)
+jump_user: "jump_user"
+jump_port: "22"
+jump_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
+
+################################################################################
+# 5) DEFAULT CLOUD-INIT USERS FOR DEPLOYER & TRAINEE VMs
+# --------------------------------------------------------------------------
+# ::
+# :: Used for provisioning internal lab machines (Alice / Bob).
+# ::
+# ::                            **** values will be stored inside Ansible Vault.
+################################################################################
+
+# --- AMINISTRATOR/DEPLOYER VM - Alice ( backend range42 infrastructure administrator )
+default_admin_vm_ci_user: "alice"
+default_admin_vm_ci_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
+default_admin_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC1lZ...............redacted................................... user@host"
+
+# --- Student VM - Bob ( backend range42 infrastructure student )
+default_trainee_vm_ci_user: "bob"
+default_trainee_vm_ci_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
+default_trainee_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC................redacted................................... user@host"
+
+################################################################################
+# 6) VAULT SECRETS (TAILSCALE, WAZUH, ETC.)
+# --------------------------------------------------------------------------
+# ::
+# :: These values will be stored inside the generated Ansible Vault.
+# ::
+# ::                            **** values will be stored inside Ansible Vault.
+################################################################################
+
+infrastructure_tailscale_authkey: "tskey-auth-aaaaaaaaaaa...................." # dev note :  must be rename to infrastructure_tailscale_authkey
+infrastructure_tailscale_apikey:
+    "tskey-api-bbbbbbbbbbb...................." # dev note :  must be rename to infrastructure_tailscale_apikey
+
+
+    # dev note :  must be rename to infrastructure_wazuh_admin_password
+WAZUH_PASSWORD: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
+
+################################################################################
+# 7) DEVELOPERS MODE
+# --------------------------------------------------------------------------
+# ::
+# :: You should avoid to modify the following except if you know why :)
+# ::
+# ::
+##
+
+dev_mode_jump_host_ansible_packages: "SKIP"
