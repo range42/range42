@@ -4,251 +4,315 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-RANGE42 is a modular cyber range platform for security training environments. The system orchestrates Proxmox-based infrastructure using a FastAPI backend, Vue 3 UI, Ansible automation, and Docker containerization.
+This repository is the **deployment machine configurator** for the RANGE42 cyber range platform. It provisions and configures a deployment machine (jump host) used to manage the RANGE42 infrastructure. This machine acts as the central orchestration point for deploying and managing Proxmox-based cyber training environments.
 
-**Architecture Flow:**
-1. Deployer UI (Vue 3 + VueFlow) → visual infrastructure design
-2. Backend API (FastAPI) → orchestration and playbook execution
-3. Proxmox Controller (Ansible role) → Proxmox API interaction
-4. Catalog (Ansible roles + Docker stacks) → deployable bundles
-5. Playbooks → reusable automation scenarios
+**Purpose:**
+- Configure a dedicated deployment/jump host for RANGE42 operations
+- Generate Ansible inventories, vaults, and deployment playbooks from master configuration
+- Set up development tools, SSH keys, git configuration, and runtime environment
+- Deploy secrets, tarballs, and configuration files to the deployer machine
+
+**Key Technologies:**
+- **Automation:** Ansible (core configuration management)
+- **Target Infrastructure:** Proxmox virtualization platform
+- **Containerization:** Docker and LXC (for deployed services)
+- **Monitoring:** Wazuh (optional security event monitoring)
+- **Web Stack:** Vue.js frontend and Python/FastAPI backend (optional, deployed via this host)
 
 ## Repository Structure
 
-- `pub/` - Active development code
-- `priv/` - Operations assets (read-only unless coordinated with ops)
-- `pub/range42-backend-api/` - FastAPI orchestration layer
-- `pub/range42-deployer-ui/` - Vue 3 visual designer
-- `pub/range42-catalog/` - Ansible roles and Docker compose bundles
-- `pub/range42-playbooks/` - Centralized playbooks for scenarios
-- `pub/range42-ansible_roles-proxmox_controller/` - Proxmox API control role
-- `pub/range42-api-definitions/` - OpenAPI specifications
+```
+.
+├── prepare-infrastructure-workspace.sh    # Main entrypoint script
+├── config/                                # Configuration and vault management
+│   ├── config_remote-deployer-cli.MASTER_FILE.yml  # Master configuration file
+│   ├── vault.create.sh                    # Create new Ansible vault
+│   ├── vault.edit.sh                      # Edit existing vault
+│   ├── vault.view.sh                      # View vault contents
+│   └── vault.changepwd.sh                 # Change vault password
+├── roles/
+│   └── configure.deployer-cli/            # Main Ansible role
+│       ├── tasks/                         # Task files (numbered sequence)
+│       ├── templates/                     # Jinja2 templates for config files
+│       ├── files/                         # Static files to deploy
+│       └── defaults/                      # Default variables
+├── utils/                                 # Utility scripts
+│   ├── ssh-agent.start.sh                 # Start SSH agent
+│   └── ssh-add.unload_all_keys.to.text.sh # Unload SSH keys
+└── README.md                              # Project documentation
+```
 
 ## Build, Test, and Development Commands
 
-### Backend API (FastAPI + Ansible)
+### Workspace Preparation
 
 ```bash
-# Setup environment
-cd pub/range42-backend-api
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# Generate inventories, vaults, and deployment playbooks
+./prepare-infrastructure-workspace.sh
 
-# Install Ansible collections
-ansible-galaxy collection install community.general -p ~/.ansible/collections
-ansible-galaxy collection install ansible.posix -p ~/.ansible/collections
-ansible-galaxy collection install ansible.windows -p ~/.ansible/collections
-
-# Start development server (requires environment variables)
-./start.sh
-
-# Validate catalog hooks
-ansible-playbook -i inventory/sample generic.yml --check
-
-# Format Python code
-python -m black app/
-# or
-ruff format app/
+# This script reads config/config_remote-deployer-cli.MASTER_FILE.yml and generates:
+# - Ansible inventory files
+# - Vault files for secrets
+# - Host-specific deployment playbooks (deploy.<host>-<scenario>.yml)
+# - Deployment wrapper scripts (deploy.<host>-<scenario>.sh)
 ```
 
-**Required Environment Variables:**
-- `PROJECT_ROOT_DIR` - Project root directory
-- `API_BACKEND_PUBLIC_PLAYBOOKS_DIR` - Path to range42-playbooks
-- `API_BACKEND_WWWAPP_PLAYBOOKS_DIR` - Backend playbooks directory
-- `API_BACKEND_INVENTORY_DIR` - Ansible inventory directory
-- `API_BACKEND_VAULT_FILE` - Ansible vault file path
-- `VAULT_PASSWORD_FILE` or `VAULT_PASSWORD` - Vault authentication
-
-### Deployer UI (Vue 3 + Vite)
+### Vault Management
 
 ```bash
-# Setup
-cd pub/range42-deployer-ui
-npm ci
+# Create a new Ansible vault
+./config/vault.create.sh
 
-# Development server (hot reload)
-npm run dev
+# Edit an existing vault
+./config/vault.edit.sh
 
-# Production build
-npm run build
+# View vault contents (read-only)
+./config/vault.view.sh
 
-# Preview production build
-npm run preview
-
-# Run tests
-npm run test:unit              # Vitest unit tests
-npm run test:e2e               # Playwright e2e tests
-npm run test:e2e:ui            # Playwright UI mode
-
-# Linting
-npm run lint
-
-# Install Playwright browsers (before first e2e run)
-npx playwright install
+# Change vault password
+./config/vault.changepwd.sh
 ```
 
-### Ansible Roles and Playbooks
+### Role Execution
 
 ```bash
-# Install role dependencies
-ansible-galaxy install -r requirements.yml
+# Option 1: Use generated deployment script
+./deploy.<host>-<scenario>.sh
 
-# Run playbook with check mode
-ansible-playbook -i inventory/px-testing playbooks/demo_lab.yml --check
+# Option 2: Run Ansible playbook directly
+ansible-playbook -i inventories/<host>.yml deploy.<host>-<scenario>.yml -K
 
-# Lint playbooks
-ansible-lint playbooks/*.yml
+# Option 3: Test with check mode (dry run)
+ansible-playbook -i inventories/<host>.yml deploy.<host>-<scenario>.yml --check
+```
+
+### SSH Utilities
+
+```bash
+# Start SSH agent
+./utils/ssh-agent.start.sh
+
+# Unload all SSH keys to text format
+./utils/ssh-add.unload_all_keys.to.text.sh
 ```
 
 ## Code Architecture
 
-### Backend API (FastAPI)
+### Main Entrypoint Script
 
-**Structure:**
-- `app/main.py` - FastAPI application entry point with CORS and vault initialization
-- `app/routes/` - API router definitions organized by resource type
-- `app/schemas/` - Pydantic models for request/response validation
-- `app/utils/` - Helper utilities (inventory checks, text cleaning, VM ID resolution)
-- `app/runner.py` - Ansible runner integration
-- `playbooks/` - Backend-specific playbooks
-- `inventory/` - Ansible inventory files
+**`prepare-infrastructure-workspace.sh`**
+- Reads master configuration from `config/config_remote-deployer-cli.MASTER_FILE.yml`
+- Generates Ansible inventories for target deployment hosts
+- Creates vault files for sensitive data (passwords, keys, tokens)
+- Generates host-specific playbooks and wrapper scripts
+- Validates configuration and sets up workspace structure
 
-**Key Patterns:**
-- Routes mirror catalog bundle structure (e.g., `bundles/core/proxmox/configure/default/vms/`)
-- Schemas define data models for Proxmox operations (VMs, snapshots, networks, firewalls)
-- Backend calls `range42-ansible_roles-proxmox_controller` role to interact with Proxmox API
-- Results returned as JSON from Ansible playbook execution
+### Ansible Role: `configure.deployer-cli`
 
-### Deployer UI (Vue 3)
+The core role that configures the deployment machine. Tasks are organized in numbered sequence files:
 
-**Structure:**
-- `src/components/` - Shared Vue components
-- `src/stores/` - Pinia state management stores
-- `src/composables/` - Reusable composition functions
-- `src/composables/runnerCalls/bundle/` - Backend API call wrappers
-- `src/locales/` - i18n translation files per language
-- `src/router/` - Vue Router configuration
-- `e2e/` - Playwright end-to-end tests
+**Task Execution Order:**
+1. **`00_dev_mode.yml`** - Development mode configuration (optional setup for testing)
+2. **`01_packages.yml`** - Install required system packages (Python, Ansible, git, etc.)
+3. **`02_shell.yml`** - Configure shell environment (bash/zsh, aliases, prompt)
+4. **`03_dot_files.yml`** - Deploy dotfiles (.vimrc, .bashrc, .gitconfig, etc.)
+5. **`04_ssh_client.yml`** - Configure SSH client and deploy keys
+6. **`05_git.yml`** - Set up git configuration (user.name, user.email, aliases)
+7. **`06_symlinks.yml`** - Create symbolic links for tools and scripts
+8. **`07_01_deploy_inventory.yml`** - Deploy Ansible inventory files
+9. **`07_02_deploy_ssh_keys.yml`** - Deploy SSH keys for infrastructure access
+10. **`07_03_deploy_secrets_tarball.yml`** - Deploy encrypted secrets archive
+11. **`07_04_deploy_sources_file.yml`** - Deploy APT sources configuration
+12. **`08_clean_up.yml`** - Remove temporary files and clean workspace
+13. **`09_dirty_fixes.yml`** - Apply workarounds for known issues
+14. **`10_context_tools.yml`** - Install context-specific tools and utilities
 
-**Key Patterns:**
-- VueFlow canvas for node-based infrastructure design
-- Each node represents infrastructure component (VM, network, Docker container)
-- Node status indicators: gray (incomplete), orange (ready), red (error), green (deployed)
-- LocalStorage for project persistence (future: SQLite WASM)
-- DaisyUI + Tailwind CSS for styling
-- i18n with `vue-i18n` (English default, French provided)
+**Role Structure:**
+- `tasks/` - Numbered YAML files defining sequential tasks
+- `templates/` - Jinja2 templates for generated configuration files (parameterized, no hardcoding)
+- `files/` - Static files to be deployed as-is
+- `defaults/main.yml` - Default variable values
+- `main.yml` - Role entry point that includes all task files
 
-### Catalog (Ansible + Docker)
+### Configuration Pattern
 
-**Structure:**
-- `02_ansible_layer/` - Ansible roles for system configuration
-- `03_container_layer/docker/_ctf/` - CVE and misconfiguration containers
-- `04_gamification_layer/` - Themed templates for training scenarios
+**Master Configuration File:** `config/config_remote-deployer-cli.MASTER_FILE.yml`
 
-**Key Roles:**
-- `software.install.*` - Software installation roles (Docker, Tailscale, Wazuh, etc.)
-- `software.configure.*` - Configuration roles (firewalls, Docker compose, etc.)
-- `systems.checks.*` - System validation roles
-- `ansible.utils` - Utility tasks (wait for cloud-init, check SSH, delete Tailscale)
+This YAML file drives the entire deployment process and contains:
+- Host definitions (deployment machine targets)
+- User credentials and SSH keys
+- Proxmox connection details
+- Ansible vault passwords
+- Environment-specific variables
+- DEV_MODE flag for development environments
 
-**CVE Catalog Pattern:**
-Each CVE contains:
-- `compose.yml` - Docker compose definition
-- `poc/meta.json` - Metadata about the vulnerability
-- Organized by category: `web/`, `network/`, `system/`, `crypto/`
-
-### Playbooks (Ansible Scenarios)
-
-**Structure:**
-- `bundles/` - Reusable unit actions (create VMs, snapshots, install software)
-- `scenarios/` - Complete infrastructure scenarios (demo_lab)
-
-**Bundle Pattern:**
-- `bundles/core/proxmox/configure/default/vms/` - VM lifecycle operations
-- `bundles/core/linux/ubuntu/install/` - Ubuntu software installation
-- Each bundle has `main.yml` entry point and may include multi-stage execution
-
-### Proxmox Controller (Ansible Role)
-
-**Capabilities:**
-- VM/LXC lifecycle: create, delete, start, stop, pause, resume, clone
-- Snapshots: create, revert, delete, list (for VMs and LXC)
-- Templates: create VM templates, cloud-init configuration
-- Storage: list ISOs/templates, download ISOs
-- Networking: add/delete/list network interfaces (VMs and nodes)
-- Firewall: enable/disable at DC/node/VM levels, manage iptables rules and aliases
-- Configuration: get VM CPU/RAM/CDROM config, set tags
-
-**Task Files:**
-Located in `tasks/include/` organized by function:
-- `vm/` - VM operations
-- `lxc/` - LXC operations
-- `snapshot/` - Snapshot management
-- `firewall/` - Firewall configuration
-- `network/` - Network management
-- `storage/` - Storage operations
-- `templates/` - Template and cloud-init
+**Variable-Driven Design:**
+- All configuration is defined in the master YAML
+- Templates use Jinja2 variables to remain environment-agnostic
+- No hardcoded values in templates or tasks
+- Enables multi-environment support (dev, staging, production)
 
 ## Coding Conventions
 
-### Python (Backend API)
-- Follow PEP 8 with 4-space indentation
-- Type hints on all public functions
-- Routers in `app/routes/` named after catalog bundles
-- Schemas use Pydantic models
-- Format with `black` or `ruff format`
+### Shell Scripts (Bash)
 
-### Vue/TypeScript (Deployer UI)
-- `<script setup>` composition API
-- PascalCase for component filenames (e.g., `NodePalette.vue`)
-- Colocated `*.spec.ts` tests in `__tests__/` directories
-- Pinia stores in `src/stores/` with camelCase keys
-- Follow i18n conventions in `docs/i18n-guide.md`
+- Use bash with safety flags (`set -euo pipefail` for strict error handling)
+- Follow existing formatting style in the repository
+- Keep scripts focused and single-purpose
+- Add comments for non-obvious operations
+- Use descriptive variable names
 
-### Ansible (Playbooks/Roles)
-- 2-space indentation for YAML
-- Uppercase task labels mirroring role names: `RUN ACTION - role-name`
-- Playbook structure: init → stage_00 → stage_01 → cleanup
-- Role naming: `category.action.description` (e.g., `software.install.docker`)
+**Example:**
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Descriptive comment about what this does
+VAULT_FILE="${VAULT_FILE:-config/vault.yml}"
+ansible-vault edit "${VAULT_FILE}"
+```
+
+### Ansible YAML
+
+- **Indentation:** 2 spaces (strict, no tabs)
+- **Task naming:** Descriptive, action-oriented labels
+- **Task file sequencing:** Numbered files in `tasks/` (e.g., `01_packages.yml`, `02_shell.yml`)
+- **Templates:** Keep parameterized, avoid environment-specific hardcoding
+- **Variables:** Define in `defaults/main.yml` or master config file
+
+**Task Naming Convention:**
+```yaml
+- name: INSTALL - Essential deployment packages
+  apt:
+    name: "{{ deployer_packages }}"
+    state: present
+```
+
+### Configuration Files
+
+- Master config uses snake_case for keys
+- YAML anchors and aliases encouraged for DRY configuration
+- Comments should explain "why" not "what"
+- Keep sensitive data in vaults, reference via variables
 
 ## Testing Guidelines
 
-### Backend API
-- Document reproducible test steps in `curl_utils/` scripts
-- Include `ansible-playbook --check` validation against `inventory/px-testing`
-- Provide HTTPX or curl command examples for manual testing
+**Manual Validation Process:**
 
-### Deployer UI
-- Unit tests: `npm run test:unit` (Vitest, located in `src/**/__tests__/`)
-- E2E tests: `npm run test:e2e` (Playwright, located in `e2e/`)
-- Include Playwright traces for regression reports
-- Test i18n strings across all supported locales
+1. **Workspace Generation:**
+   ```bash
+   # Run workspace prep and verify no errors
+   ./prepare-infrastructure-workspace.sh
+
+   # Verify generated files exist
+   ls -la inventories/
+   ls -la deploy.*.yml
+   ls -la deploy.*.sh
+   ```
+
+2. **Dry Run Testing:**
+   ```bash
+   # Test playbook with check mode (no actual changes)
+   ansible-playbook -i inventories/<host>.yml deploy.<host>-<scenario>.yml --check
+   ```
+
+3. **Safe Environment Execution:**
+   - Run generated playbook in a development/testing environment first
+   - Verify each task completes successfully
+   - Check deployed configuration files on target host
+   - Validate SSH connectivity, git config, installed packages
+
+4. **Vault Operations:**
+   ```bash
+   # Test vault can be created, edited, viewed
+   ./config/vault.create.sh
+   ./config/vault.edit.sh
+   ./config/vault.view.sh
+   ```
+
+**No Automated Tests:**
+- This repository has no CI/CD or automated test suite
+- All validation is manual and operator-driven
+- Test in isolated/safe environments before production use
+
+## Development Workflow
+
+### DEV_MODE Configuration
+
+The project supports a `DEV_MODE` flag in the master configuration file:
+- When enabled, alters setup process for development/testing
+- May skip certain production-only steps
+- Useful for iterative development on the deployment machine itself
+
+### Making Changes
+
+1. **Modify master config:** Edit `config/config_remote-deployer-cli.MASTER_FILE.yml`
+2. **Update role tasks:** Modify numbered task files in `roles/configure.deployer-cli/tasks/`
+3. **Update templates:** Edit Jinja2 templates in `roles/configure.deployer-cli/templates/`
+4. **Test changes:** Run workspace prep and execute playbook in check mode
+5. **Validate:** Deploy to test environment and verify results
+
+### Adding New Deployment Targets
+
+1. Add new host entry in master config file
+2. Run `prepare-infrastructure-workspace.sh` to generate inventory
+3. New `deploy.<host>-<scenario>.yml` and `.sh` files will be created
+4. Test with check mode before actual deployment
 
 ## Commit Guidelines
 
 Use imperative, component-prefixed subjects:
-- `ui: add bundle selector component`
-- `api: harden inventory loader validation`
-- `catalog: add CVE-2025-12345 container`
-- `playbooks: update demo_lab scenario`
+- `role: adjust deployer-cli git config`
+- `scripts: tighten workspace prep validation`
+- `config: add new host definition for staging`
+- `templates: parameterize SSH key paths`
+- `vault: add vault rotation script`
 
-Mention affected playbooks or bundles in commit body. Link driving issue if applicable.
+**Commit Body:**
+- Mention affected configuration files or templates
+- Document any breaking changes to master config schema
+- Link related issues if applicable
 
 ## Pull Request Guidelines
 
-- Link driving issue
-- List manual verification commands (playbook runs, curl tests, UI workflows)
-- Attach screenshots for UI changes or terminal output for API/playbook changes
-- Document rollback steps for deployment scripts
-- Request review from module owner (@deployer-ui, @backend-api, @catalog)
-- Wait for one approval plus passing CI before merging
+- Link driving issue or feature request
+- Document manual validation steps performed
+- List affected hosts or environments
+- Describe rollback procedure if deployment fails
+- Mention any new variables added to master config
+- Attach terminal output showing successful playbook execution
+- Request review from infrastructure/operations team
+- Wait for approval before merging
 
 ## Security Context
 
-This is a cyber training platform containing intentionally vulnerable configurations and CVE reproductions for educational purposes. The catalog includes:
-- Misconfigured services (FTP anonymous access, privilege escalation scenarios)
-- Known CVE reproductions (OpenSSL, Sudo, web framework vulnerabilities)
-- Defensive tooling (Wazuh monitoring, firewall configurations)
+This deployment machine has elevated privileges and access to:
+- **Proxmox API credentials** for full infrastructure control
+- **SSH keys** for accessing all lab hosts
+- **Ansible vaults** containing sensitive passwords and tokens
+- **Network access** to management interfaces
 
-These are **authorized security testing environments** for defensive security training and CTF challenges. All vulnerable components are containerized and intended for controlled lab environments.
+**Security Considerations:**
+- Vault files must remain encrypted at rest
+- SSH keys should be passphrase-protected
+- Deployment machine should be on isolated management network
+- Access to this machine should be restricted and audited
+- This is **authorized infrastructure management** for cyber training lab operations
+
+**Intentional Vulnerabilities:**
+This repository does NOT contain vulnerable code. It configures the secure deployment/jump host. The vulnerable systems are deployed BY this machine TO the RANGE42 lab environment for **authorized security testing and CTF challenges**.
+
+## Integration with RANGE42 Ecosystem
+
+This deployment machine serves as the orchestration hub for:
+- **range42-backend-api** - FastAPI orchestration layer (optional)
+- **range42-deployer-ui** - Vue 3 visual infrastructure designer (optional)
+- **range42-catalog** - Ansible roles and Docker compose bundles
+- **range42-playbooks** - Centralized playbooks for scenarios
+- **range42-ansible_roles-proxmox_controller** - Proxmox API control role
+
+The deployer machine is configured to:
+- Clone and manage these repositories
+- Execute playbooks against Proxmox infrastructure
+- Provide a consistent development/operations environment
+- Centralize credentials and access control
