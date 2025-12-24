@@ -1,0 +1,88 @@
+- name: on going fixes
+
+  block:
+    - name: on going fixes - INVENTORY file renaming to /off_cr_42.yml
+      ansible.builtin.template:
+        src: inventory.demo_lab.j2
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/inventory/off_cr_42.yml"
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+
+    - name: on going fixes - SECRET file renaming to /off_cr_42.yml
+      ansible.builtin.copy:
+        src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/default_vault.yml"
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/off_cr_42.yml"
+        remote_src: true
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+
+    - name: on going fixes - SECRET file renaming to px-testing.cr42_tailscale.yml
+      ansible.builtin.copy:
+        src: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/default_vault.yml"
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/secrets/px-testing.cr42_tailscale.yml"
+        remote_src: true
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+
+    #####
+
+- name: on going fixes - dev mode
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
+
+  block:
+    #
+    - name: change group write + setgid on all dev directories
+      ansible.builtin.command: >
+        find /home/{{ DEV_MODE_DEPLOYER_USER }}/{{ item }}
+        -type d
+        -exec chmod g+ws {} +
+      loop:
+        - range42
+        - range42.config
+      changed_when: false
+
+    - name: on going fixes - dev mode - create quick perm fix script
+      ansible.builtin.copy:
+        dest: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/fix_dev_permissions.sh"
+        owner: "{{ DEV_MODE_DEPLOYER_USER }}"
+        group: "{{ DEV_MODE_DEPLOYER_GROUP }}"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+
+
+          echo "Fixing dev permissions for {{ DEV_MODE_DEPLOYER_USER }}"
+
+          BASE_DIR="/home/{{ DEV_MODE_DEPLOYER_USER }}"
+          GROUP="{{ DEV_MODE_DEPLOYER_GROUP }}"
+
+          for dir in range42 range42.config; do
+
+            TARGET="${BASE_DIR}/${dir}"
+
+            if [ ! -d "${TARGET}" ]; then
+              echo " Skipping ${TARGET} (not found)"
+              continue
+            fi
+
+            echo ":: fixing directories permissions on ${TARGET}"
+            find "${TARGET}" -type d -exec chmod g+ws {} +
+
+            echo ":: fixing group ownership on ${TARGET}"
+            chgrp -R "${GROUP}" "${TARGET}"
+          done
+
+          echo
+          echo "perm fixed."
+          echo
+          echo "!!! IMPORTANT !!!"
+          echo "You MUST refresh your group membership:"
+          echo
+          echo "    newgrp {{ DEV_MODE_DEPLOYER_GROUP }}  or logout / login"
+          echo

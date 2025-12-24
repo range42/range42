@@ -1,0 +1,46 @@
+
+- name: upload SSH keys files - to deployer-cli
+
+  block:
+    #### #### #### #### #### #### #### #### ####
+    #### #### #### #### #### #### #### #### ####
+    - name: copy ssh keys dir - for backup
+      ansible.builtin.copy:
+        src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/"
+        dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/ssh_keys/"
+        mode: "0600"
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        directory_mode: "0700"
+    #### #### #### #### #### #### #### #### ####
+    #### #### #### #### #### #### #### #### ####
+
+    - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/backend_keys/
+      # /home/{{DEPLOYER_CLI_USER}}/.ssh/[infrastructure_id-scenario_id]/backend_keys
+      ansible.builtin.copy:
+        src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/backend_keys/"
+        dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+        directory_mode: "0700"
+
+    - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/jump_keys/
+      # /home/{{DEPLOYER_CLI_USER}}/.ssh/[infrastructure_id-scenario_id]/backend_keys
+      ansible.builtin.copy:
+        src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/jump_keys/"
+        dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+        directory_mode: "0700"
+
+    - name: configure ssh client - copy ssh keys in  {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/student_keys/
+      # /home/{{DEPLOYER_CLI_USER}}/.ssh/[infrastructure_id-scenario_id]/backend_keys
+      ansible.builtin.copy:
+        src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/student_keys/"
+        dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR }}"
+        owner: "{{ DEPLOYER_CLI_USER }}"
+        group: "{{ DEPLOYER_CLI_USER }}"
+        mode: "0600"
+        directory_mode: "0700"

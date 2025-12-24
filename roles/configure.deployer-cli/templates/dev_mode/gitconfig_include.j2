@@ -1,0 +1,11 @@
+
+[user]
+    name = {{ DEV_MODE_GITCONFIG_NAME }}
+    email = {{ DEV_MODE_GITCONFIG_EMAIL }}
+
+[core]
+    sshCommand = ssh -i ~/.{{ DEV_MODE_GITHUB_SSH_KEY_FILE_PATH }}
+
+[url "git@github.com:"]
+    insteadOf = https://github.com/
+
