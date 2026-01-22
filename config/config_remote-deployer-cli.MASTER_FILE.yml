@@ -68,7 +68,7 @@ student_additionnal_keys_count: 5
 # ::
 ################################################################################
 
-ssh_client__dst_config_dir: "/home/dev/.ssh"
+ssh_client__dst_config_dir: "/home/user/.ssh"
 
 ################################################################################
 # 2) INFRASTRUCTURE IDENTIFICATION
@@ -79,10 +79,10 @@ ssh_client__dst_config_dir: "/home/dev/.ssh"
 # ::                            **** values will be stored inside Ansible Vault.
 ################################################################################
 
-infrastructure_codename: "hv-hx" # recommended format max 6 chars...
-infrastructure_scenario: "demo_lab" # default deployed scenario
+infrastructure_codename: "pve" # recommended format max 6 chars...
+infrastructure_scenario: "_init_lab" # default deployed scenario
 # infrastructure_proxmox_address: "redacted"
-infrastructure_proxmox_address: "192.168.42.242"
+infrastructure_proxmox_address: "192.168.145.128"
 
 # INFRASTRUCTURE STORAGE
 
@@ -99,14 +99,14 @@ infrastructure_proxmox_default_network_card_interface: "enp3s0" # will be used a
 # ::
 ################################################################################
 
-deployer_cli_ip: "192.168.42.111"
+deployer_cli_ip: "127.0.0.1"
 deployer_cli_ssh_port: "22"
-deployer_cli_user: "range42-operator" # default deployer-cli username
+deployer_cli_user: "user" # default deployer-cli username
 
 # DEBUG NOTE :
 # must be rename to deployer_cli_user_ssh_known_hosts
 
-deployer_cli_user_ssh_known_hosts: "/home/range42-operator/.ssh/known_hosts" # :: **** values will be stored inside Ansible Vault.
+deployer_cli_user_ssh_known_hosts: "/home/user/.ssh/known_hosts" # :: **** values will be stored inside Ansible Vault.
 
 ################################################################################
 # 4) PROXMOX API ACCESS
@@ -121,13 +121,13 @@ deployer_cli_user_ssh_known_hosts: "/home/range42-operator/.ssh/known_hosts" # :
 ################################################################################
 
 # proxmox_api_host: "127.0.0.1:18007"
-proxmox_api_host: "192.168.42.242:8006" # proxmox direct mode
+proxmox_api_host: "192.168.145.128:8006" # proxmox direct mode
 
-proxmox_api_user: "abnaaaa_api_master01@pam"
-proxmox_api_token_id: "aanabaaa_api_master01"
-proxmox_api_token_secret: "aaabana_api_master01" # This field will be reset on api_token creation or imported from child configuration.
+proxmox_api_user: "api_master@pam"
+proxmox_api_token_id: "api_master"
+proxmox_api_token_secret: "api_master" # This field will be reset on api_token creation or imported from child configuration.
 
-proxmox_node: "hv-hx" # STRICT proxmox node name - IMPORTANT
+proxmox_node: "pve" # STRICT proxmox node name - IMPORTANT
 
 ################################################################################
 # 4.1) PROXMOX JUMP USER
@@ -147,7 +147,7 @@ jump_on_proxmox: "YES" # default value
 # WARNING : if set to NO, the jump_user must exist on the jump_host.
 #
 
-jump_host: "192.168.42.242" # by default jumper user is on proxmox server (you can of course modify this value)
+jump_host: "192.168.145.128" # by default jumper user is on proxmox server (you can of course modify this value)
 jump_user: "jump_user"
 jump_port: "22"
 jump_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
