@@ -183,10 +183,16 @@ usage() {
 	printf '  %s - Install deployer-cli console\n\n' "${SCRIPT_NAME}"
 
 	printf 'SYNOPSIS\n'
-	printf '  %s [-h|--help]\n\n' "${SCRIPT_NAME}"
+	printf '  %s [OPTIONS]\n\n' "${SCRIPT_NAME}"
+
+	printf 'OPTIONS\n'
+	printf '  -h, --help          Show this help\n'
+	printf '  -c, --check-deps    Check required binaries and exit\n'
+	printf '  -d, --debug         Print parsed variables and exit\n\n'
 
 	printf 'EXAMPLE\n'
 	printf '  %s\n' "${SCRIPT_NAME}"
+	printf '  %s --check-deps\n' "${SCRIPT_NAME}"
 	printf '\n\n'
 }
 
@@ -268,6 +274,37 @@ require_binary() {
 		print_red_warning '  :: ERROR - Required binary not found: %s\n' "${1}"
 		exit 1
 	}
+}
+
+SED_BIN="sed"
+
+init_sed() {
+	local OS_NAME
+	OS_NAME="$(uname -s)"
+
+	if [ "${OS_NAME}" = "Darwin" ]; then
+		if command -v gsed >/dev/null 2>&1; then
+			SED_BIN="gsed"
+		else
+			print_fail "gsed is required on macOS. Install it with: brew install gnu-sed"
+			exit 1
+		fi
+	else
+		SED_BIN="sed"
+	fi
+}
+
+check_dependencies() {
+	init_sed
+
+	require_binary ssh-add
+	require_binary ssh-keygen
+	require_binary ssh-copy-id
+	require_binary yq
+
+	if [[ "${GENERATE_SSH_KEYS_PASSWORD}" == "YES" || "${GENERATE_VM_PASSWORD}" == "YES" ]]; then
+		require_binary pwgen
+	fi
 }
 
 generate_ssh_key_if_missing() {
@@ -361,13 +398,13 @@ update_yaml_key() {
 
 	#### yaml quoted value
 	local QUOTED_VALUE
-	QUOTED_VALUE=$(printf '%s' "${VALUE}" | sed 's/"/\\"/g')
+	QUOTED_VALUE=$(printf '%s' "${VALUE}" | "${SED_BIN}" 's/"/\\"/g')
 
 	#### Check if key exists
 	if grep -qE "^${KEY}:" "${T_FILE}"; then
 		print_step "Updating YAML key '%s'" "${KEY}"
 		# Replace the existing key
-		sed -i "s|^${KEY}:.*|${KEY}: \"${QUOTED_VALUE}\"|" "${T_FILE}"
+		"${SED_BIN}" -i "s|^${KEY}:.*|${KEY}: \"${QUOTED_VALUE}\"|" "${T_FILE}"
 	else
 		print_step "Adding YAML key '%s' (not present)" "${KEY}"
 		{
@@ -1506,6 +1543,11 @@ case "${1:-}" in
 	usage
 	exit 0
 	;;
+-c | --check-deps)
+	check_dependencies
+	print_check "All required dependencies are installed"
+	exit 0
+	;;
 -d | --debug)
 	print_variables
 	exit 0
@@ -1514,15 +1556,9 @@ case "${1:-}" in
 
 	#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-	require_binary ssh-add
-	require_binary ssh-keygen
-	require_binary ssh-copy-id
-	#
-	require_binary yq
+	check_dependencies
 
-	if [[ "${GENERATE_SSH_KEYS_PASSWORD}" == "YES" || "${GENERATE_VM_PASSWORD}" == "YES" ]]; then
-		require_binary pwgen
-	else
+	if [[ "${GENERATE_SSH_KEYS_PASSWORD}" != "YES" && "${GENERATE_VM_PASSWORD}" != "YES" ]]; then
 		exit 1
 	fi
 
