@@ -1,0 +1,11 @@
+services:
+  range42deployer:
+    build:
+      context: .
+    container_name: range42deployer
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - "/etc/localtime:/etc/localtime:ro"
+    stdin_open: true
+    tty: true
