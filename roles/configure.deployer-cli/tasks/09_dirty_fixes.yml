@@ -32,7 +32,7 @@
 - name: on going fixes - dev mode
 
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
 
   block:
