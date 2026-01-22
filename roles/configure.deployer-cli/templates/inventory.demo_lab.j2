@@ -42,10 +42,19 @@ all:
             r42.vuln-box-02:
             r42.vuln-box-03:
             r42.vuln-box-04:
-
+#
+# TEMP additions before j2 move in scenario
+# 
+        r42_init_vm_group: # TEMP additions
+          hosts:
+            r42.init-vm-00:
+            r42.init-vm-01:
+            r42.init-vm-02:
+            r42.init-vm-03:
+            r42.init-vm-04:
+            
         ####
 
-        #px-testing: # must be rename as proxmox
         proxmox:
           hosts:
             {{ INFRASTRUCTURE_CODENAME }}:
