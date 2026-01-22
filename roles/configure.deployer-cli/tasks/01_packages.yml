@@ -25,7 +25,7 @@
         state: started
 
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
       
 
@@ -54,7 +54,7 @@
         success_msg: " clock is sync !"
 
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -72,7 +72,7 @@
         upgrade: dist
 
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -130,7 +130,7 @@
         apt-get install -y python3 ansible
 
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -147,7 +147,7 @@
     line: "LANG=en_US.UTF-8"
 
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
 #
