@@ -6,12 +6,12 @@
 
 - import_tasks: 00_dev_mode.yml
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
 
 - import_tasks: 01_packages.yml
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -50,5 +50,5 @@
       Otherwise, permissions will NOT be applied correctly.
 
   when:
-    - ansible_facts.distribution == 'Ubuntu'
+    # - ansible_facts.distribution == 'Ubuntu'
     - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
