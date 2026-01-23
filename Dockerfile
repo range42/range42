@@ -17,9 +17,7 @@ RUN apt-get -q update \
     vim \
     ansible \
     python3 \
-    # ssh-add \
-    # ssh-keygen \
-    # ssh-copy-id \
+    python3-pip \
     && apt-get -qy --purge autoremove \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -32,5 +30,8 @@ WORKDIR /home/$DEPLOYER_CLI_CONFIG_USER
 USER $DEPLOYER_CLI_CONFIG_USER
 
 COPY range42 ./range42
+COPY requirements.txt ./requirements.txt
+
+RUN pip3 install --break-system-packages -r requirements.txt
 
 # ENTRYPOINT ["python3", "-m", "range42"]
