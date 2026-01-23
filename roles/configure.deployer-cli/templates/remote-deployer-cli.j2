@@ -19,7 +19,7 @@ Host px.{{ INFRASTRUCTURE_CODENAME }}.redirect_www.proxmox
 #                                      PX ROOT USER SSH ACCESS 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### 
 
-Host px.{{ INFRASTRUCTURE_CODENAME }}-ssh_cli.root px-testing-cli              # previously - px-testing-cli. 
+Host px.{{ INFRASTRUCTURE_CODENAME }}-ssh_cli.root proxmox-cli              # previously - px-testing-cli. 
 	Hostname {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }} 
 	User root                                         # we root user for vm disk extend
     IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root
@@ -105,6 +105,33 @@ Host r42.vuln-box-04
     Hostname 192.168.42.174
 
 Host r42.vuln-box-*
+    User alice
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice
+    # # # # # # # # /home/range42-operator/.ssh/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice"
+    Port 22
+    ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### 
+#
+# TEMP additions before j2 move in scenario
+# 
+
+Host r42.init-vm-00 
+    Hostname 192.168.142.120
+
+Host r42.init-vm-01 
+    Hostname 192.168.142.121
+
+Host r42.init-vm-02
+    Hostname 192.168.142.122
+
+Host r42.init-vm-03 
+    Hostname 192.168.142.123
+
+Host r42.init-vm-04 
+    Hostname 192.168.142.124
+
+Host r42.init-box-*
     User alice
     IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice
     # # # # # # # # /home/range42-operator/.ssh/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO}}-deployer-key_alice"
