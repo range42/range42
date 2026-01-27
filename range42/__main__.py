@@ -7,7 +7,10 @@ from .preparator import Preparator
 def main():
     config = Config()
     logging.debug(f"Variables configured:\n\t{config}")
-    preparator = Preparator(config)
+    try:
+        Preparator(config)
+    except Exception as e:
+        logging.error(f"Something went wrong: {e}")
 
 
 if __name__ == "__main__":
