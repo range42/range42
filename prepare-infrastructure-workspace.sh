@@ -153,7 +153,7 @@ check_pwgen_dependency() {
 #### IMPORT VARIABLES FROM CONFIG FILE
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 load_configuration() {
-	#### #### ##### ##### CONTEXT - PASSWORG AUTO GENERATION
+	#### #### ##### ##### CONTEXT - PASSWORD AUTO GENERATION
 	GENERATE_SSH_KEYS_PASSWORD=$(
 		yq -r '.context_auto_generate_ssh_keys' "${DEPLOYER_CONFIGURATION_FILE_PATH}" |
 			tr '[:lower:]' '[:upper:]'
