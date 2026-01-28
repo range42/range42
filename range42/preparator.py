@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -7,15 +8,17 @@ import stat
 import subprocess
 from pathlib import Path
 
+import requests
 from jinja2 import Environment, FileSystemLoader
 
 import range42.utils as utils
-from range42.config import Config
+from range42.config import Config, RuntimeState
 
 
 class Preparator:
     def __init__(self, config: Config):
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.state = RuntimeState()
         self.conf = config
 
         self.student_extra_keys = []
@@ -47,7 +50,23 @@ class Preparator:
                 f"Unable to setup SSH jump access to proxmox at {self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}"
             )
 
-        self._proxmox_generate_api_credentials()
+        if not self._proxmox_generate_api_credentials():
+            raise Exception(
+                f"Unable to setup Proxmox API for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
+            )
+
+        if not self._test_proxmox_api_token():
+            raise Exception(
+                f"Unable to authenticate to Proxmox API with {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} and the tokenID {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}"
+            )
+
+        if not self._prepare_environment_ansible_vault():
+            raise Exception(
+                f"Unable to create Ansible vault at {self.conf.INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL}"
+            )
+
+        self.create_remote_deployer_playbook()
+
         # TODO: proxmox_fix_remote_locale
 
     def _prepare_environment_ssh_keys(self) -> bool:
@@ -580,9 +599,199 @@ class Preparator:
         return True
 
     def _proxmox_generate_api_credentials(self) -> bool:
+        self.logger.info(
+            f"Setting up Proxmox API for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
+        )
+
         if self.conf.INFRASTRUCTURE_PROXMOX_API_USER not in self._exec_on_proxmox(
-            "pveum user list --enabled"
+            "pveum user list"
         ):
-            self.logger.debug(
-                f"User {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} not found on Proxmox"
+            self.logger.info(
+                f"Creating {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} user on Proxmox"
             )
+            if "OK" not in self._exec_on_proxmox(
+                f"pveum user add {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam && echo OK"
+            ):
+                self.logger.error(
+                    f"Unable to create {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} user"
+                )
+                return False
+        else:
+            self.logger.info(
+                f"User {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} already exists on Proxmox"
+            )
+
+        res_token_list = self._exec_on_proxmox(
+            f"pveum user token list {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam"
+        )
+        if (
+            "tokenid" not in res_token_list
+            or self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID not in res_token_list
+        ):
+            self.logger.info(
+                f"Creating tokenID {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID} for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
+            )
+            res = self._exec_on_proxmox(
+                f"pveum user token add {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID} --privsep 0 --output-format json"
+            )
+            if "full-tokenid" not in res:
+                self.logger.error(
+                    f"Unable to create token for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
+                )
+                return False
+
+            self.state.proxmox_api_token_secret = json.loads(res).get("value")
+            self.logger.debug(
+                f"New token generated (id: {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}): {self.state.proxmox_api_token_secret}"
+            )
+
+            self.logger.info(
+                f"Setting Administrator role to {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
+            )
+            if "OK" not in self._exec_on_proxmox(
+                f"pveum acl modify / -user {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam -role Administrator && echo OK"
+            ):
+                self.logger.error(
+                    f"Unable to set Administrator role to {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
+                )
+                return False
+        else:
+            self.logger.info(
+                f"TokenID {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID} already exists for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
+            )
+        return True
+
+    def _test_proxmox_api_token(self) -> bool:
+        if self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET:
+            self.state.proxmox_api_token_secret = (
+                self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET
+            )
+
+        self.logger.info(
+            f"Testing Proxmox API token on host {self.conf.INFRASTRUCTURE_PROXMOX_API_HOST}"
+        )
+        self.logger.debug(
+            f"Using header - Authorization: PVEAPIToken={self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam!{self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}={self.state.proxmox_api_token_secret}"
+        )
+
+        url = f"https://{self.conf.INFRASTRUCTURE_PROXMOX_API_HOST}/api2/json/nodes"
+        headers = {
+            "Authorization": f"PVEAPIToken={self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam!{self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}={self.state.proxmox_api_token_secret}"
+        }
+
+        try:
+            response = requests.get(url, headers=headers, verify=False, timeout=10)
+            http_code = response.status_code
+            body = response.text
+        except requests.RequestException as e:
+            self.logger.error("Connection to Proxmox failed (network/TLS error)")
+            self.logger.debug(f"Error: {e}")
+            return False
+
+        if http_code == 401:
+            self.logger.error("Proxmox API authentication failed (invalid token)")
+            self.logger.debug("HTTP 401 received")
+            return False
+
+        if http_code != 200:
+            self.logger.error(f"Unexpected HTTP response from Proxmox: {http_code}")
+            self.logger.debug(body)
+            return False
+
+        self.logger.info("Proxmox API token is valid")
+        try:
+            body_json = response.json()
+            self.logger.debug(json.dumps(body_json, indent=2))
+        except json.JSONDecodeError:
+            self.logger.error(f"Unable to decode JSON response: {body}")
+
+        return True
+
+    def _prepare_environment_ansible_vault(self):
+        vault_dir = Path(
+            self.conf.INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL
+        )
+        vault_file = vault_dir / "default_vault.yml"
+        vault_pass_file = vault_dir / "vault_pass.txt"
+        vault_password = utils.generate_password()
+
+        self.logger.info(f"Preparing Ansible vault at {vault_dir}")
+        vault_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        vault_pass_file.write_text(f"{vault_password}\n", encoding="utf-8")
+        vault_pass_file.chmod(0o600)
+
+        ssh_keys_pub = {
+            "ssh_key_deployer_admin_pub_key": utils.read_ssh_pub(
+                self.conf.SSH_KEY_DEPLOYER_ADMIN_ALICE
+            ),
+            "ssh_key_student_user_pub_key": utils.read_ssh_pub(
+                self.conf.SSH_KEY_STUDENT_USER_BOB
+            ),
+        }
+
+        ssh_keys = {
+            "ssh_key_deployer_admin": self.conf.SSH_KEY_DEPLOYER_ADMIN_ALICE,
+            "ssh_key_student_user": self.conf.SSH_KEY_STUDENT_USER_BOB,
+        }
+
+        cloud_init_users = [
+            {
+                "role": "admin",
+                "user": self.conf.INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_USER,
+                "password": self.conf.INFRASTRUCTURE_DEFAULT_ADMIN_VM_CI_PASSWORD,
+                "pub_key": ssh_keys_pub["ssh_key_deployer_admin_pub_key"],
+            },
+            {
+                "role": "trainee",
+                "user": self.conf.INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_USER,
+                "password": self.conf.INFRASTRUCTURE_DEFAULT_TRAINEE_VM_CI_PASSWORD,
+                "pub_key": ssh_keys_pub["ssh_key_student_user_pub_key"],
+            },
+        ]
+
+        misc = {
+            "infrastructure_tailscale_apikey": self.conf.INFRASTRUCTURE_TAILSCALE_APIKEY,
+            "infrastructure_tailscale_authkey": self.conf.INFRASTRUCTURE_TAILSCALE_AUTHKEY,
+            "infrastructure_wazuh_admin_password": self.conf.INFRASTRUCTURE_WAZUH_ADMIN_PASSWORD,
+        }
+
+        infra = {
+            "infrastructure_codename": self.conf.INFRASTRUCTURE_CODENAME,
+            "infrastructure_scenario": self.conf.INFRASTRUCTURE_SCENARIO,
+            "proxmox_address": self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS,
+            "proxmox_node": self.conf.INFRASTRUCTURE_PROXMOX_NODE_NAME,
+            "proxmox_api_host": self.conf.INFRASTRUCTURE_PROXMOX_API_HOST,
+            "proxmox_api_user": self.conf.INFRASTRUCTURE_PROXMOX_API_USER,
+            "proxmox_api_token_id": self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID,
+            "proxmox_api_token_secret": self.state.proxmox_api_token_secret,
+            "proxmox_dest_iso_storage_name": self.conf.INFRASTRUCTURE_PROXMOX_DEST_ISO_STORAGE_NAME,
+            "proxmox_dest_vm_storage_name": self.conf.INFRASTRUCTURE_PROXMOX_DEST_VM_STORAGE_NAME,
+            "proxmox_default_network_card_interface": self.conf.INFRASTRUCTURE_PROXMOX_DEFAULT_NETWORK_CARD_INTERFACE,
+        }
+
+        try:
+            template = self.jinja_env.get_template("default_vault.yml.j2")
+            rendered = template.render(
+                infra=infra,
+                ssh_keys=ssh_keys,
+                ssh_keys_pub=ssh_keys_pub,
+                cloud_init_users=cloud_init_users,
+                deployer_user=self.conf.DEPLOYER_CLI_CONFIG_USER,
+                misc=misc,
+            )
+            vault_file.write_text(rendered, encoding="utf-8")
+            self.logger.debug(f"Ansible vault successfully created at {vault_file}")
+        except Exception as e:
+            self.logger.error(f"Unable to write ansible vault to {vault_file}: {e}")
+            return False
+
+        self.logger.info(f"Encrypting vault at {vault_file}")
+        try:
+            utils.encrypt_ansible_vault(vault_file, vault_pass_file)
+        except Exception as e:
+            self.logger.error(f"Unable to encrypt ansible vault at {vault_file}: {e}")
+            return False
+
+        self.logger.info(f"Vault successfully encrypted at {vault_file}")
+        self.logger.info(f"Vault password {vault_password} saved at {vault_pass_file}")
+        return True
