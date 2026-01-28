@@ -1562,6 +1562,7 @@ case "${1:-}" in
 	check_pwgen_dependency
 
 	if [[ "${GENERATE_SSH_KEYS_PASSWORD}" != "YES" && "${GENERATE_VM_PASSWORD}" != "YES" ]]; then
+		print_red_warning "At least one password generation option must be enabled (GENERATE_SSH_KEYS_PASSWORD or GENERATE_VM_PASSWORD)."
 		exit 1
 	fi
 
