@@ -1,0 +1,50 @@
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####  
+#
+#                      VAULT AUTO-GENERATED VAULT FILE 
+#                           !!! DO NOT COMMIT !!! 
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####  
+#
+# Infrastructure: {{ infra.infrastructure_codename }}-{{ infra.infrastructure_scenario }}
+# scenario      : {{ infra.infrastructure_scenario }}
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####  
+
+###############################################################################
+# 1 - INFRASTRUCTURE INFORMATION
+###############################################################################
+{% for key, value in infra.items() -%}
+{{ key|lower }}: "{{ value }}"
+{% endfor %}
+
+###############################################################################
+# 2 - SSH KEY PATHS 
+###############################################################################
+{% for name, path in ssh_keys.items() -%}
+{{ name }}: "{{ path }}"
+{% endfor %}
+
+###############################################################################
+# 3 - SSH PUBLIC KEY CONTENT
+###############################################################################
+{% for name, content in ssh_keys_pub.items() -%}
+{{ name }}: "{{ content }}"
+{% endfor %}
+
+###############################################################################
+# 4 - CLOUD-INIT USERS CONFIGURATION
+###############################################################################
+{% for user in cloud_init_users -%}
+default_{{ user.role }}_vm_ci_user: "{{ user.user }}"
+default_{{ user.role }}_vm_ci_password: "{{ user.password }}"
+default_{{ user.role }}_vm_ci_ssh_key: "{{ user.pub_key }}"
+{% endfor %}
+
+###############################################################################
+# 5 - MISC 
+###############################################################################
+deployer_cli_user_ssh_known_hosts: "/home/{{ deployer_user }}/.ssh/known_hosts"
+
+{% for key, value in misc.items() -%}
+{{ key }}: "{{ value }}"
+{% endfor %}
