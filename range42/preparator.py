@@ -28,7 +28,7 @@ import subprocess
 from pathlib import Path
 
 import requests
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, PackageLoader
 
 import range42.utils as utils
 from range42.config import Config, RuntimeState
@@ -48,7 +48,7 @@ class Preparator:
         self.student_extra_keys: list[dict[str, Path | str]] = []
 
         self.jinja_env = Environment(
-            loader=FileSystemLoader("./range42/templates"),
+            loader=PackageLoader("range42", "templates"),
             autoescape=False,
         )
 
