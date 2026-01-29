@@ -22,13 +22,14 @@ class Preparator:
         self.conf = config
 
         self.student_extra_keys = []
-        if not self._prepare_environment_ssh_keys():
-            raise Exception("Unable to generate all required SSH keys")
-
         self.jinja_env = Environment(
             loader=FileSystemLoader("./range42/templates"),
             autoescape=False,
         )
+
+    def run(self):
+        if not self._prepare_environment_ssh_keys():
+            raise Exception("Unable to generate all required SSH keys")
 
         if not self._secrets_to_file():
             raise Exception(
@@ -65,9 +66,11 @@ class Preparator:
                 f"Unable to create Ansible vault at {self.conf.INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL}"
             )
 
-        self.create_remote_deployer_playbook()
+        if self.create_remote_deployer_playbook():
+            self.logger.info("Preparation completed !")
 
         # TODO: proxmox_fix_remote_locale
+        # TODO: backup_configuration_file
 
     def _prepare_environment_ssh_keys(self) -> bool:
         self.logger.info("Generating environment SSH keys")
@@ -795,3 +798,66 @@ class Preparator:
         self.logger.info(f"Vault successfully encrypted at {vault_file}")
         self.logger.info(f"Vault password {vault_password} saved at {vault_pass_file}")
         return True
+
+    def create_remote_deployer_playbook(
+        self,
+    ):
+        self.logger.info("Creating remote deployer playbook")
+        deployer_ssh_name = self.conf.DEPLOYER_CLI_CONFIG_SSH_NAME
+        infra_codename = self.conf.INFRASTRUCTURE_CODENAME
+        infra_scenario = self.conf.INFRASTRUCTURE_SCENARIO
+
+        inventory_file = Path(f"./inventories/{deployer_ssh_name}.yml")
+        playbook_file = Path(f"./deploy.{deployer_ssh_name}-{infra_scenario}.yml")
+        shell_file = Path(f"./deploy.{deployer_ssh_name}-{infra_scenario}.sh")
+        show_inventory_script = Path(
+            f"./inventories/show_inventory.{deployer_ssh_name}.sh"
+        )
+
+        try:
+            self.logger.debug(
+                f"Creating inventory directory at {inventory_file.parent}"
+            )
+            inventory_file.parent.mkdir(parents=True, exist_ok=True)
+
+            self.logger.debug(f"Creating {playbook_file.name}")
+            template = self.jinja_env.get_template("deploy_playbook.yml.j2")
+            playbook_file.write_text(
+                template.render(
+                    deployer_ssh_name=deployer_ssh_name,
+                    deployer_user=self.conf.DEPLOYER_CLI_CONFIG_USER,
+                    infra_codename=infra_codename,
+                    infra_scenario=infra_scenario,
+                    proxmox_address=self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS,
+                    auto_gen_config_dir=self.conf.INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL,
+                    auto_gen_ssh_dir=self.conf.INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL,
+                    auto_gen_vault_dir=self.conf.INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL,
+                )
+            )
+
+            self.logger.debug(f"Creating {shell_file.name}")
+            template = self.jinja_env.get_template("deploy_playbook.sh.j2")
+            shell_file.write_text(
+                template.render(
+                    inventory_file=inventory_file, playbook_file=playbook_file
+                )
+            )
+            shell_file.chmod(0o755)
+
+            self.logger.debug(f"Creating {inventory_file.name}")
+            template = self.jinja_env.get_template("inventory.yml.j2")
+            inventory_file.write_text(
+                template.render(deployer_ssh_name=deployer_ssh_name)
+            )
+
+            self.logger.debug(f"Creating {show_inventory_script.name}")
+            show_inventory_script.write_text(
+                f"""#!/bin/bash
+            ansible-inventory -i "./{inventory_file.name}" --graph
+            """
+            )
+            show_inventory_script.chmod(0o755)
+            return True
+        except Exception as e:
+            self.logger.error(f"Unable to create remote deployer playbook: {e}")
+            return False
