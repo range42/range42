@@ -56,7 +56,7 @@ class Preparator:
         """Run full preparation sequence for Range42 infrastructure."""
         steps = [
             (self._prepare_environment_ssh_keys, "SSH key generation"),
-            (self._secrets_to_file, "Secrets writing"),
+            (self._write_secrets_to_file, "Secrets writing"),
             (self._warmup_ssh_client_conf, "SSH client setup"),
             (self._load_proxmox_ssh_root, "Proxmox root SSH setup"),
             (self._load_proxmox_ssh_jump, "Proxmox jump SSH setup"),
@@ -165,7 +165,7 @@ class Preparator:
         if not self._create_ssh_key_dir(path.parent):
             return False
 
-        if not self._generate_ed25519_keypair(path, comment, password):
+        if not self._generate_ssh_ed25519_keypair(path, comment, password):
             return False
 
         return self._update_ssh_key_permissions(path)
