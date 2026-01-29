@@ -64,6 +64,64 @@ This is a recommendation, not a strict requirement, but it helps maintain better
 soon pushed.
 ```
 
+# Usage
+
+## Prerequisites
+
+1. Ensure you have **Docker** and **Docker Compose** installed.
+2. Copy the example environment file to `.env` at the root of the project:
+
+```bash
+cp .env.example .env
+```
+
+3. Edit `.env` to match your Proxmox and deployer configuration. At a minimum, you need to set:
+
+```bash
+INFRASTRUCTURE_PROXMOX_ADDRESS="192.168.145.128"
+INFRASTRUCTURE_PROXMOX_PASSWORD="password"
+INFRASTRUCTURE_CODENAME="pve"
+INFRASTRUCTURE_SCENARIO="demo_lab"
+
+DEPLOYER_CLI_CONFIG_USER="user"
+DEPLOYER_CLI_CONFIG_IP="127.0.0.1"
+```
+
+You can also configure additional options such as SSH key passphrases, Proxmox API credentials, and network settings.
+
+
+## Starting the Project
+
+Build and start the Docker containers, then run the preparator inside the deployer container:
+
+```bash
+sudo docker compose up -d --build
+sudo docker compose exec -u user -it range42deployer python3 -m range42 --init -vvv
+```
+
+* `--init` triggers the initialization of the infrastructure.
+* `-vvv` increases verbosity to debug level. Adjust `-v` flags for less/more output.
+
+
+## What Happens During Initialization
+
+The `Preparator` will:
+
+1. Generate SSH keys for Proxmox, deployer, and student users.
+2. Configure the local SSH client for easy access to remote hosts.
+3. Setup Proxmox jump users and API credentials.
+4. Validate Proxmox API tokens.
+5. Create and encrypt Ansible vaults containing all generated secrets.
+6. Generate remote deployer playbooks and inventories.
+
+Once initialization finishes, you can enter the Range42 deployer environment with:
+
+```bash
+sudo docker compose exec -u user -it range42deployer bash
+```
+
+This gives you an interactive shell inside the deployer container with all the necessary environment and tools preconfigured.
+
 # AUTHORS
 
 ```bash
