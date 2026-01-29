@@ -19,8 +19,8 @@ import warnings
 
 from urllib3.exceptions import InsecureRequestWarning
 
-from .config import Config
-from .preparator import Preparator
+from range42.config import Config
+from range42.preparator import Preparator
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
