@@ -1,3 +1,17 @@
+"""
+Command-line interface for the Range42 infrastructure project.
+
+This module provides the main entry point for the Range42 CLI, allowing
+users to initialize and prepare the deployer infrastructure.
+
+It supports:
+
+- Argument parsing
+- Configurable logging verbosity
+- Initialization of the deployer environment via the Preparator
+- Suppression of insecure request warnings from urllib3
+"""
+
 import argparse
 import logging
 import sys
@@ -10,6 +24,12 @@ from .preparator import Preparator
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    """
+    Build the command-line argument parser for the Range42 CLI.
+
+    :return: Configured ArgumentParser instance.
+    :rtype: argparse.ArgumentParser
+    """
     parser = argparse.ArgumentParser(
         prog="range42",
         description="Range42 infrastructure CLI",
@@ -33,6 +53,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def configure_logging(verbosity: int) -> None:
+    """
+    Configure logging level and format based on verbosity.
+
+    :param verbosity: Verbosity level. 0 = WARNING, 1 = INFO, >=2 = DEBUG.
+    :type verbosity: int
+    """
     if verbosity >= 2:
         level = logging.DEBUG
     elif verbosity == 1:
@@ -49,6 +75,18 @@ def configure_logging(verbosity: int) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """
+    Main entry point for the Range42 CLI.
+
+    Parses command-line arguments, sets up logging, loads configuration,
+    and runs the Preparator to initialize the infrastructure.
+
+    :param argv: Optional list of command-line arguments. Defaults to None,
+                 in which case sys.argv is used.
+    :type argv: list[str] | None
+    :return: Exit code. 0 for success, 1 for failure.
+    :rtype: int
+    """
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 

@@ -1,10 +1,29 @@
+"""
+Responsible for preparing and bootstrapping the Range42 infrastructure.
+
+This module defines the `Preparator` class, which handles:
+- Generation and management of SSH keys for Proxmox, deployer, and student users.
+- Configuration of local SSH client files and authentication with remote hosts.
+- Setup of Proxmox users, jump users, and API credentials.
+- Validation and testing of Proxmox API tokens.
+- Creation and encryption of Ansible vault files containing secrets and configuration.
+- Generation of remote deployer inventory and playbooks for automated deployment.
+
+It uses Jinja2 templates for file generation, `subprocess` for system commands,
+and ensures proper file permissions and security for all sensitive data.
+
+Usage:
+    preparator = Preparator(config)
+    preparator.run()
+
+"""
+
 import json
 import logging
 import os
 import re
 import shutil
 import socket
-import stat
 import subprocess
 from pathlib import Path
 
@@ -16,151 +35,157 @@ from range42.config import Config, RuntimeState
 
 
 class Preparator:
-    def __init__(self, config: Config):
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.state = RuntimeState()
-        self.conf = config
+    """Handles preparation of the Range42 environment, including SSH keys, Proxmox access, and Ansible vaults."""
 
-        self.student_extra_keys = []
+    def __init__(self, config: Config):
+        """
+        Args:
+            config (Config): Configuration object with environment variables and constants.
+        """
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.conf = config
+        self.state = RuntimeState()
+        self.student_extra_keys: list[dict[str, Path | str]] = []
+
         self.jinja_env = Environment(
             loader=FileSystemLoader("./range42/templates"),
             autoescape=False,
         )
 
-    def run(self):
-        if not self._prepare_environment_ssh_keys():
-            raise Exception("Unable to generate all required SSH keys")
-
-        if not self._secrets_to_file():
-            raise Exception(
-                f"Unable to write generated secrets to {self.conf.INFRASTRUCTURE__AUTO_GENERATED__PASSWORDS_FILE_LOCAL}"
-            )
-
-        if not self._warmup_ssh_client_conf():
-            raise Exception(
-                f"Unable to setup SSH to access deployer at {self.conf.DEPLOYER_CLI_CONFIG_IP}"
-            )
-
-        if not self._load_proxmox_ssh_root():
-            raise Exception(
-                f"Unable to setup SSH root access to proxmox at {self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}"
-            )
-
-        if not self._load_proxmox_ssh_jump():
-            raise Exception(
-                f"Unable to setup SSH jump access to proxmox at {self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}"
-            )
-
-        if not self._proxmox_generate_api_credentials():
-            raise Exception(
-                f"Unable to setup Proxmox API for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
-            )
-
-        if not self._test_proxmox_api_token():
-            raise Exception(
-                f"Unable to authenticate to Proxmox API with {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} and the tokenID {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}"
-            )
-
-        if not self._prepare_environment_ansible_vault():
-            raise Exception(
-                f"Unable to create Ansible vault at {self.conf.INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL}"
-            )
-
-        if self.create_remote_deployer_playbook():
-            self.logger.info("Preparation completed !")
+    def run(self) -> None:
+        """Run full preparation sequence for Range42 infrastructure."""
+        steps = [
+            (self._prepare_environment_ssh_keys, "SSH key generation"),
+            (self._secrets_to_file, "Secrets writing"),
+            (self._warmup_ssh_client_conf, "SSH client setup"),
+            (self._load_proxmox_ssh_root, "Proxmox root SSH setup"),
+            (self._load_proxmox_ssh_jump, "Proxmox jump SSH setup"),
+            (self._proxmox_generate_api_credentials, "Proxmox API credentials"),
+            (self._test_proxmox_api_token, "Proxmox API token validation"),
+            (self._prepare_environment_ansible_vault, "Ansible vault creation"),
+        ]
 
         # TODO: proxmox_fix_remote_locale
         # TODO: backup_configuration_file
 
+        for func, desc in steps:
+            if not func():
+                raise RuntimeError(f"Failed during step: {desc}")
+
+        if self.create_remote_deployer_playbook():
+            self.logger.info("Preparation completed successfully!")
+
     def _prepare_environment_ssh_keys(self) -> bool:
-        self.logger.info("Generating environment SSH keys")
+        """
+        Prepare the environment SSH keys.
+        Generates all required SSH keys unless skipped via configuration.
+
+        Returns:
+            bool: True if all keys were generated successfully or skipped, False otherwise.
+        """
+        self.logger.info("Preparing environment SSH keys")
         if not self.conf.GENERATE_SSH_KEYS_PASSWORD:
-            self.logger.info("Skipping SSH keys generation")
+            self.logger.info("Skipping SSH keys generation (config flag disabled)")
             return True
 
-        if not self._prepare_ssh_keys():
-            return False
+        return self._generate_all_ssh_keys()
 
-        return True
+    def _generate_all_ssh_keys(self) -> bool:
+        """
+        Generate all SSH keys for the infrastructure: Proxmox root, jump, deployer admin, students, and additional student keys.
 
-    def _prepare_ssh_keys(self):
-        infra_codename_scenario = (
+        Returns:
+            bool: True if all keys generated successfully, False otherwise.
+        """
+        scenario_tag = (
             f"{self.conf.INFRASTRUCTURE_CODENAME}-{self.conf.INFRASTRUCTURE_SCENARIO}"
         )
-        keys = []
-        keys.append(
+
+        keys_to_generate = [
             {
                 "path": Path(self.conf.SSH_KEY_PX_ROOT).resolve(),
-                "comment": f"proxmox root {infra_codename_scenario}",
+                "comment": f"proxmox root {scenario_tag}",
                 "password": self.conf.PX_ROOT_PASSPHRASE,
-            }
-        )
-        keys.append(
+            },
             {
                 "path": Path(self.conf.SSH_KEY_PX_JUMP).resolve(),
-                "comment": f"proxmox jump {infra_codename_scenario}",
+                "comment": f"proxmox jump {scenario_tag}",
                 "password": self.conf.PX_JUMP_PASSPHRASE,
-            }
-        )
-        keys.append(
+            },
             {
                 "path": Path(self.conf.SSH_KEY_DEPLOYER_ADMIN_ALICE).resolve(),
-                "comment": f"r42 deployer (admin) - alice {infra_codename_scenario}",
+                "comment": f"r42 deployer (admin) - alice {scenario_tag}",
                 "password": self.conf.DEPLOYER_PASSPHRASE,
-            }
-        )
-        keys.append(
+            },
             {
                 "path": Path(self.conf.SSH_KEY_STUDENT_USER_BOB).resolve(),
-                "comment": f"r42 student (user) - bob {infra_codename_scenario}",
+                "comment": f"r42 student (user) - bob {scenario_tag}",
                 "password": self.conf.STUDENT_PASSPHRASE,
-            }
-        )
+            },
+        ]
 
         for i in range(1, self.conf.STUDENT_ADDITIONNAL_KEYS_COUNT + 1):
-            student_key_path = f"{self.conf.SSH_KEYS_STUDENT_ADDITIONNAL_DIR}/r42.{infra_codename_scenario}-student-key_bob_{i}"
-            student_key_pwd = utils.generate_password()
-
-            keys.append(
+            key_path = Path(
+                f"{self.conf.SSH_KEYS_STUDENT_ADDITIONNAL_DIR}/r42.{scenario_tag}-student-key_bob_{i}"
+            ).resolve()
+            key_password = utils.generate_password()
+            keys_to_generate.append(
                 {
-                    "path": Path(student_key_path).resolve(),
-                    "comment": f"r42 student (user) - bob [extra {i}] {infra_codename_scenario}",
-                    "password": student_key_pwd,
+                    "path": key_path,
+                    "comment": f"r42 student (user) - bob [extra {i}] {scenario_tag}",
+                    "password": key_password,
                 }
             )
-            self.student_extra_keys.append(
-                {
-                    "path": Path(student_key_path).resolve(),
-                    "password": student_key_pwd,
-                }
-            )
+            self.student_extra_keys.append({"path": key_path, "password": key_password})
 
-        res: list[bool] = []
-        for key in keys:
-            res.append(self._generate_ssh_key(**key))
+        results = [
+            self._generate_ssh_key(key["path"], key["comment"], key["password"])
+            for key in keys_to_generate
+        ]
 
-        total = len(keys)
-        success = sum(res)
-        self.logger.info(f"{success}/{total} SSH key pair successfully generated !")
-
-        return success == total
+        success_count = sum(results)
+        total_keys = len(keys_to_generate)
+        self.logger.info(
+            f"{success_count}/{total_keys} SSH keys generated successfully"
+        )
+        return success_count == total_keys
 
     def _generate_ssh_key(self, path: Path, comment: str, password: str) -> bool:
-        self.logger.debug(f"Generating {comment} SSH keys")
-        if self._create_ssh_key_dir(path.parent):
-            if self._generate_ssh_ed25519_keypair(path, comment, password):
-                return self._update_ssh_key_perm(path)
+        """
+        Generate a single SSH key pair at the given path.
+
+        Args:
+            path (Path): Private key file path.
+            comment (str): Comment for the SSH key.
+            password (str): Passphrase for the key.
+
+        Returns:
+            bool: True if generation succeeded and permissions set correctly.
+        """
+        if not self._create_ssh_key_dir(path.parent):
+            return False
+
+        if not self._generate_ed25519_keypair(path, comment, password):
+            return False
+
+        return self._update_ssh_key_permissions(path)
 
     def _create_ssh_key_dir(self, path: Path) -> bool:
+        """
+        Create the directory for SSH keys with secure permissions.
+
+        Args:
+            path (Path): Directory path.
+
+        Returns:
+            bool: True if directory exists or was created, False on failure.
+        """
         try:
-            self.logger.debug(f"Creating directory {path}")
+            self.logger.debug(f"Creating SSH key directory: {path}")
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
             return True
-        except FileExistsError as _:
-            self.logger.error(f"Directory {path} already exists")
-            return True
         except Exception as e:
-            self.logger.error(f"Unable to create SSH keys directory: {e}")
+            self.logger.error(f"Failed to create SSH key directory {path}: {e}")
             return False
 
     def _generate_ssh_ed25519_keypair(
@@ -169,28 +194,38 @@ class Preparator:
         comment: str | None = None,
         password: str | None = None,
     ) -> bool:
-        self.logger.debug(f"Generating {path.name} key pair at {path.parent}")
+        """
+        Generate an Ed25519 SSH key pair.
+
+        Args:
+            path (Path): Private key file path.
+            comment (str | None): Key comment.
+            password (str | None): Passphrase.
+
+        Returns:
+            bool: True if the key pair was successfully generated.
+        """
         private_key = path
-        public_key = Path(f"{path}.pub").resolve()
+        public_key = Path(str(path) + ".pub").resolve()
+
         for key_file in (private_key, public_key):
             if key_file.exists():
-                backup = f"{key_file}.bak"
-                self.logger.debug(f"Backing up existing key to {backup}")
-                key_file.rename(backup)
+                backup_file = Path(str(key_file) + ".bak")
+                self.logger.debug(
+                    f"Backing up existing key {key_file} to {backup_file}"
+                )
+                key_file.rename(backup_file)
 
         cmd = [
             "ssh-keygen",
             "-t",
             "ed25519",
             "-f",
-            str(path),
+            str(private_key),
         ]
         if comment:
             cmd += ["-C", comment]
-        if password:
-            cmd += ["-N", password]
-        else:
-            cmd += ["-q", "-N", ""]
+        cmd += ["-N", password or ""]
 
         try:
             subprocess.run(
@@ -198,30 +233,43 @@ class Preparator:
             )
             return True
         except Exception as e:
-            self.logger.error(f"Unable to generate key pair at {path}: {e}")
+            self.logger.error(f"Failed to generate key pair at {path}: {e}")
             return False
 
-    def _update_ssh_key_perm(self, path: Path) -> bool:
-        self.logger.debug(f"Updating permission on key pair at {path}")
+    def _update_ssh_key_permissions(self, path: Path) -> bool:
+        """
+        Set correct file permissions on SSH private and public keys.
+
+        Args:
+            path (Path): Private key file path.
+
+        Returns:
+            bool: True on success, False otherwise.
+        """
         try:
-            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-            os.chmod(
-                f"{path}.pub", stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH
-            )
+            self.logger.debug(f"Setting permissions for SSH keys at {path}")
+            path.chmod(0o600)
+            Path(str(path) + ".pub").chmod(0o644)
             return True
         except Exception as e:
-            self.logger.error(f"Unable to set permission on key pair at {path}: {e}")
+            self.logger.error(f"Failed to set permissions on {path}: {e}")
             return False
 
-    def _secrets_to_file(self) -> bool:
-        path = Path(
+    def _write_secrets_to_file(self) -> bool:
+        """
+        Write generated passwords and key paths to a secrets file using Jinja2 template.
+
+        Returns:
+            bool: True if the file was successfully written, False otherwise.
+        """
+        secrets_path = Path(
             self.conf.INFRASTRUCTURE__AUTO_GENERATED__PASSWORDS_FILE_LOCAL
         ).resolve()
-        self.logger.info(f"Writting secrets to {path}")
+        self.logger.info(f"Writing secrets to {secrets_path}")
+
         try:
             template = self.jinja_env.get_template("passwords.env.j2")
-
-            rendered = template.render(
+            rendered_content = template.render(
                 infrastructure_codename=self.conf.INFRASTRUCTURE_CODENAME,
                 infrastructure_scenario=self.conf.INFRASTRUCTURE_SCENARIO,
                 px_root_passphrase=self.conf.PX_ROOT_PASSPHRASE,
@@ -239,87 +287,100 @@ class Preparator:
                 students=self.student_extra_keys,
             )
 
-            path.write_text(rendered)
-            path.chmod(0o600)
-
+            secrets_path.write_text(rendered_content, encoding="utf-8")
+            secrets_path.chmod(0o600)
             return True
         except Exception as e:
-            self.logger.error(f"Unable to write secrets to {path}: {e}")
+            self.logger.error(f"Failed to write secrets to {secrets_path}: {e}")
             return False
 
-    def _generate_ssh_client_conf(
-        self,
-    ):
+    def _generate_ssh_client_config(self) -> bool:
         try:
-            ssh_config = Path(self.conf.SSH_CLIENT__DST_CONFIG_DIR).absolute()
-            ssh_config.chmod(0o700)
-            ssh_range42_config = Path(
+            ssh_config_dir = Path(self.conf.SSH_CLIENT__DST_CONFIG_DIR).absolute()
+            ssh_range42_dir = Path(
                 self.conf.SSH_CLIENT__DST_CONFIG_RANGE42_DIR
             ).absolute()
-            ssh_range42_config.chmod(0o700)
+            ssh_config_dir.chmod(0o700)
+            ssh_range42_dir.chmod(0o700)
 
-            ssh_client_conf = Path(self.conf.SSH_CLIENT__DST_CONFIG_FILE__DEFAULT)
-            ssh_client_conf_include = (
+            default_config_file = Path(self.conf.SSH_CLIENT__DST_CONFIG_FILE__DEFAULT)
+            deployer_include_line = (
                 f"Include {self.conf.SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI}"
             )
-            if not ssh_client_conf.is_file():
-                self.logger.info(f"Creating SSH config at {ssh_client_conf}")
-                with open(ssh_client_conf, "w") as f:
-                    f.write(ssh_client_conf_include)
+            if not default_config_file.is_file():
+                self.logger.info(f"Creating SSH config at {default_config_file}")
+                default_config_file.write_text(deployer_include_line)
             else:
-                content = ssh_client_conf.read_text()
-                if ssh_client_conf_include not in content:
-                    self.logger.info(f"Updating SSH config at {ssh_client_conf}")
-                    with open(ssh_client_conf, "a") as f:
-                        f.write(f"\n{ssh_client_conf_include}\n")
+                content = default_config_file.read_text()
+                if deployer_include_line not in content:
+                    self.logger.info(
+                        f"Appending deployer include to SSH config at {default_config_file}"
+                    )
+                    with default_config_file.open("a") as f:
+                        f.write(f"\n{deployer_include_line}\n")
                 else:
-                    self.logger.info(f"SSH config already setup at {ssh_client_conf}")
+                    self.logger.info(
+                        "SSH default config already includes deployer config"
+                    )
 
-            ssh_client_range42_conf = Path(
+            deployer_config_file = Path(
                 self.conf.SSH_CLIENT__DST_CONFIG_FILE__RANGE42_DEPLOYER_CLI
             ).absolute()
-            self.logger.info(f"Writting SSH config at {ssh_client_range42_conf}")
-            with open(ssh_client_range42_conf, "w") as f:
-                f.write(f"\nHost {self.conf.DEPLOYER_CLI_CONFIG_SSH_NAME}\n")
-                f.write(f"  Hostname {self.conf.DEPLOYER_CLI_CONFIG_IP}\n")
-                f.write(f"  User {self.conf.DEPLOYER_CLI_CONFIG_USER}\n")
-                f.write(f"  Port {self.conf.DEPLOYER_CLI_CONFIG_PORT}\n")
-                f.write(
-                    f"  IdentityFile {self.conf.SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI}\n"
-                )
+            self.logger.info(f"Writing deployer SSH config at {deployer_config_file}")
+            deployer_config_file.write_text(
+                f"\nHost {self.conf.DEPLOYER_CLI_CONFIG_SSH_NAME}\n"
+                f"  Hostname {self.conf.DEPLOYER_CLI_CONFIG_IP}\n"
+                f"  User {self.conf.DEPLOYER_CLI_CONFIG_USER}\n"
+                f"  Port {self.conf.DEPLOYER_CLI_CONFIG_PORT}\n"
+                f"  IdentityFile {self.conf.SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI}\n"
+            )
             return True
         except Exception as e:
-            self.logger.error(f"Unable to create SSH client config : {e}")
+            self.logger.error(f"Unable to create SSH client config: {e}")
             return False
 
-    def _deploy_ssh_client_key(
-        self,
-    ):
-        deployercli_ssh_keys = Path(
+    def _deploy_ssh_key_to_deployer(self) -> bool:
+        """
+        Copy the deployer CLI public key to the deployer host's authorized_keys.
+
+        Returns:
+            bool: True on success, False otherwise.
+        """
+        deployer_key = Path(
             self.conf.SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI
         ).absolute()
-        deployercli_ssh_key_pub = Path(str(deployercli_ssh_keys) + ".pub")
+        deployer_key_pub = Path(str(deployer_key) + ".pub")
 
         if self.conf.DEPLOYER_CLI_CONFIG_IP in ["127.0.0.1", "localhost"]:
-            self.logger.info("Deployer CLI is set to localhost")
+            self.logger.info("Deployer CLI configured for localhost")
             authorized_keys = (
-                Path(self.conf.SSH_CLIENT__DST_CONFIG_DIR)
-                .absolute()
-                .joinpath("authorized_keys")
+                Path(self.conf.SSH_CLIENT__DST_CONFIG_DIR).absolute()
+                / "authorized_keys"
             )
-            self.logger.info(f"Copying {deployercli_ssh_key_pub} to {authorized_keys}")
-            shutil.copy(deployercli_ssh_key_pub, authorized_keys)
+            self.logger.info(f"Copying {deployer_key_pub} to {authorized_keys}")
+            shutil.copy(deployer_key_pub, authorized_keys)
             authorized_keys.chmod(0o600)
             return True
         else:
-            self.logger.info("Deployer CLI is set to be remotely")
+            self.logger.info("Deployer CLI configured for remote host")
             return self._ssh_copy_id(
                 f"{self.conf.DEPLOYER_CLI_CONFIG_USER}@{self.conf.DEPLOYER_CLI_CONFIG_IP}",
                 self.conf.DEPLOYER_CLI_CONFIG_PASSWORD,
-                deployercli_ssh_key_pub,
+                deployer_key_pub,
             )
 
     def _ssh_copy_id(self, target: str, password: str, pub_key: str) -> bool:
+        """
+        Use ssh-copy-id to install a public key on a remote host.
+
+        Args:
+            target (str): user@host target
+            password (str): login password
+            pub_key (str): path to public key
+
+        Returns:
+            bool: True if the key was successfully installed.
+        """
         cmd = [
             "sshpass",
             "-p",
@@ -331,7 +392,8 @@ class Preparator:
             pub_key,
             target,
         ]
-        self.logger.debug(f"Using locally available keys to logins on {target}")
+        self.logger.debug(f"Running ssh-copy-id on {target}")
+
         try:
             proc = subprocess.run(
                 cmd,
@@ -341,165 +403,193 @@ class Preparator:
             output = proc.stdout + proc.stderr
             if "added" in output:
                 return True
-            self.logger.error(f"Unable to ssh-copy-id to {target}: {output}")
+            self.logger.error(f"ssh-copy-id failed for {target}: {output}")
             return False
         except Exception as e:
-            self.logger.error(f"Unable to ssh-copy-id to {target}: {e}")
+            self.logger.error(f"ssh-copy-id execution failed for {target}: {e}")
             return False
 
-    def _is_ssh_agent_running(self):
-        self.logger.info("Looking if SSH agent already running")
+    def _is_ssh_agent_running(self) -> bool:
+        """
+        Check if an SSH agent is running and responding. If not, indicate it should be started.
+
+        Returns:
+            bool: True if SSH agent is running, False otherwise.
+        """
+        self.logger.info("Checking if SSH agent is already running")
         sock_path = os.environ.get("SSH_AUTH_SOCK")
         agent_pid = os.environ.get("SSH_AGENT_PID")
-        self.logger.debug(f"OS Env SSH_AUTH_SOCK={sock_path} SSH_AGENT_PID={agent_pid}")
+        self.logger.debug(f"SSH_AUTH_SOCK={sock_path}, SSH_AGENT_PID={agent_pid}")
+
         if sock_path and os.path.exists(sock_path):
             try:
                 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 s.connect(sock_path)
                 s.close()
-                self.logger.info(f"SSH Agent found running with PID {agent_pid}")
+                self.logger.info(f"SSH agent is running with PID {agent_pid}")
                 return True
             except Exception:
                 self.logger.warning(
-                    "SSH_AUTH_SOCK exists but agent not responding, starting new agent."
+                    "SSH_AUTH_SOCK exists but agent not responding, will start a new agent"
                 )
 
         bashrc_path = os.path.expanduser("~/.bashrc")
         if not os.path.exists(bashrc_path):
-            self.logger.debug("Unable to find ~/.bashrc")
+            self.logger.debug("~/.bashrc not found")
             return False
 
         sock_path = ""
         agent_pid = ""
         with open(bashrc_path, "r") as f:
-            self.logger.debug(f"Looking in {bashrc_path} for SSH agent Env")
+            self.logger.debug(f"Checking {bashrc_path} for SSH agent environment")
             for line in f:
                 sock_match = re.match(r"^\s*export\s+SSH_AUTH_SOCK=(.+)", line)
-                agent_pid = re.match(r"^\s*export\s+SSH_AGENT_PID=(.+)", line)
+                pid_match = re.match(r"^\s*export\s+SSH_AGENT_PID=(.+)", line)
 
                 if sock_match:
                     sock_path = sock_match.group(1).strip()
-                    self.logger.debug(f"Found in ~/.bashrc SSH_AUTH_SOCK={sock_path}")
-                elif agent_pid:
-                    agent_pid = agent_pid.group(1).strip()
-                    self.logger.debug(f"Found in ~/.bashrc SSH_AGENT_PID={agent_pid}")
-                else:
-                    continue
+                    self.logger.debug(f"Found SSH_AUTH_SOCK in ~/.bashrc: {sock_path}")
+                if pid_match:
+                    agent_pid = pid_match.group(1).strip()
+                    self.logger.debug(f"Found SSH_AGENT_PID in ~/.bashrc: {agent_pid}")
 
-                if not os.path.exists(sock_path):
-                    continue
-                if not sock_path or not agent_pid:
-                    continue
+                if sock_path and agent_pid and os.path.exists(sock_path):
+                    try:
+                        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        s.connect(sock_path)
+                        s.close()
+                        self.logger.info(
+                            f"SSH agent found in ~/.bashrc with PID {agent_pid}"
+                        )
+                        os.environ["SSH_AUTH_SOCK"] = sock_path
+                        os.environ["SSH_AGENT_PID"] = agent_pid
+                        return True
+                    except Exception:
+                        self.logger.warning(
+                            f"SSH agent from ~/.bashrc not responding: {sock_path}"
+                        )
 
-                try:
-                    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    s.connect(sock_path)
-                    s.close()
-                    self.logger.info(f"SSH Agent found running with PID {agent_pid}")
-                    os.environ["SSH_AUTH_SOCK"] = sock_path
-                    os.environ["SSH_AGENT_PID"] = agent_pid
-                    return True
-                except Exception:
-                    self.logger.warning(
-                        f"SSH_AUTH_SOCK from ~/.bashrc exists but agent not responding: {sock_path}"
-                    )
-        self.logger.debug("SSH Agent not found running")
+        self.logger.debug("No running SSH agent found")
         return False
 
     def _ssh_agent_start(self) -> bool:
+        """
+        Start a new SSH agent if one is not already running.
+
+        Returns:
+            bool: True if SSH agent is running or successfully started.
+        """
         if self._is_ssh_agent_running():
             return True
+
         cmd = ["ssh-agent", "-s"]
-        self.logger.info("Starting SSH Agent")
+        self.logger.info("Starting SSH agent")
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-            )
+            proc = subprocess.run(cmd, capture_output=True, text=True)
             for line in proc.stdout.splitlines():
                 if line.startswith("SSH_AUTH_SOCK"):
                     os.environ["SSH_AUTH_SOCK"] = line.split(";")[0].split("=")[1]
                 elif line.startswith("SSH_AGENT_PID"):
                     os.environ["SSH_AGENT_PID"] = line.split(";")[0].split("=")[1]
+
             self.logger.info(
-                f"SSH Agent started with SSH_AGENT_PID={os.environ['SSH_AGENT_PID']}"
+                f"SSH agent started with PID {os.environ['SSH_AGENT_PID']}"
             )
+
             bashrc_path = os.path.expanduser("~/.bashrc")
             with open(bashrc_path, "a") as f:
                 f.write(f"export SSH_AUTH_SOCK={os.environ['SSH_AUTH_SOCK']}\n")
                 f.write(f"export SSH_AGENT_PID={os.environ['SSH_AGENT_PID']}\n")
+
             return True
         except Exception as e:
-            self.logger.error(f"Unable to start SSH Agent: {e}")
+            self.logger.error(f"Failed to start SSH agent: {e}")
             return False
 
     def _ssh_add(self, password: str, pub_key: str) -> bool:
+        """
+        Add a private key to the SSH agent using a helper askpass script.
+
+        Args:
+            password (str): Passphrase for the private key.
+            pub_key (str): Path to the private key file.
+
+        Returns:
+            bool: True if key added successfully.
+        """
         if not self._ssh_agent_start():
             return False
-        self.logger.info(f"Adding {pub_key} to the OpenSSH authentication agent")
+
+        self.logger.info(f"Adding key {pub_key} to SSH agent")
         cmd = ["ssh-add", pub_key]
+
+        askpass_path = None
         try:
             askpass_path = utils.create_ssh_askpass_helper()
-            self.logger.debug(f"SSH AskPass created at {askpass_path}")
+            self.logger.debug(f"SSH_ASKPASS helper created at {askpass_path}")
             os.environ["SSH_ASKPASS"] = askpass_path
             os.environ["SSH_ASKPASS_PASSWORD"] = password
             os.environ["SSH_ASKPASS_REQUIRE"] = "force"
+
             subprocess.run(
-                cmd,
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             return True
         except Exception as e:
-            self.logger.error(f"Unable to ssh-add {pub_key}: {e}")
+            self.logger.error(f"Failed to add key {pub_key} to SSH agent: {e}")
             return False
         finally:
-            os.unlink(askpass_path)
-            os.environ["SSH_ASKPASS"] = ""
-            os.environ["SSH_ASKPASS_PASSWORD"] = ""
-            os.environ["SSH_ASKPASS_REQUIRE"] = ""
+            if askpass_path and Path(askpass_path).exists():
+                os.unlink(askpass_path)
+            os.environ.pop("SSH_ASKPASS", None)
+            os.environ.pop("SSH_ASKPASS_PASSWORD", None)
+            os.environ.pop("SSH_ASKPASS_REQUIRE", None)
 
-    def _warmup_ssh_client_conf(
-        self,
-    ) -> bool:
-        self.logger.info("Creating SSH client configuration")
+    def _warmup_ssh_client_conf(self) -> bool:
+        """
+        Prepare SSH environment for the deployer, including keys and config.
 
-        ssh_client_range42_dir = Path(
-            self.conf.SSH_CLIENT__SSH_KEYS_RANGE42_DIR
-        ).absolute()
-        if not self._create_ssh_key_dir(ssh_client_range42_dir):
+        Returns:
+            bool: True if everything is successfully set up.
+        """
+        self.logger.info("Setting up deployer SSH client environment")
+
+        ssh_keys_dir = Path(self.conf.SSH_CLIENT__SSH_KEYS_RANGE42_DIR).absolute()
+        if not self._create_ssh_key_dir(ssh_keys_dir):
             return False
 
-        deployercli_ssh_keys = Path(
+        deployer_key = Path(
             self.conf.SSH_CLIENT__SSH_KEYS_RANGE42_FILE__DEPLOYER_CLI
         ).absolute()
-        self.logger.info(
-            f"Creating deployer-cli SSH keys at {deployercli_ssh_keys.parent}"
-        )
-        if not self._generate_ssh_ed25519_keypair(deployercli_ssh_keys):
+        self.logger.info(f"Generating deployer CLI SSH key at {deployer_key}")
+        if not self._generate_ssh_ed25519_keypair(deployer_key):
             return False
 
-        if not self._generate_ssh_client_conf():
+        if not self._generate_ssh_client_config():
             return False
 
-        if not self._deploy_ssh_client_key():
+        if not self._deploy_ssh_key_to_deployer():
             return False
 
         self.logger.info(
-            f"You can now SSH to the deployer with 'ssh {self.conf.DEPLOYER_CLI_CONFIG_SSH_NAME}'"
+            f"SSH setup complete. Connect with: ssh {self.conf.DEPLOYER_CLI_CONFIG_SSH_NAME}"
         )
         return True
 
     def _load_proxmox_ssh_root(self) -> bool:
-        self.logger.info(
-            f"Setting up SSH to Proxmox @{self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}"
-        )
+        """
+        Set up SSH access to Proxmox as root, including copying keys and adding them to the agent.
+
+        Returns:
+            bool: True if SSH setup for root is successful.
+        """
+        proxmox_addr = self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS
+        self.logger.info(f"Setting up SSH access to Proxmox root at {proxmox_addr}")
+
         if not self._ssh_copy_id(
-            f"root@{self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}",
-            self.conf.INFRASTRUCTURE_PROXMOX_PASSWORD,
-            f"{self.conf.SSH_KEY_PX_ROOT}.pub",
+            target=f"root@{proxmox_addr}",
+            password=self.conf.INFRASTRUCTURE_PROXMOX_PASSWORD,
+            pub_key=f"{self.conf.SSH_KEY_PX_ROOT}.pub",
         ):
             return False
 
@@ -510,83 +600,96 @@ class Preparator:
                 return False
 
         self.logger.info(
-            f"You can now SSH to the proxmox with 'ssh -i {self.conf.SSH_KEY_PX_ROOT} -o 'StrictHostKeyChecking=no' root@{self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}'"
+            f"Root SSH access ready: ssh -i {self.conf.SSH_KEY_PX_ROOT} -o 'StrictHostKeyChecking=no' root@{proxmox_addr}"
         )
         return True
 
-    def _exec_on_proxmox(self, exec: str) -> str:
+    def _exec_on_proxmox(self, command: str) -> str:
+        """
+        Execute a shell command on the Proxmox host via SSH.
+
+        Args:
+            command (str): Command to run on Proxmox.
+
+        Returns:
+            str: Combined stdout and stderr from command execution.
+        """
+        proxmox_addr = self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS
         cmd = [
             "ssh",
             "-o",
             "StrictHostKeyChecking=no",
             "-i",
             self.conf.SSH_KEY_PX_ROOT,
-            f"root@{self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}",
-            exec,
+            f"root@{proxmox_addr}",
+            command,
         ]
-        self.logger.debug(
-            f"Executing '{exec}' on Proxmox @{self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}"
-        )
+        self.logger.debug(f"Executing on Proxmox {proxmox_addr}: {command}")
+
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True)
             output = proc.stdout + proc.stderr
-            self.logger.debug(f"{exec} -> {output.strip()}")
+            self.logger.debug(f"Command output: {output.strip()}")
             return output
         except Exception as e:
             self.logger.error(
-                f"Unable to execute {' '.join(cmd)} on Proxmox @{self.conf.INFRASTRUCTURE_PROXMOX_ADDRESS}: {e}"
+                f"Failed to execute {command} on Proxmox {proxmox_addr}: {e}"
             )
-            return
+            return ""
 
     def _create_proxmox_jump_user(self) -> bool:
-        if "uid=" not in self._exec_on_proxmox(
-            f"id {self.conf.INFRASTRUCTURE_JUMP_USER}"
-        ):
-            self.logger.debug(
-                f"User {self.conf.INFRASTRUCTURE_JUMP_USER} not found on Proxmox"
-            )
-            self.logger.debug(
-                f"Creating user {self.conf.INFRASTRUCTURE_JUMP_USER} on Proxmox"
-            )
+        """
+        Ensure that the jump user exists on Proxmox and has the correct password.
+
+        Returns:
+            bool: True if the jump user is ready.
+        """
+        jump_user = self.conf.INFRASTRUCTURE_JUMP_USER
+        jump_pass = self.conf.INFRASTRUCTURE_JUMP_PASSWORD
+
+        if "uid=" not in self._exec_on_proxmox(f"id {jump_user}"):
+            self.logger.debug(f"Creating jump user {jump_user} on Proxmox")
             if "OK" not in self._exec_on_proxmox(
-                f"useradd -m -s /bin/bash {self.conf.INFRASTRUCTURE_JUMP_USER} && echo OK"
+                f"useradd -m -s /bin/bash {jump_user} && echo OK"
             ):
-                self.logger.error(
-                    f"Unable to create user {self.conf.INFRASTRUCTURE_JUMP_USER} on Proxmox"
-                )
+                self.logger.error(f"Unable to create Proxmox jump user {jump_user}")
                 return False
-        else:
-            self.logger.debug(
-                f"User {self.conf.INFRASTRUCTURE_JUMP_USER} already exists on Proxmox"
-            )
 
         if "OK" not in self._exec_on_proxmox(
-            f"echo '{self.conf.INFRASTRUCTURE_JUMP_USER}:{self.conf.INFRASTRUCTURE_JUMP_PASSWORD}' | chpasswd && echo OK"
+            f"echo '{jump_user}:{jump_pass}' | chpasswd && echo OK"
         ):
-            self.logger.error(
-                f"Unable to set {self.conf.INFRASTRUCTURE_JUMP_USER}'s password on Proxmox"
-            )
+            self.logger.error(f"Unable to set password for {jump_user} on Proxmox")
             return False
+
         return True
 
     def _load_proxmox_ssh_jump(self) -> bool:
-        self.logger.info(
-            f"Managing SSH keys for {self.conf.INFRASTRUCTURE_JUMP_USER}@{self.conf.INFRASTRUCTURE_JUMP_HOST}"
-        )
+        """
+        Set up SSH access for the jump user on Proxmox.
+
+        Returns:
+            bool: True if jump user SSH setup is successful.
+        """
+        jump_user = self.conf.INFRASTRUCTURE_JUMP_USER
+        jump_host = self.conf.INFRASTRUCTURE_JUMP_HOST
+        jump_pass = self.conf.INFRASTRUCTURE_JUMP_PASSWORD
+
+        self.logger.info(f"Setting up SSH access for {jump_user}@{jump_host}")
+
         if not self.conf.JUMP_ON_PROXMOX:
             return self._ssh_copy_id(
-                f"{self.conf.INFRASTRUCTURE_JUMP_USER}@{self.conf.INFRASTRUCTURE_JUMP_HOST}",
-                self.conf.INFRASTRUCTURE_JUMP_PASSWORD,
-                f"{self.conf.SSH_KEY_PX_JUMP}.pub",
+                target=f"{jump_user}@{jump_host}",
+                password=jump_pass,
+                pub_key=f"{self.conf.SSH_KEY_PX_JUMP}.pub",
             )
 
         if not self._create_proxmox_jump_user():
             return False
 
         if not self._ssh_copy_id(
-            f"{self.conf.INFRASTRUCTURE_JUMP_USER}@{self.conf.INFRASTRUCTURE_JUMP_HOST}",
-            self.conf.INFRASTRUCTURE_JUMP_PASSWORD,
-            f"{self.conf.SSH_KEY_PX_JUMP}.pub",
+            target=f"{jump_user}@{jump_host}",
+            password=jump_pass,
+            pub_key=f"{self.conf.SSH_KEY_PX_JUMP}.pub",
         ):
             return False
 
@@ -597,129 +700,124 @@ class Preparator:
                 return False
 
         self.logger.info(
-            f"You can now SSH to the proxmox with 'ssh -i {self.conf.SSH_KEY_PX_JUMP} -o 'StrictHostKeyChecking=no' {self.conf.INFRASTRUCTURE_JUMP_USER}@{self.conf.INFRASTRUCTURE_JUMP_HOST}'"
+            f"Jump SSH access ready: ssh -i {self.conf.SSH_KEY_PX_JUMP} -o 'StrictHostKeyChecking=no' {jump_user}@{jump_host}"
         )
         return True
 
     def _proxmox_generate_api_credentials(self) -> bool:
-        self.logger.info(
-            f"Setting up Proxmox API for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
-        )
+        """
+        Ensure that the Proxmox API user exists and has a valid API token.
 
-        if self.conf.INFRASTRUCTURE_PROXMOX_API_USER not in self._exec_on_proxmox(
-            "pveum user list"
-        ):
-            self.logger.info(
-                f"Creating {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} user on Proxmox"
-            )
+        Returns:
+            bool: True if API credentials are ready.
+        """
+        api_user = self.conf.INFRASTRUCTURE_PROXMOX_API_USER
+        token_id = self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID
+
+        self.logger.info(f"Setting up Proxmox API credentials for {api_user}")
+
+        if api_user not in self._exec_on_proxmox("pveum user list"):
+            self.logger.info(f"Creating Proxmox API user {api_user}")
             if "OK" not in self._exec_on_proxmox(
-                f"pveum user add {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam && echo OK"
+                f"pveum user add {api_user}@pam && echo OK"
             ):
-                self.logger.error(
-                    f"Unable to create {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} user"
-                )
+                self.logger.error(f"Failed to create Proxmox API user {api_user}")
                 return False
         else:
-            self.logger.info(
-                f"User {self.conf.INFRASTRUCTURE_PROXMOX_API_USER} already exists on Proxmox"
-            )
+            self.logger.info(f"Proxmox API user {api_user} already exists")
 
-        res_token_list = self._exec_on_proxmox(
-            f"pveum user token list {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam"
-        )
-        if (
-            "tokenid" not in res_token_list
-            or self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID not in res_token_list
-        ):
-            self.logger.info(
-                f"Creating tokenID {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID} for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
-            )
+        token_list = self._exec_on_proxmox(f"pveum user token list {api_user}@pam")
+        if "tokenid" not in token_list or token_id not in token_list:
+            self.logger.info(f"Creating token {token_id} for {api_user}")
             res = self._exec_on_proxmox(
-                f"pveum user token add {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID} --privsep 0 --output-format json"
+                f"pveum user token add {api_user}@pam {token_id} --privsep 0 --output-format json"
             )
             if "full-tokenid" not in res:
-                self.logger.error(
-                    f"Unable to create token for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
-                )
+                self.logger.error(f"Failed to create API token for {api_user}")
                 return False
 
             self.state.proxmox_api_token_secret = json.loads(res).get("value")
             self.logger.debug(
-                f"New token generated (id: {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}): {self.state.proxmox_api_token_secret}"
+                f"New token generated: {self.state.proxmox_api_token_secret}"
             )
 
-            self.logger.info(
-                f"Setting Administrator role to {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
-            )
+            self.logger.info(f"Assigning Administrator role to {api_user}")
             if "OK" not in self._exec_on_proxmox(
-                f"pveum acl modify / -user {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam -role Administrator && echo OK"
+                f"pveum acl modify / -user {api_user}@pam -role Administrator && echo OK"
             ):
-                self.logger.error(
-                    f"Unable to set Administrator role to {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
-                )
+                self.logger.error(f"Failed to assign Administrator role to {api_user}")
                 return False
         else:
-            self.logger.info(
-                f"TokenID {self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID} already exists for {self.conf.INFRASTRUCTURE_PROXMOX_API_USER}"
-            )
+            self.logger.info(f"Token {token_id} already exists for {api_user}")
+
         return True
 
     def _test_proxmox_api_token(self) -> bool:
+        """
+        Test if the Proxmox API token is valid by fetching nodes.
+
+        Returns:
+            bool: True if token is valid.
+        """
         if self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET:
             self.state.proxmox_api_token_secret = (
                 self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_SECRET
             )
 
-        self.logger.info(
-            f"Testing Proxmox API token on host {self.conf.INFRASTRUCTURE_PROXMOX_API_HOST}"
-        )
-        self.logger.debug(
-            f"Using header - Authorization: PVEAPIToken={self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam!{self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}={self.state.proxmox_api_token_secret}"
-        )
+        api_host = self.conf.INFRASTRUCTURE_PROXMOX_API_HOST
+        api_user = self.conf.INFRASTRUCTURE_PROXMOX_API_USER
+        token_id = self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID
+        token_secret = self.state.proxmox_api_token_secret
 
-        url = f"https://{self.conf.INFRASTRUCTURE_PROXMOX_API_HOST}/api2/json/nodes"
+        self.logger.info(f"Testing Proxmox API token on host {api_host}")
         headers = {
-            "Authorization": f"PVEAPIToken={self.conf.INFRASTRUCTURE_PROXMOX_API_USER}@pam!{self.conf.INFRASTRUCTURE_PROXMOX_API_TOKEN_ID}={self.state.proxmox_api_token_secret}"
+            "Authorization": f"PVEAPIToken={api_user}@pam!{token_id}={token_secret}"
         }
+        url = f"https://{api_host}/api2/json/nodes"
 
         try:
             response = requests.get(url, headers=headers, verify=False, timeout=10)
-            http_code = response.status_code
-            body = response.text
         except requests.RequestException as e:
-            self.logger.error("Connection to Proxmox failed (network/TLS error)")
+            self.logger.error("Failed to connect to Proxmox API (network/TLS)")
             self.logger.debug(f"Error: {e}")
             return False
 
-        if http_code == 401:
+        if response.status_code == 401:
             self.logger.error("Proxmox API authentication failed (invalid token)")
-            self.logger.debug("HTTP 401 received")
             return False
-
-        if http_code != 200:
-            self.logger.error(f"Unexpected HTTP response from Proxmox: {http_code}")
-            self.logger.debug(body)
+        if response.status_code != 200:
+            self.logger.error(
+                f"Unexpected HTTP response from Proxmox API: {response.status_code}"
+            )
+            self.logger.debug(response.text)
             return False
 
         self.logger.info("Proxmox API token is valid")
         try:
-            body_json = response.json()
-            self.logger.debug(json.dumps(body_json, indent=2))
+            self.logger.debug(json.dumps(response.json(), indent=2))
         except json.JSONDecodeError:
-            self.logger.error(f"Unable to decode JSON response: {body}")
+            self.logger.error(f"Failed to decode JSON response: {response.text}")
 
         return True
 
-    def _prepare_environment_ansible_vault(self):
+    def _prepare_environment_ansible_vault(self) -> bool:
+        """
+        Prepare an Ansible vault directory, create a default vault file with
+        credentials, SSH keys, cloud-init users, and encrypt it.
+
+        Returns:
+            bool: True if vault creation and encryption succeed.
+        """
         vault_dir = Path(
             self.conf.INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL
         )
+        vault_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
         vault_file = vault_dir / "default_vault.yml"
         vault_pass_file = vault_dir / "vault_pass.txt"
         vault_password = utils.generate_password()
 
         self.logger.info(f"Preparing Ansible vault at {vault_dir}")
-        vault_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         vault_pass_file.write_text(f"{vault_password}\n", encoding="utf-8")
         vault_pass_file.chmod(0o600)
 
@@ -785,24 +883,27 @@ class Preparator:
             vault_file.write_text(rendered, encoding="utf-8")
             self.logger.debug(f"Ansible vault successfully created at {vault_file}")
         except Exception as e:
-            self.logger.error(f"Unable to write ansible vault to {vault_file}: {e}")
+            self.logger.error(f"Unable to write Ansible vault to {vault_file}: {e}")
             return False
 
         self.logger.info(f"Encrypting vault at {vault_file}")
         try:
             utils.encrypt_ansible_vault(vault_file, vault_pass_file)
         except Exception as e:
-            self.logger.error(f"Unable to encrypt ansible vault at {vault_file}: {e}")
+            self.logger.error(f"Failed to encrypt Ansible vault at {vault_file}: {e}")
             return False
 
         self.logger.info(f"Vault successfully encrypted at {vault_file}")
-        self.logger.info(f"Vault password {vault_password} saved at {vault_pass_file}")
+        self.logger.info(f"Vault password saved at {vault_pass_file}")
         return True
 
-    def create_remote_deployer_playbook(
-        self,
-    ):
-        self.logger.info("Creating remote deployer playbook")
+    def create_remote_deployer_playbook(self) -> bool:
+        """
+        Generate the remote deployer inventory, playbook, and helper shell scripts.
+
+        Returns:
+            bool: True if all files are created successfully.
+        """
         deployer_ssh_name = self.conf.DEPLOYER_CLI_CONFIG_SSH_NAME
         infra_codename = self.conf.INFRASTRUCTURE_CODENAME
         infra_scenario = self.conf.INFRASTRUCTURE_SCENARIO
@@ -815,12 +916,9 @@ class Preparator:
         )
 
         try:
-            self.logger.debug(
-                f"Creating inventory directory at {inventory_file.parent}"
-            )
             inventory_file.parent.mkdir(parents=True, exist_ok=True)
+            self.logger.debug(f"Creating deployer playbook {playbook_file.name}")
 
-            self.logger.debug(f"Creating {playbook_file.name}")
             template = self.jinja_env.get_template("deploy_playbook.yml.j2")
             playbook_file.write_text(
                 template.render(
@@ -835,7 +933,6 @@ class Preparator:
                 )
             )
 
-            self.logger.debug(f"Creating {shell_file.name}")
             template = self.jinja_env.get_template("deploy_playbook.sh.j2")
             shell_file.write_text(
                 template.render(
@@ -844,20 +941,21 @@ class Preparator:
             )
             shell_file.chmod(0o755)
 
-            self.logger.debug(f"Creating {inventory_file.name}")
             template = self.jinja_env.get_template("inventory.yml.j2")
             inventory_file.write_text(
                 template.render(deployer_ssh_name=deployer_ssh_name)
             )
 
-            self.logger.debug(f"Creating {show_inventory_script.name}")
             show_inventory_script.write_text(
-                f"""#!/bin/bash
-            ansible-inventory -i "./{inventory_file.name}" --graph
-            """
+                f"#!/bin/bash\nansible-inventory -i './{inventory_file.name}' --graph\n"
             )
             show_inventory_script.chmod(0o755)
+
+            self.logger.info(
+                "Remote deployer playbook and scripts created successfully"
+            )
             return True
+
         except Exception as e:
-            self.logger.error(f"Unable to create remote deployer playbook: {e}")
+            self.logger.error(f"Failed to create remote deployer playbook: {e}")
             return False
