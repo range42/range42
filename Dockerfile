@@ -1,38 +1,31 @@
 FROM debian:testing-slim
-LABEL maintainer="Alexis DANJON <alexis.danjon@nc3.lu>"
 
 ARG DEPLOYER_USER=user
+ENV DEPLOYER_USER=${DEPLOYER_USER}
 ENV DEBIAN_FRONTEND noninteractive
 
-RUN apt-get -q update \
-    && apt-get -qy --no-install-recommends install \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         sudo \
-        git \
-        yq \
-        pwgen \
-        keychain \
-        curl \
-        vim \
         ansible \
         python3 \
         python3-pip \
         openssh-server \
         sshpass \
+        ca-certificates \
     && ssh-keygen -A \
-    && apt-get -qy --purge autoremove \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-RUN useradd -m -s /bin/bash "$DEPLOYER_USER" && \
-    echo "$DEPLOYER_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"$DEPLOYER_USER" && \
-    chmod 0440 /etc/sudoers.d/"$DEPLOYER_USER"
+    && useradd -m -s /bin/bash "$DEPLOYER_USER" \
+    && echo "$DEPLOYER_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"$DEPLOYER_USER" \
+    && chmod 0440 /etc/sudoers.d/"$DEPLOYER_USER" \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /home/$DEPLOYER_USER
-USER $DEPLOYER_USER
-
 COPY --chown=$DEPLOYER_USER:$DEPLOYER_USER range42 ./range42
-COPY --chown=$DEPLOYER_USER:$DEPLOYER_USER requirements.txt ./requirements.txt
+COPY --chown=$DEPLOYER_USER:$DEPLOYER_USER requirements.txt .
+RUN pip3 install --break-system-packages -r requirements.txt \
+    && rm requirements.txt
 
-RUN pip3 install --break-system-packages -r requirements.txt && rm requirements.txt
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config
 
-CMD sudo /usr/sbin/sshd & exec su - $DEPLOYER_USER
-# ENTRYPOINT ["python3", "-m", "range42"]
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D"]
