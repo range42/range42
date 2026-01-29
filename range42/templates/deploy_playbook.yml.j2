@@ -1,0 +1,12 @@
+- hosts: {{ deployer_ssh_name }}
+  become: true
+  roles:
+    - configure.deployer-cli
+  vars:
+    DEPLOYER_CLI_USER: "{{ deployer_user }}"
+    INFRASTRUCTURE_CODENAME: "{{ infra_codename }}"
+    INFRASTRUCTURE_SCENARIO: "{{ infra_scenario }}"
+    INFRASTRUCTURE_PROXMOX_ADDRESS: "{{ proxmox_address }}"
+    INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL: "{{ auto_gen_config_dir }}"
+    INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL: "{{ auto_gen_ssh_dir }}"
+    INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL: "{{ auto_gen_vault_dir }}"
