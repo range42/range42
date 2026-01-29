@@ -96,7 +96,7 @@ Build and start the Docker containers, then run the preparator inside the deploy
 
 ```bash
 sudo docker compose up -d --build
-sudo docker compose exec -u user -it range42deployer python3 -m range42 --init -vvv
+sudo docker compose exec -u user -it range42deployer range42 --init -vvv
 ```
 
 * `--init` triggers the initialization of the infrastructure.
