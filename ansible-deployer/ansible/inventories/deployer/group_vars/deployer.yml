@@ -1,0 +1,9 @@
+ansible_user: "{{ deployer_cli_user }}"
+ansible_port: "{{ deployer_cli_ssh_port | default(22) }}"
+
+ansible_connection: >-
+  {{
+    'local'
+    if deployer_cli_ip in ['localhost', '127.0.0.1']
+    else 'ssh'
+  }}

@@ -1,0 +1,10 @@
+- name: "Ensure SSH key directories exist"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ deployer_infrastructure_ssh_keys_dir_local }}/jump_keys"
+    - "{{ deployer_infrastructure_ssh_keys_dir_local }}/backend_keys"
+    - "{{ deployer_infrastructure_ssh_keys_dir_local }}/student_keys"
+    - "{{ deployer_infrastructure_ssh_keys_dir_local }}/student_keys/additionnal_students"

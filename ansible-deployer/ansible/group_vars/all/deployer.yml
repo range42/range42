@@ -1,0 +1,9 @@
+deployer_mode: >-
+  {{
+    'local'
+    if deployer_cli_ip in ['localhost', '127.0.0.1']
+    else 'remote'
+  }}
+
+deployer_is_local: "{{ deployer_mode == 'local' }}"
+deployer_is_remote: "{{ deployer_mode == 'remote' }}"
