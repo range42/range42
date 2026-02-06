@@ -105,3 +105,29 @@ DEV_MODE_GITCONFIG_FILE: "gitconfig_range42_dev_mode"
 DEV_MODE_GITCONFIG_NAME: "johndoe"
 DEV_MODE_GITCONFIG_EMAIL: "johndoe@example.com"
 DEV_MODE_GITHUB_SSH_KEY_FILE_PATH: "/home/range42-operator/.ssh/range42_dev_mode_github"
+
+# Base packages (all distros)
+configure_deployer_cli_base_packages:
+  - curl
+  - net-tools
+  - keychain
+
+configure_deployer_cli_utils_packages:
+  - yq
+  - jq
+  - vim
+  - git
+  - zsh
+
+configure_deployer_cli_extra_packages:
+  - nmap
+  - tcpdump
+
+# Ansible bootstrap packages per OS family
+configure_deployer_cli_ansible_packages:
+  Debian:
+    - python3
+    - ansible
+  RedHat:
+    - python3
+    - ansible-core

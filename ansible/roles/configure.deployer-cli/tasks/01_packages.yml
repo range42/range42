@@ -26,7 +26,6 @@
 
 #   when:
 #     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
-      
 
 #
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -57,51 +56,52 @@
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-- name: apt update/upgrade
+- name: Update and upgrade system packages
   become: true
-
+  when: DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
   block:
-    - name: apt update/upgrade - update cache
-      apt:
-        update_cache: yes
+    - name: Update package cache
+      ansible.builtin.package:
+        update_cache: true
 
-    - name: apt update/upgrade - upgrade system
-      apt:
+    - name: Debian/Ubuntu – dist-upgrade
+      ansible.builtin.apt:
         upgrade: dist
+      when: ansible_facts['os_family'] == "Debian"
 
-  when:
-    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+    - name: RHEL/CentOS – upgrade all packages
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      when: ansible_facts['os_family'] == "RedHat"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-- name: install packages
+- name: Install packages
   become: true
-
+  when: DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | upper != 'NO'
   block:
-    - name: install packages - base packages
-      apt:
-        name:
-          - curl
-          - net-tools
-          - keychain
 
-        state: present
-    - name: install packages - utils packages
-      apt:
-        name:
-          - yq
-          - jq
-          - vim
-          - git
-          - zsh
+    - name: Install base packages
+      ansible.builtin.package:
+        name: "{{ configure_deployer_cli_base_packages }}"
         state: present
 
-    - name: install packages - extra packages
-      apt:
-        name:
-          - nmap
-          - tcpdump
+    - name: Install utils packages
+      ansible.builtin.package:
+        name: "{{ configure_deployer_cli_utils_packages }}"
         state: present
+
+    - name: Install extra packages
+      ansible.builtin.package:
+        name: "{{ configure_deployer_cli_extra_packages }}"
+        state: present
+
+    - name: Install ansible bootstrap packages per OS family
+      ansible.builtin.package:
+        name: "{{ configure_deployer_cli_ansible_packages[ansible_facts['os_family']] }}"
+        state: present
+      when: ansible_facts['os_family'] in configure_deployer_cli_ansible_packages
 
     # ###############################################
     #
@@ -120,14 +120,10 @@
     #   installation on remote system without ansible
     #
     #
-
-    - name: install packages - install ansible - bootstrapping
-      ansible.builtin.raw: |
-        apt-get update -y
-        apt-get install -y python3 ansible
-
-  when:
-    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+    # - name: install packages - install ansible - bootstrapping
+    #   ansible.builtin.raw: |
+    #     apt-get update -y
+    #     apt-get install -y python3 ansible
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
