@@ -1,0 +1,12 @@
+- hosts: {{ deployer_cli_config_ssh_name }}
+  become: true
+  roles:
+    - configure.deployer-cli 
+  vars:
+    DEPLOYER_CLI_USER:  {{ deployer_cli_config_user if deployer_is_local else deployer_cli_config_ssh_name }}
+    INFRASTRUCTURE_CODENAME: {{ deployer_infrastructure_codename }}
+    INFRASTRUCTURE_SCENARIO: {{ deployer_infrastructure_scenario }}
+    INFRASTRUCTURE_PROXMOX_ADDRESS: {{ infrastructure_proxmox_address }}
+    INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL: {{ deployer_infrastructure_config_dir_local }}
+    INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL: {{ deployer_infrastructure_ssh_keys_dir_local }}
+    INFRASTRUCTURE__AUTO_GENERATED__ANSIBLE_VAULT_DIR_LOCAL: {{ deployer_infrastructure_ansible_vault_dir_local }}

@@ -1,0 +1,32 @@
+- name: Create SSH configuration directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0700'
+  with_items:
+    - "{{ deployer_ssh_client__dst_config_dir }}"
+    - "{{ deployer_ssh_client__dst_config_range42_dir }}"
+    - "{{ deployer_ssh_client__ssh_keys_range42_dir }}"
+  when: deployer_is_remote
+
+- name: Include deployer CLI config in default SSH client config
+  ansible.builtin.lineinfile:
+    path: "{{ deployer_ssh_client__dst_config_file__default }}"
+    line: "Include {{ deployer_ssh_client__dst_config_file__range42_deployer_cli }}"
+    insertafter: EOF
+    state: present
+    create: true
+    mode: '0600'
+  when: deployer_is_remote
+
+- name: Write deployer CLI SSH client config
+  ansible.builtin.copy:
+    dest: "{{ deployer_ssh_client__dst_config_file__range42_deployer_cli }}"
+    content: |
+      Host {{ deployer_cli_config_ssh_name }}
+        Hostname {{ deployer_cli_config_ip }}
+        User {{ deployer_cli_config_user }}
+        Port {{ deployer_cli_config_port }}
+        IdentityFile {{ deployer_ssh_client__ssh_keys_range42_file__deployer_cli }}
+    mode: "0600"
+  when: deployer_is_remote

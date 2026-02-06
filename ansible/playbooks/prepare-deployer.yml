@@ -1,0 +1,11 @@
+---
+- name: Prepare deployer environment
+  hosts: deployer
+  gather_facts: yes
+
+  vars_files:
+    - ../config/config_deployer-cli.yml
+    - ../group_vars/all/deployer.yml
+
+  roles:
+    - deployer

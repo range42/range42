@@ -1,0 +1,17 @@
+- name: "Copy public key to Proxmox root user"
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ lookup('file', deployer_ssh_key_px_root + '.pub') }}"
+    state: present
+  delegate_to: "{{ infrastructure_proxmox_address }}"
+  vars:
+    ansible_user: root
+    ansible_password: "{{ infrastructure_proxmox_root_password }}"
+
+- name: Add Proxmox host dynamically
+  ansible.builtin.add_host:
+    name: proxmox
+    ansible_host: "{{ infrastructure_proxmox_address }}"
+    ansible_user: root
+    ansible_ssh_private_key_file: "{{ deployer_ssh_key_px_root }}"
+    ansible_ssh_passphrase: "{{ deployer_px_root_passphrase }}"

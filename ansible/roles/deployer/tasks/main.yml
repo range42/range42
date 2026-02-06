@@ -1,0 +1,47 @@
+- name: Show deployer mode
+  ansible.builtin.debug:
+    msg: "Running deployer in {{ deployer_mode }} mode"
+
+- name: "Prepare environment passwords"
+  ansible.builtin.import_tasks: 01_generate_passwords.yml
+
+- name: "Prepare SSH key directories"
+  ansible.builtin.import_tasks: 02_ssh_keys_dirs.yml
+
+- name: "Generate SSH keys"
+  ansible.builtin.import_tasks: 03_ssh_keys_generate.yml
+
+- name: "Write passwords/passphrases file"
+  ansible.builtin.import_tasks: 04_ssh_keys_summary.yml
+
+# - name: Run local deployer tasks
+#   ansible.builtin.import_tasks: local.yml
+#   when: deployer_is_local
+
+# - name: Run remote deployer tasks
+#   ansible.builtin.import_tasks: remote.yml
+#   when: deployer_is_remote
+
+- name: "Warming up SSH client configuration"
+  ansible.builtin.import_tasks: 05_warmup_ssh_client_configuration.yml
+
+- name: "Load Proxmox root SSH key"
+  ansible.builtin.import_tasks: 06_proxmox_load_root_ssh_key.yml
+
+- name: "Load Proxmox jump SSH key"
+  ansible.builtin.import_tasks: 07_proxmox_load_jump_ssh_key.yml
+
+- name: "Generate proxmox API credentials"
+  ansible.builtin.import_tasks: 08_proxmox_generate_api_credentials.yml
+
+- name: "Preparing Ansible vault"
+  ansible.builtin.import_tasks: 09_prepare_environment_ansible_vault.yml
+
+- name: "Creating remote deployer playbook"
+  ansible.builtin.import_tasks: 10_create_deployer_playbook.yml
+
+- name: "Backup configuration file"
+  ansible.builtin.import_tasks: 11_backup_configuration_file.yml
+
+- name: "Print preparation details and next step"
+  ansible.builtin.import_tasks: 99_print_end.yml

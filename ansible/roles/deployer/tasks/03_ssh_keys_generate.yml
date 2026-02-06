@@ -1,0 +1,86 @@
+- name: "Check if we should generate SSH keys"
+  ansible.builtin.set_fact:
+    deployer_generate_ssh_keys: "{{ context_auto_deployer_generate_ssh_keys | default('YES') | upper == 'YES' }}"
+
+- name: "Generate SSH key passphrase"
+  ansible.builtin.set_fact:
+    deployer_px_root_passphrase: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'ascii_uppercase', 'digits'], length=24) }}"
+    deployer_px_jump_passphrase: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'ascii_uppercase', 'digits'], length=24) }}"
+    deployer_passphrase: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'ascii_uppercase', 'digits'], length=24) }}"
+    deployer_student_passphrase: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'ascii_uppercase', 'digits'], length=24) }}"
+    deployer_student_additional_passphrases: []
+  when: deployer_generate_ssh_keys
+
+- name: Generate additional student passphrases
+  ansible.builtin.set_fact:
+    deployer_student_additional_passphrases: >-
+      {{ deployer_student_additional_passphrases + [
+        lookup(
+          'ansible.builtin.password',
+          '/dev/null',
+          chars=['ascii_lowercase', 'ascii_uppercase', 'digits'],
+          length=24
+        )
+      ] }}
+  loop: "{{ range(1, student_additionnal_keys_count + 1) | list }}"
+  when: deployer_generate_ssh_keys
+
+- name: "Print generated passphrase"
+  ansible.builtin.debug:
+    msg:
+      - "Proxmox SSH key root passphrase: {{ deployer_px_root_passphrase | default('') }}"
+      - "Proxmox SSH key jump passphrase: {{ deployer_px_jump_passphrase | default('') }}"
+      - "Deployer SSH key passphrase: {{ deployer_passphrase | default('') }}"
+      - "Student SSH key passphrase: {{ deployer_student_passphrase | default('') }}"
+      - "Aditional Students SSH key passphrase: {{ deployer_student_additional_passphrases | default([]) }}"
+
+- name: "Generate Proxmox root SSH key"
+  community.crypto.openssh_keypair:
+    path: "{{ deployer_ssh_key_px_root }}"
+    type: ed25519
+    size: 4096
+    passphrase: "{{ deployer_px_root_passphrase | default('') }}"
+    comment: "proxmox root {{ infrastructure_codename }}-{{ infrastructure_scenario }}"
+    regenerate: full_idempotence
+  when: deployer_generate_ssh_keys
+
+- name: "Generate Proxmox jump SSH key"
+  community.crypto.openssh_keypair:
+    path: "{{ deployer_ssh_key_px_jump }}"
+    type: ed25519
+    size: 4096
+    passphrase: "{{ deployer_px_jump_passphrase | default('') }}"
+    comment: "proxmox jump {{ infrastructure_codename }}-{{ infrastructure_scenario }}"
+    regenerate: full_idempotence
+  when: deployer_generate_ssh_keys
+
+- name: "Generate deployer (Alice) SSH key"
+  community.crypto.openssh_keypair:
+    path: "{{ deployer_ssh_key_deployer_admin_alice }}"
+    type: ed25519
+    size: 4096
+    passphrase: "{{ deployer_passphrase | default('') }}"
+    comment: "r42 deployer (admin) - alice {{ infrastructure_codename }}-{{ infrastructure_scenario }}"
+    regenerate: full_idempotence
+  when: deployer_generate_ssh_keys
+
+- name: "Generate student (Bob) SSH key"
+  community.crypto.openssh_keypair:
+    path: "{{ deployer_ssh_key_student_user_bob }}"
+    type: ed25519
+    size: 4096
+    passphrase: "{{ student_passphrase | default('') }}"
+    comment: "r42 student (user) - bob {{ infrastructure_codename }}-{{ infrastructure_scenario }}"
+    regenerate: full_idempotence
+  when: deployer_generate_ssh_keys
+
+- name: "Generate additional student keys"
+  community.crypto.openssh_keypair:
+    path: "{{ deployer_ssh_key_student_user_bob }}_{{ item.0 }}"
+    type: ed25519
+    size: 4096
+    passphrase: "{{item.1 }}"
+    comment: "r42 student (user) - bob [extra {{ item.0 }}] {{ infrastructure_codename }}-{{ infrastructure_scenario }}"
+    regenerate: full_idempotence
+  loop: "{{ range(1, student_additionnal_keys_count + 1) | list | zip(deployer_student_additional_passphrases) | list }}"
+  when: deployer_generate_ssh_keys

@@ -1,0 +1,13 @@
+- name: "Preparation details"
+  ansible.builtin.debug:
+    msg:
+      - "INFRASTRUCTURE_CODENAME: {{ deployer_infrastructure_codename }}"
+      - "INFRASTRUCTURE_SCENARIO: {{ deployer_infrastructure_scenario }}"
+      - "INFRASTRUCTURE_PROXMOX_ADDRESS: {{ infrastructure_proxmox_address }}"
+      - "SSH_CLIENT__DST_CONFIG_DIR: {{ ssh_client__dst_config_dir }}"
+
+- name: "Next step"
+  ansible.builtin.debug:
+    msg:
+      - "To deploy configuration on {{ deployer_cli_config_ssh_name }}"
+      - "run {{ deployer_remote_deployer_cli_sh_file }}"

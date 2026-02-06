@@ -1,0 +1,81 @@
+- name: "Copy deployer configuration to {{ deployer_configuration_dst_file_path }}"
+  ansible.builtin.copy:
+    src: ".{{ deployer_configuration_file_path }}"
+    dest: ".{{ deployer_configuration_dst_file_path }}"
+    mode: "0644"
+
+- name: "Update Proxmox API credentials in {{ deployer_configuration_dst_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_dst_file_path }}"
+    regexp: '^#?\s*proxmox_api_user:.*$'
+    line: 'proxmox_api_user: "{{ deployer_proxmox_api_user }}"'
+    insertafter: EOF
+
+- name: "Update Proxmox API token ID in {{ deployer_configuration_dst_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_dst_file_path }}"
+    regexp: '^#?\s*proxmox_api_token_id:.*$'
+    line: 'proxmox_api_token_id: "{{ deployer_proxmox_api_token_id }}"'
+    insertafter: EOF
+
+- name: "Update Proxmox API token secret in {{ deployer_configuration_dst_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_dst_file_path }}"
+    regexp: '^#?\s*proxmox_api_token_secret:.*$'
+    line: 'proxmox_api_token_secret: "{{ deployer_proxmox_api_token_secret }}"'
+    insertafter: EOF
+
+- name: "Update Admin VM CI SSH key in {{ deployer_configuration_dst_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_dst_file_path }}"
+    regexp: '^#?\s*default_admin_vm_ci_ssh_key:.*$'
+    line: 'default_admin_vm_ci_ssh_key: "{{ deployer_ssh_key_deployer_admin_pub_content }}"'
+    insertafter: EOF
+
+- name: "Update Trainee VM CI SSH key in {{ deployer_configuration_dst_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_dst_file_path }}"
+    regexp: '^#?\s*default_trainee_vm_ci_ssh_key:.*$'
+    line: 'default_trainee_vm_ci_ssh_key: "{{ deployer_ssh_key_student_user_pub_content }}"'
+    insertafter: EOF
+
+- name: "Copy deployer configuration to parent file {{ deployer_configuration_parent_file_path }}"
+  ansible.builtin.copy:
+    src: ".{{ deployer_configuration_file_path }}"
+    dest: ".{{ deployer_configuration_parent_file_path }}"
+    mode: "0644"
+
+- name: "Update Proxmox API credentials in {{ deployer_configuration_parent_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_parent_file_path }}"
+    regexp: '^#?\s*proxmox_api_user:.*$'
+    line: 'proxmox_api_user: "{{ deployer_proxmox_api_user }}"'
+    insertafter: EOF
+
+- name: "Update Proxmox API token ID in {{ deployer_configuration_parent_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_parent_file_path }}"
+    regexp: '^#?\s*proxmox_api_token_id:.*$'
+    line: 'proxmox_api_token_id: "{{ deployer_proxmox_api_token_id }}"'
+    insertafter: EOF
+
+- name: "Update Proxmox API token secret in {{ deployer_configuration_parent_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_parent_file_path }}"
+    regexp: '^#?\s*proxmox_api_token_secret:.*$'
+    line: 'proxmox_api_token_secret: "{{ deployer_proxmox_api_token_secret }}"'
+    insertafter: EOF
+
+- name: "Update Admin VM CI SSH key in {{ deployer_configuration_parent_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_parent_file_path }}"
+    regexp: '^#?\s*default_admin_vm_ci_ssh_key:.*$'
+    line: 'default_admin_vm_ci_ssh_key: "{{ deployer_ssh_key_deployer_admin_pub_content }}"'
+    insertafter: EOF
+
+- name: "Update Trainee VM CI SSH key in {{ deployer_configuration_parent_file_path }}"
+  ansible.builtin.lineinfile:
+    path: ".{{ deployer_configuration_parent_file_path }}"
+    regexp: '^#?\s*default_trainee_vm_ci_ssh_key:.*$'
+    line: 'default_trainee_vm_ci_ssh_key: "{{ deployer_ssh_key_student_user_pub_content }}"'
+    insertafter: EOF

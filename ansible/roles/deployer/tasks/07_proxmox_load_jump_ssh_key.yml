@@ -1,0 +1,19 @@
+- name: Create or update jump user on proxmox
+  ansible.builtin.user:
+    name: "{{ jump_user }}"
+    state: present
+    shell: /bin/bash
+    create_home: true
+    password: "{{ deployer_jump_password | password_hash }}"
+  delegate_to: proxmox
+  when: deployer_jump_on_proxmox
+
+- name: Install SSH key on jump host
+  ansible.posix.authorized_key:
+    user: "{{ jump_user }}"
+    key: "{{ lookup('file', deployer_ssh_key_px_jump + '.pub') }}"
+    state: present
+  delegate_to: "{{ jump_host }}"
+  vars:
+    ansible_user: "{{ jump_user }}"
+    ansible_password: "{{ hostvars[inventory_hostname]['deployer_jump_password'] }}"

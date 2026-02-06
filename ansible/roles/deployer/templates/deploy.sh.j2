@@ -1,0 +1,5 @@
+#!/bin/bash
+
+ansible-playbook \
+ -i {{ deployer_remote_deployer_cli_inventory_file }} \
+ playbooks/{{ deployer_remote_deployer_cli_yml_file }}

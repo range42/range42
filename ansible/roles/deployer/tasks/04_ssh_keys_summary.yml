@@ -1,0 +1,23 @@
+- name: Get absolute configuration folder path
+  ansible.builtin.command:
+    cmd: "readlink -f .{{ deployer_configuration_file_path }}"
+  register: deployer_configuration_file_path_abs
+  changed_when: false
+
+- name: "Write SSH key passphrases and user passwords"
+  ansible.builtin.copy:
+    dest: "{{ deployer_infrastructure_passwords_file_local }}"
+    content: |
+      #### AUTO-GENERATED - DO NOT COMMIT ####
+      # Infrastructure: {{ infrastructure_codename }}-{{ infrastructure_scenario }}
+      # Scenario: {{ infrastructure_scenario }}
+      # Config File: {{ deployer_configuration_file_path_abs.stdout }}
+      # Generated at: {{ ansible_facts['date_time']['date'] }} {{ ansible_facts['date_time']['time'] }} {{ ansible_facts['date_time']['tz'] }}
+      px_root_passphrase={{ deployer_px_root_passphrase | default('unchanged') }}
+      px_jump_passphrase={{ deployer_px_jump_passphrase | default('unchanged') }}
+      deployer_passphrase={{ deployer_deployer_passphrase | default('unchanged') }}
+      student_passphrase={{ deployer_student_passphrase | default('unchanged') }}
+      alice_user_password={{ deployer_alice_user_password | default(omit) }}
+      bob_user_password={{ deployer_bob_user_password | default(omit) }}
+    mode: "0600"
+  when: deployer_generate_ssh_keys

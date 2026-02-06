@@ -1,0 +1,40 @@
+- name: Create vault directory
+  ansible.builtin.file:
+    path: "{{ deployer_infrastructure_ansible_vault_dir_local }}"
+    state: directory
+    mode: '0700'
+
+- name: Write Vault password to file
+  ansible.builtin.copy:
+    dest: "{{ deployer_vault_pass_file }}"
+    content: "{{ deployer_vault_password }}"
+    mode: '0600'
+
+- name: Retrieve public key
+  ansible.builtin.set_fact:
+    deployer_ssh_key_px_root_pub_content: "{{ lookup('file', deployer_ssh_key_px_root + '.pub') }}"
+    deployer_ssh_key_px_jump_pub_content: "{{ lookup('file', deployer_ssh_key_px_jump + '.pub') }}"
+    deployer_ssh_key_deployer_admin_pub_content: "{{ lookup('file', deployer_ssh_key_deployer_admin_alice + '.pub') }}"
+    deployer_ssh_key_student_user_pub_content: "{{ lookup('file', deployer_ssh_key_student_user_bob + '.pub') }}"
+
+- name: "Create vault file (clear version)"
+  ansible.builtin.template:
+    src: "default_vault.yml.j2"
+    dest: "{{ deployer_vault_file }}"
+    mode: '0600'
+
+- name: "Encrypt the vault file"
+  ansible.builtin.command:
+    cmd: >
+      ansible-vault encrypt
+      {{ deployer_vault_file }}
+      --vault-password-file {{ deployer_vault_pass_file }}
+  register: deployer_vault_encrypt_result
+  changed_when: "'Encryption successful' in deployer_vault_encrypt_result.stdout or deployer_vault_encrypt_result.rc == 0"
+
+- name: "Print vault infos"
+  ansible.builtin.debug:
+    msg:
+      - "Vault file: {{ deployer_vault_file }}"
+      - "Vault password: {{ deployer_vault_password }}"
+      - "Vault password file: {{ deployer_vault_pass_file }}"

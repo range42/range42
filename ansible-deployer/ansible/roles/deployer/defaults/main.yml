@@ -1,9 +1,0 @@
-deployer_configuration_file_path: "../config/config_deployer-cli.yml"
-
-deployer_infrastructure_codename: "{{ infrastructure_codename | default('pve') }}"
-deployer_infrastructure_scenario: "{{ infrastructure_scenario | default('demo_lab') }}"
-
-deployer_infrastructure_config_dir_local: "../config/{{ deployer_infrastructure_codename | lower }}-{{ deployer_infrastructure_scenario | lower }}"
-deployer_infrastructure_ssh_keys_dir_local: "{{ deployer_infrastructure_config_dir_local }}/ssh_keys"
-deployer_infrastructure_ansible_vault_dir_local: "{{ deployer_infrastructure_config_dir_local }}/secrets"
-deployer_infrastructure_passwords_file_local: "{{ deployer_infrastructure_config_dir_local }}/passwords.env"

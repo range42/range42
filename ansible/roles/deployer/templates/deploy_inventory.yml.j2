@@ -1,0 +1,9 @@
+all:
+  children:
+    init_scripts:
+      hosts:
+        {{ deployer_cli_config_ssh_name }}:
+{% if deployer_is_local | default(true) %}
+          ansible_connection: local
+          ansible_host: localhost
+{% endif %}

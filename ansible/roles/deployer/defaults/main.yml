@@ -1,0 +1,52 @@
+deployer_configuration_file_path: "./config/config_deployer-cli.yml"
+
+deployer_infrastructure_codename: "{{ infrastructure_codename | default('pve') }}"
+deployer_infrastructure_scenario: "{{ infrastructure_scenario | default('demo_lab') }}"
+
+deployer_infrastructure_config_dir_local: "../config/{{ deployer_infrastructure_codename | lower }}-{{ deployer_infrastructure_scenario | lower }}"
+deployer_infrastructure_ssh_keys_dir_local: "{{ deployer_infrastructure_config_dir_local }}/ssh_keys"
+deployer_infrastructure_ansible_vault_dir_local: "{{ deployer_infrastructure_config_dir_local }}/secrets"
+deployer_infrastructure_passwords_file_local: "{{ deployer_infrastructure_config_dir_local }}/passwords.env"
+
+# SSH client paths
+deployer_ssh_client__dst_config_dir: "{{ ssh_client__dst_config_dir }}"
+deployer_ssh_client__dst_config_range42_dir: "{{ deployer_ssh_client__dst_config_dir }}/range42-{{ deployer_infrastructure_codename }}"
+deployer_ssh_client__ssh_keys_range42_dir: "{{ deployer_ssh_client__dst_config_range42_dir }}/keys"
+deployer_ssh_client__dst_config_file__default: "{{ deployer_ssh_client__dst_config_dir }}/config"
+deployer_ssh_client__dst_config_file__range42_deployer_cli: >-
+  {{ deployer_ssh_client__ssh_keys_range42_dir }}/config_range42-{{ deployer_infrastructure_codename }}
+
+# Deployer CLI SSH config
+deployer_cli_config_ssh_name: "range42.{{ deployer_infrastructure_codename }}.deployer-cli"
+deployer_cli_config_ip: "{{ deployer_cli_ip }}"
+deployer_cli_config_user: "{{ deployer_cli_user }}"
+deployer_cli_config_port: "{{ deployer_cli_ssh_port }}"
+deployer_ssh_client__ssh_keys_range42_file__deployer_cli: "{{ deployer_ssh_client__ssh_keys_range42_dir }}/{{ deployer_cli_config_ssh_name }}"
+
+# SSH keys
+deployer_ssh_key_px_root: >-
+  {{ deployer_infrastructure_ssh_keys_dir_local }}/jump_keys/px.{{ infrastructure_codename }}-{{ infrastructure_scenario }}-ssh_cli.root
+deployer_ssh_key_px_jump: >-
+  {{ deployer_infrastructure_ssh_keys_dir_local }}/jump_keys/px.{{ infrastructure_codename }}-{{ infrastructure_scenario }}-ssh_cli.jump_user
+deployer_ssh_key_deployer_admin_alice: >-
+  {{ deployer_infrastructure_ssh_keys_dir_local }}/backend_keys/r42.{{ infrastructure_codename }}-{{ infrastructure_scenario }}-deployer-key_alice
+deployer_ssh_key_student_user_bob: >-
+  {{ deployer_infrastructure_ssh_keys_dir_local }}/student_keys/r42.{{ infrastructure_codename }}-{{ infrastructure_scenario }}-student-key_bob
+
+# Proxmox API
+deployer_proxmox_api_host: "{{ proxmox_api_host if proxmox_api_host | default('') | length > 0 else infrastructure_proxmox_address ~ ':8006' }}"
+deployer_proxmox_api_user: "{{ proxmox_api_user | default('api_user') }}"
+deployer_proxmox_api_token_secret: "{{ proxmox_api_token_secret }}"
+
+# Vault
+deployer_vault_file: "{{ deployer_infrastructure_ansible_vault_dir_local }}/default_vault.yml"
+deployer_vault_pass_file: "{{ deployer_infrastructure_ansible_vault_dir_local }}/vault_pass.txt"
+
+# Remote deployer artifacts
+deployer_remote_deployer_cli_inventory_file: "./inventories/{{ deployer_cli_config_ssh_name }}.yml"
+deployer_remote_deployer_cli_sh_file: "./deploy.{{ deployer_cli_config_ssh_name }}-{{ deployer_infrastructure_scenario }}.sh"
+deployer_remote_deployer_cli_yml_file: "./deploy.{{ deployer_cli_config_ssh_name }}-{{ deployer_infrastructure_scenario }}.yml"
+
+# Configuration files
+deployer_configuration_dst_file_path: "./config/config_remote-deployer-cli.{{ deployer_infrastructure_codename }}-{{ deployer_infrastructure_scenario }}.yml"
+deployer_configuration_parent_file_path: "./config/parent_config_remote-deployer-cli.{{ deployer_infrastructure_codename }}.parent.yml"

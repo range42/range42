@@ -1,0 +1,54 @@
+#### AUTO-GENERATED VAULT FILE - DO NOT COMMIT ####
+# Infrastructure: {{ deployer_infrastructure_codename }}-{{ deployer_infrastructure_scenario }}
+# Generated at: {{ lookup('pipe', 'date "+%Y-%m-%d %H:%M:%S %Z"') }}
+
+###############################################################################
+# 1 - INFRASTRUCTURE INFORMATION
+###############################################################################
+infrastructure_codename: "{{ deployer_infrastructure_codename }}"
+infrastructure_scenario: "{{ deployer_infrastructure_scenario }}"
+
+proxmox_address: "{{ infrastructure_proxmox_address }}"
+proxmox_node: "{{ infrastructure_codename }}"
+
+proxmox_api_host: "{{ deployer_proxmox_api_host }}"
+proxmox_api_user: "{{ deployer_proxmox_api_user }}"
+proxmox_api_token_id: "{{ deployer_proxmox_api_token_id }}"
+proxmox_api_token_secret: "{{ deployer_proxmox_api_token_secret }}"
+
+proxmox_dest_iso_storage_name: "{{ infrastructure_proxmox_dest_iso_storage_name }}"
+proxmox_dest_vm_storage_name: "{{ infrastructure_proxmox_dest_vm_storage_name }}"
+proxmox_default_network_card_interface: "{{ infrastructure_proxmox_default_network_card_interface }}"
+
+###############################################################################
+# 2 - SSH KEY PATHS
+###############################################################################
+ssh_key_deployer_admin: "{{ deployer_ssh_key_deployer_admin_alice }}"
+ssh_key_student_user: "{{ deployer_ssh_key_student_user_bob }}"
+
+###############################################################################
+# 3 - SSH PUBLIC KEY CONTENT
+###############################################################################
+ssh_key_deployer_admin_pub_key: "{{ deployer_ssh_key_deployer_admin_pub_content }}"
+ssh_key_student_user_pub_key: "{{ deployer_ssh_key_student_user_pub_content }}"
+
+###############################################################################
+# 4 - CLOUD-INIT USERS CONFIGURATION
+###############################################################################
+# Administrator VM (alice)
+default_admin_vm_ci_user: "{{ default_admin_vm_ci_user }}"
+default_admin_vm_ci_password: "{{ deployer_infrastructure_default_admin_vm_ci_password }}"
+default_admin_vm_ci_ssh_key: "{{ deployer_ssh_key_deployer_admin_pub_content }}"
+
+# Student VM (bob)
+default_trainee_vm_ci_user: "{{ default_trainee_vm_ci_user }}"
+default_trainee_vm_ci_password: "{{ deployer_infrastructure_default_trainee_vm_ci_password }}"
+default_trainee_vm_ci_ssh_key: "{{ deployer_ssh_key_student_user_pub_content }}"
+
+###############################################################################
+# 5 - MISC
+###############################################################################
+deployer_cli_user_ssh_known_hosts: "/home/{{ deployer_cli_config_user }}/.ssh/known_hosts"
+infrastructure_tailscale_apikey: "{{ infrastructure_tailscale_apikey }}"
+infrastructure_tailscale_authkey: "{{ infrastructure_tailscale_authkey }}"
+infrastructure_wazuh_admin_password: "{{ deployer_infrastructure_wazuh_admin_password }}"

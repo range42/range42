@@ -1,0 +1,29 @@
+- name: "Creating playbook yml file"
+  ansible.builtin.template:
+    src: "deploy.yml.j2"
+    dest: "{{ deployer_remote_deployer_cli_yml_file }}"
+    mode: '0644'
+
+- name: "Creating playbook sh file"
+  ansible.builtin.template:
+    src: "deploy.sh.j2"
+    dest: ".{{ deployer_remote_deployer_cli_sh_file }}"
+    mode: '0755'
+
+- name: Create inventories directory
+  ansible.builtin.file:
+    path: "../inventories"
+    state: directory
+    mode: '0700'
+
+- name: "Creating inventory file"
+  ansible.builtin.template:
+    src: "deploy_inventory.yml.j2"
+    dest: ".{{ deployer_remote_deployer_cli_inventory_file }}"
+    mode: '0644'
+
+- name: "Creating inventories - show script"
+  ansible.builtin.template:
+    src: "show_inventory.sh.j2"
+    dest: "../inventories/show_inventory.{{ deployer_cli_config_ssh_name }}.sh"
+    mode: '0755'
