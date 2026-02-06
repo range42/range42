@@ -2,8 +2,7 @@
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 - name: developer mode tasks
-  when:
-    - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
+  when: DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
 
   block:
     #
