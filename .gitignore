@@ -1,2 +1,4 @@
-ansible-deployer/ansible/config/*/
-.vscode/
+.vscode
+.ansible
+.venv
+.ssh
