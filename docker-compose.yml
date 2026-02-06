@@ -1,0 +1,9 @@
+services:
+  ansible-deployer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: range42/ansible-deployer:latest
+    container_name: ansible-deployer
+    tty: true
+    stdin_open: true
