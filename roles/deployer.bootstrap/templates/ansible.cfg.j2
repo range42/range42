@@ -1,0 +1,16 @@
+# range42 — global ansible settings
+# deployed by deployer.bootstrap to ~/.ansible.cfg
+# suppresses noisy warnings across all range42 tools
+
+[defaults]
+deprecation_warnings = False
+command_warnings = False
+force_valid_group_names = ignore
+host_key_checking = False
+timeout = 30
+
+[privilege_escalation]
+become = false
+
+[ssh_connection]
+pipelining = True

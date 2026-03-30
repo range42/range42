@@ -1,0 +1,30 @@
+---
+# deployer repos - clone range42 repositories
+#
+# 6 repos cloned into DEPLOYER_CLI__DST_GIT_DIR
+# supports GIT_BRANCH override (force update if != main)
+#
+# source: configure.deployer-cli/tasks/05_git.yml (lines 17-59)
+
+- name: DEPLOYER REPOS - CLONE RANGE42 REPOSITORIES
+  ansible.builtin.git:
+    repo: "{{ item.repo }}"
+    dest: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/{{ item.name }}"
+    version: "{{ GIT_BRANCH | default(omit) }}"
+    update: "{{ GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"
+    force: "{{ GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"
+  become: true
+  become_user: "{{ DEPLOYER_CLI_USER }}"
+  loop:
+    - { name: range42-ansible_roles-proxmox_controller,
+        repo: "https://github.com/range42/range42-ansible_roles-proxmox_controller.git" }
+    - { name: range42-catalog,
+        repo: "https://github.com/range42/range42-catalog.git" }
+    - { name: range42-playbooks,
+        repo: "https://github.com/range42/range42-playbooks.git" }
+    - { name: range42-ansible_roles-debug-devkit,
+        repo: "https://github.com/range42/range42-ansible_roles-debug-devkit.git" }
+    - { name: range42-deployer-ui,
+        repo: "https://github.com/range42/range42-deployer-ui.git" }
+    - { name: range42-backend-api,
+        repo: "https://github.com/range42/range42-backend-api.git" }

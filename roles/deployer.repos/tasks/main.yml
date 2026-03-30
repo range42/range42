@@ -1,0 +1,23 @@
+---
+################################################################################
+# deployer.repos
+#
+# Clone range42 git repositories on the deployer-cli.
+#
+# Runs on: deployer-cli (SSH, as DEPLOYER_CLI_USER)
+# Idempotent: yes — git module skips if repo already cloned (update: false on main)
+#
+# Extracted from: configure.deployer-cli/tasks/05_git.yml
+#
+# The repos are SHARED across all CODENAME-SCENARIOs (single ~/range42/ directory).
+# Supports optional GIT_BRANCH override (force update if != main).
+#
+# Variables consumed:
+#   - DEPLOYER_CLI_USER        (required)
+#   - DEPLOYER_CLI__DST_GIT_DIR  (default: /home/DEPLOYER_CLI_USER/range42/)
+#   - GIT_BRANCH               (default: main)
+#
+################################################################################
+
+- import_tasks: ./00_create_git_directory.yml
+- import_tasks: ./01_clone_repositories.yml

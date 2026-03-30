@@ -1,0 +1,31 @@
+---
+# deployer bootstrap - deploy range42-context and range42-workspace, inject in .zshrc
+#
+# copies both scripts to the deployer-cli and sources them in .zshrc
+# functions are then available as `range42-context` and `range42-workspace`
+
+- name: DEPLOYER BOOTSTRAP - COPY RANGE42-CONTEXT.SH TO DEPLOYER-CLI
+  ansible.builtin.copy:
+    src: range42-context.sh
+    dest: "/home/{{ DEPLOYER_CLI_USER }}/range42-context.sh"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0644"
+
+- name: DEPLOYER BOOTSTRAP - COPY RANGE42-WORKSPACE.SH TO DEPLOYER-CLI
+  ansible.builtin.copy:
+    src: range42-workspace.sh
+    dest: "/home/{{ DEPLOYER_CLI_USER }}/range42-workspace.sh"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0644"
+
+- name: DEPLOYER BOOTSTRAP - INJECT RANGE42 TOOLS SOURCE IN .ZSHRC
+  ansible.builtin.blockinfile:
+    path: "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
+    marker: "# {mark} RANGE42 CONTEXT"
+    insertafter: EOF
+    block: |
+      # range42 — workspace tools
+      source "$HOME/range42-context.sh"
+      source "$HOME/range42-workspace.sh"

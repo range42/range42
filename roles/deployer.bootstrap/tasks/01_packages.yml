@@ -1,0 +1,132 @@
+---
+# deployer bootstrap - apt update/upgrade + install system packages
+#
+# separated Ubuntu / Debian sections for package name differences
+#
+# source: configure.deployer-cli/tasks/01_packages.yml (lines 62-134)
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# common - apt update/upgrade (Ubuntu + Debian)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: DEPLOYER BOOTSTRAP - APT UPDATE CACHE
+  ansible.builtin.apt:
+    update_cache: true
+  become: true
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - APT DIST-UPGRADE
+  ansible.builtin.apt:
+    upgrade: dist
+  become: true
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# ubuntu packages
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: DEPLOYER BOOTSTRAP - INSTALL BASE PACKAGES (UBUNTU)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - net-tools
+      - keychain
+      - openssh-client
+      - ca-certificates
+    state: present
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - INSTALL UTILS PACKAGES (UBUNTU)
+  ansible.builtin.apt:
+    name:
+      - yq
+      - jq
+      - vim
+      - git
+      - zsh
+      - pwgen
+    state: present
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - INSTALL EXTRA PACKAGES (UBUNTU)
+  ansible.builtin.apt:
+    name:
+      - nmap
+      - tcpdump
+    state: present
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - INSTALL ANSIBLE VIA RAW (UBUNTU)
+  ansible.builtin.raw: |
+    apt-get update -y
+    apt-get install -y python3 ansible
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# debian packages
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- name: DEPLOYER BOOTSTRAP - INSTALL BASE PACKAGES (DEBIAN)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - net-tools
+      - keychain
+      - openssh-client
+      - ca-certificates
+    state: present
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - INSTALL UTILS PACKAGES (DEBIAN)
+  ansible.builtin.apt:
+    name:
+      - yq
+      - jq
+      - vim
+      - git
+      - zsh
+      - pwgen
+    state: present
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - INSTALL EXTRA PACKAGES (DEBIAN)
+  ansible.builtin.apt:
+    name:
+      - nmap
+      - tcpdump
+    state: present
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - INSTALL ANSIBLE VIA RAW (DEBIAN)
+  ansible.builtin.raw: |
+    apt-get update -y
+    apt-get install -y python3 ansible
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'

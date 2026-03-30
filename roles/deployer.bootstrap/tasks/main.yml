@@ -1,0 +1,29 @@
+---
+################################################################################
+# deployer.bootstrap
+#
+# Bootstrap the deployer-cli system: packages, shell, dotfiles, context tools.
+# This role configures the BASE SYSTEM — not the workspace.
+#
+# Runs on: deployer-cli (SSH)
+# Idempotent: yes
+#
+# This role does NOT touch:
+#   - SSH client config (→ workspace.ssh-config)
+#   - Git repos (→ deployer.repos)
+#   - Secrets, keys, vault (→ workspace.credentials)
+#   - Symlinks (→ workspace.symlinks)
+#
+# Variables consumed:
+#   - DEPLOYER_CLI_USER                              (required)
+#   - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES    (YES/NO, default YES)
+#
+################################################################################
+
+- import_tasks: ./00_ntp.yml
+- import_tasks: ./01_packages.yml
+- import_tasks: ./02_locale.yml
+- import_tasks: ./03_shell.yml
+- import_tasks: ./04_dot_files.yml
+- import_tasks: ./05_range42_context.yml
+- import_tasks: ./06_ansible_config.yml

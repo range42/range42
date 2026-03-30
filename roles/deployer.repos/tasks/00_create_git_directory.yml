@@ -1,0 +1,20 @@
+---
+# deployer repos - create git root directory
+#
+# source: configure.deployer-cli/tasks/05_git.yml (lines 5-14)
+
+# NOTE: do not refactor these 2 tasks — workaround required for dev platform configuration
+- name: DEPLOYER REPOS - CHECK IF GIT ROOT DIRECTORY EXISTS
+  ansible.builtin.stat:
+    path: "{{ DEPLOYER_CLI__DST_GIT_DIR }}"
+  register: git_root_dir
+
+- name: DEPLOYER REPOS - CREATE GIT ROOT DIRECTORY
+  ansible.builtin.file:
+    path: "{{ DEPLOYER_CLI__DST_GIT_DIR }}"
+    state: directory
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0755"
+  become: true
+  when: not git_root_dir.stat.exists
