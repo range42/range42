@@ -1,0 +1,45 @@
+# generated credentials — never commit
+config/*/
+
+# vault files — never commit unencrypted
+inventories/*/group_vars/*/vault.yml
+
+# real inventories (only example/ should be committed)
+inventories/*/
+!inventories/example/
+
+# workspace export archives
+*.r42.tar.gz
+
+# internal notes — never commit
+README_CHANGES.md
+REFACTORING_NOTES.md
+ANALYSIS*.md
+ANALYSIS*.txt
+TODO.md
+TODO.md_backup
+
+# claude code config
+.claude/
+
+# wizard logs (may contain passwords)
+*.log
+range42-init.py.log
+
+# old/backup files
+*.old
+*_old
+
+# ansible runtime
+*.retry
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.venv-wizard/
+venv/
+
+# os
+.DS_Store
+Thumbs.db
