@@ -1,0 +1,15 @@
+---
+################################################################################
+# workspace.symlinks — default variables
+################################################################################
+
+# deployer-cli user (required)
+DEPLOYER_CLI_USER: "to_define"
+
+# infrastructure identification (required)
+INFRASTRUCTURE_CODENAME: "to_define"
+INFRASTRUCTURE_SCENARIO: "to_define"
+
+# directories
+DEPLOYER_CLI__DST_GIT_DIR: "/home/{{ DEPLOYER_CLI_USER }}/range42/"
+DEPLOYER_CLI__DST_CONFIG_DIR: "/home/{{ DEPLOYER_CLI_USER }}/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"

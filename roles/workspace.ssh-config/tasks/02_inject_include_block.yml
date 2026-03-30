@@ -1,0 +1,21 @@
+---
+# workspace ssh-config - inject Include block in ~/.ssh/config
+#
+# inserts a block with a unique marker per CODENAME-SCENARIO
+# uses insertbefore: BOF so Include is at the top of the file (FIX B1)
+#
+# source: configure.deployer-cli/tasks/04_ssh_client.yml (lines 72-83)
+
+- name: WORKSPACE SSH-CONFIG - INJECT RANGE42 INCLUDE IN SSH CONFIG
+  ansible.builtin.blockinfile:
+    path: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE }}"
+    marker: "#### {mark} RANGE42 INCLUDE - {{ INFRASTRUCTURE_CODENAME }} - {{ INFRASTRUCTURE_SCENARIO }} ####"
+    block: |
+
+      #### ####  #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+      Include {{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}
+
+      #### ####  #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+    insertbefore: BOF
+  # FIX B1: was insertafter: EOF — Include must be at the top for SSH priority

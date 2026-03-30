@@ -1,0 +1,14 @@
+---
+# workspace credentials - deploy scenario inventory to workspace
+#
+# generates inventory_default.yml from template into config_dir/inventory/
+#
+# source: configure.deployer-cli/tasks/07_01_deploy_inventory.yml
+
+- name: WORKSPACE CREDENTIALS - GENERATE INVENTORY FROM TEMPLATE
+  ansible.builtin.template:
+    src: inventory.demo_lab.j2
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/inventory/inventory_default.yml"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"

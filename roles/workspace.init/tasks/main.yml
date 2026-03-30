@@ -1,0 +1,29 @@
+---
+################################################################################
+# workspace.init
+#
+# Create the workspace directory structure for a CODENAME-SCENARIO.
+#
+# Runs on: deployer-cli (SSH)
+# Idempotent: yes — directories created only if missing
+#
+# Extracted from: configure.deployer-cli/tasks/06_symlinks.yml (directory creation part)
+#
+# Creates:
+#
+#   ~/range42.config/CODENAME-SCENARIO/
+#   ├── inventory/
+#   ├── ssh_keys/
+#   ├── secrets/
+#   └── bin/
+#
+# This role ONLY creates the directory skeleton.
+# Credentials, symlinks, SSH config are handled by other workspace.* roles.
+#
+# Variables consumed:
+#   - DEPLOYER_CLI_USER          (required)
+#   - DEPLOYER_CLI__DST_CONFIG_DIR  (required — ~/range42.config/CODENAME-SCENARIO)
+#
+################################################################################
+
+- import_tasks: ./00_create_workspace_directories.yml

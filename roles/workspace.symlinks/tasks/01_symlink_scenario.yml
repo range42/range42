@@ -1,0 +1,14 @@
+---
+# workspace symlinks - create scenario symlink in workspace
+#
+# links config_dir/scenario → range42-playbooks/scenarios/SCENARIO
+# provides a quick shortcut to the active scenario directory
+#
+# source: configure.deployer-cli/tasks/10_context_tools.yml (lines 30-35)
+
+- name: WORKSPACE SYMLINKS - CREATE SCENARIO SYMLINK
+  ansible.builtin.file:
+    src: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/range42-playbooks/scenarios/{{ INFRASTRUCTURE_SCENARIO }}"
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/scenario"
+    state: link
+    force: true

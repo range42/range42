@@ -1,0 +1,19 @@
+---
+# workspace ssh-config - create ssh key directories for this CODENAME-SCENARIO
+#
+# creates ~/.ssh/range42/CODENAME-SCENARIO/{backend,jump,student}_keys/
+#
+# source: configure.deployer-cli/tasks/04_ssh_client.yml (lines 41-66)
+
+- name: WORKSPACE SSH-CONFIG - CREATE SSH KEY DIRECTORIES
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0700"
+  loop:
+    - "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}"
+    - "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
+    - "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
+    - "{{ DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR }}"
