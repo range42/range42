@@ -1,0 +1,14 @@
+---
+################################################################################
+# proxmox.api-token — default variables
+################################################################################
+
+# proxmox server address (required)
+INFRASTRUCTURE_PROXMOX_ADDRESS: "to_define"
+
+# proxmox api configuration
+# sensible defaults for first-time setup — user and token are auto-created
+proxmox_api_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:8006"
+proxmox_api_user: "range42_api@pam"
+proxmox_api_token_id: "range42_api_token"
+proxmox_api_token_secret: ""

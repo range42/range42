@@ -1,0 +1,158 @@
+---
+################################################################################
+# range42 — shared variables (all scenarios of this CODENAME)
+#
+# These variables are common to ALL scenarios running on the same
+# Proxmox infrastructure. They go here, not in the scenario-specific vars.
+#
+# For scenario-specific variables → group_vars/<scenario>/vars.yml
+# For secrets → group_vars/<scenario>/vault.yml
+# For terminology → see GLOSSARY.md at the root of this repository
+#
+################################################################################
+
+
+#### INFRASTRUCTURE IDENTIFICATION ####
+
+# A short name that identifies your Proxmox server.
+# This name is used everywhere: directory names, SSH config, key names.
+# Pick something meaningful to you. No spaces, no special characters.
+#
+# examples:
+#   "hv-lab-01"                        — simple lab server
+#   "ds-px-off-black-pxtesting"        — detailed naming (type-platform-access-provider)
+#   "proxmox-home"                     — home server
+#
+INFRASTRUCTURE_CODENAME: "to_define"
+
+# The address of your Proxmox server.
+# Can be an IP, a hostname, or a Tailscale FQDN.
+#
+# examples:
+#   "192.168.1.100"
+#   "proxmox.local"
+#   "my-server.tailnet-name.ts.net"
+#
+INFRASTRUCTURE_PROXMOX_ADDRESS: "to_define"
+
+
+#### PROXMOX SETTINGS ####
+
+# The exact node name as shown in the Proxmox web UI (top-left, under Datacenter).
+# This MUST match exactly — check in Proxmox: Datacenter → your node name.
+#
+# example: "pve", "proxmox", "px-testing"
+#
+proxmox_node: "to_define"
+
+# Storage names — check in Proxmox: Datacenter → Storage.
+# iso storage: where cloud-init images (.img) are stored
+# vm storage: where virtual machine disks are stored
+# The defaults below work for most standard Proxmox installs.
+#
+infrastructure_proxmox_dest_iso_storage_name: "local"
+infrastructure_proxmox_dest_vm_storage_name: "local-lvm"
+
+# The physical network interface on your Proxmox server.
+# Used for NAT networks. Check with: ip link show
+#
+# common values: "enp3s0", "eno1", "eth0", "vmbr0"
+#
+infrastructure_proxmox_default_network_card_interface: "enp3s0"
+
+
+#### PROXMOX API ACCESS ####
+
+# The Proxmox API is used by Ansible to create/manage VMs.
+# If this is your first setup, leave these as "to_define".
+# The playbook 02_configure_proxmox.yml will create the user and token.
+#
+# After the first run, fill these in so subsequent runs can reuse them.
+#
+# proxmox_api_host format: "address:port" (default Proxmox port is 8006)
+# proxmox_api_user format: "username@pam" (PAM authentication)
+#
+# examples:
+#   proxmox_api_host: "192.168.1.100:8006"
+#   proxmox_api_user: "range42_api@pam"
+#   proxmox_api_token_id: "range42_api_token"
+#
+proxmox_api_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:8006"
+proxmox_api_user: "range42_api@pam"
+proxmox_api_token_id: "range42_api_token"
+# proxmox_api_token_secret → in vault.yml (secret)
+
+
+#### JUMP HOST ####
+
+# The lab VMs run on a private network (192.168.42.x by default).
+# They are NOT directly reachable from your machine.
+# SSH uses a "jump host" to reach them — it connects to the Proxmox
+# server first, then bounces to the target VM:
+#
+#   [you] --SSH--> [Proxmox / jump_user] --SSH--> [VM on private network]
+#
+# This is automatic — SSH handles it via ProxyJump in the config.
+# You just type: ssh r42.admin-wazuh (and it goes through the jump).
+#
+# jump_on_proxmox: YES means the jump user lives on the Proxmox server
+#                  (this is the most common setup)
+#
+jump_on_proxmox: "YES"
+
+# jump host connection — usually same as INFRASTRUCTURE_PROXMOX_ADDRESS
+jump_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}"
+jump_user: "jump_user"
+jump_port: "22"
+# jump_password → in vault.yml (secret)
+
+
+#### DEPLOYER-CLI ####
+
+# The deployer-cli is the machine where you run the lab playbooks.
+# It can be your laptop, a VM, or the same machine running Ansible.
+#
+# DEPLOYER_CLI_USER: the Linux user on that machine
+# deployer_cli_ip: "127.0.0.1" means localhost (you're running Ansible locally)
+#                  change to the actual IP if the deployer-cli is a remote VM
+#
+# example for remote deployer:
+#   DEPLOYER_CLI_USER: "operator"
+#   deployer_cli_ip: "192.168.1.50"
+#
+DEPLOYER_CLI_USER: "grml"
+deployer_cli_ip: "127.0.0.1"
+deployer_cli_ssh_port: "22"
+
+
+#### WORKSTATION (LOCAL) ####
+
+# Your local SSH config directory — on YOUR machine, not the deployer-cli.
+# This is used by prepare scripts to configure your local SSH client.
+# Default: ~/.ssh
+#
+ssh_client__dst_config_dir: "/home/grml/.ssh"
+
+
+#### GIT ####
+
+# Git branch to clone for all range42 repos.
+# Use "main" unless you're testing a specific branch.
+#
+GIT_BRANCH: "main"
+
+
+#### PACKAGES ####
+
+# Install system packages on the deployer-cli (YES/NO).
+# Set to NO if the deployer-cli already has everything installed
+# and you just want to update the workspace.
+#
+DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES: "YES"
+
+
+#### PASSWORD FORMAT ####
+# All passwords, secrets, API tokens must use ONLY: a-z A-Z 0-9 - _
+# AVOID: $ { } \ ! % @ * " ' < > | & and spaces
+# These characters break YAML, Jinja2, shell quoting, and cloud-init.
+# Recommended length: 20+ characters.

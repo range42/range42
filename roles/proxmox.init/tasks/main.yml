@@ -1,0 +1,33 @@
+---
+################################################################################
+# proxmox.init
+#
+# Bootstrap initial SSH access to Proxmox and fix locale.
+#
+# Runs on: localhost (uses ssh/ssh-copy-id commands, not Ansible SSH connection)
+# Requires: ssh-agent running, root password access to Proxmox (first time only)
+#
+# Source: prepare-infrastructure-workspace.sh
+#   - proxmox_load_root_ssh_key()    (lines 743-802)
+#   - proxmox_fix_remote_locale()    (lines 946-979)
+#
+# What this role does:
+#   1. Ensure ssh-agent is running
+#   2. Load the Proxmox root SSH key into the agent
+#   3. Install the public key on the Proxmox server (ssh-copy-id if needed)
+#   4. Fix locale on Proxmox (set C.UTF-8 in /etc/default/locale + locale-gen)
+#
+# Variables consumed:
+#   - INFRASTRUCTURE_PROXMOX_ADDRESS   (required — FQDN or IP of the Proxmox host)
+#   - proxmox_root_ssh_key_path        (required — path to the generated root SSH key)
+#
+# After this role:
+#   - root@PROXMOX_ADDRESS is reachable via SSH key (no password)
+#   - locale is set to C.UTF-8
+#   - proxmox.jump-user and proxmox.api-token can run
+#
+################################################################################
+
+- import_tasks: ./00_load_root_ssh_key.yml
+- import_tasks: ./01_install_root_pubkey_on_proxmox.yml
+- import_tasks: ./02_fix_remote_locale.yml

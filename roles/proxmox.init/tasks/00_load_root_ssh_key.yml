@@ -1,0 +1,28 @@
+---
+# proxmox init - ensure ssh-agent is running and load root key
+#
+# clears the agent first to avoid "too many authentication failures"
+# when multiple keys are loaded from previous sessions
+#
+# source: proxmox_load_root_ssh_key() lines 757-775
+
+- name: PROXMOX INIT - CHECK SSH-AGENT IS RUNNING
+  ansible.builtin.command: ssh-add -l
+  register: ssh_agent_check
+  changed_when: false
+  failed_when: false
+
+- name: PROXMOX INIT - START SSH-AGENT IF NOT RUNNING
+  ansible.builtin.shell: eval "$(ssh-agent -s)"
+  when: ssh_agent_check.rc == 2
+  changed_when: true
+
+- name: PROXMOX INIT - CLEAR ALL KEYS FROM AGENT (AVOID TOO MANY AUTH FAILURES)
+  ansible.builtin.command: ssh-add -D
+  changed_when: true
+  failed_when: false
+
+- name: PROXMOX INIT - LOAD PROXMOX ROOT SSH KEY INTO AGENT
+  ansible.builtin.command: ssh-add "{{ proxmox_root_ssh_key_path }}"
+  register: ssh_add_result
+  changed_when: "'Identity added' in ssh_add_result.stdout"

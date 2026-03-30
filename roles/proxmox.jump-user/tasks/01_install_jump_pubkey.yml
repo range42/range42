@@ -1,0 +1,69 @@
+---
+# proxmox jump-user - install jump ssh public key on proxmox
+#
+# two paths:
+#   jump_on_proxmox == YES : use root ssh to create .ssh dir and append key (no interaction)
+#   jump_on_proxmox == NO  : use ssh-copy-id (requires user to enter password)
+#
+# source: proxmox_load_jump_ssh_key() lines 899-936
+
+- name: PROXMOX JUMP-USER - READ JUMP PUBLIC KEY
+  ansible.builtin.slurp:
+    src: "{{ proxmox_jump_ssh_key_path }}.pub"
+  register: jump_pubkey_raw
+
+#### when jump_on_proxmox == YES (via root access, no interaction)
+
+- name: PROXMOX JUMP-USER - CREATE .SSH DIRECTORY FOR JUMP USER
+  ansible.builtin.command: >
+    ssh root@{{ jump_host }}
+    "mkdir -p /home/{{ jump_user }}/.ssh && chmod 700 /home/{{ jump_user }}/.ssh"
+  when: jump_on_proxmox | default('YES') | upper == 'YES'
+
+- name: PROXMOX JUMP-USER - INSTALL PUBLIC KEY IN AUTHORIZED_KEYS (IDEMPOTENT)
+  ansible.builtin.shell: >
+    ssh root@{{ jump_host }}
+    "grep -qxF '{{ jump_pubkey_raw.content | b64decode | trim }}'
+    /home/{{ jump_user }}/.ssh/authorized_keys 2>/dev/null
+    || echo '{{ jump_pubkey_raw.content | b64decode | trim }}'
+    >> /home/{{ jump_user }}/.ssh/authorized_keys"
+  when: jump_on_proxmox | default('YES') | upper == 'YES'
+
+- name: PROXMOX JUMP-USER - FIX .SSH PERMISSIONS AND OWNERSHIP
+  ansible.builtin.command: >
+    ssh root@{{ jump_host }}
+    "chmod 600 /home/{{ jump_user }}/.ssh/authorized_keys &&
+    chown -R {{ jump_user }}:{{ jump_user }} /home/{{ jump_user }}/.ssh"
+  when: jump_on_proxmox | default('YES') | upper == 'YES'
+
+- name: PROXMOX JUMP-USER - VERIFY JUMP USER SSH ACCESS WORKS
+  ansible.builtin.command: >
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    -i {{ proxmox_jump_ssh_key_path }}
+    {{ jump_user }}@{{ jump_host }} true
+  changed_when: false
+  when: jump_on_proxmox | default('YES') | upper == 'YES'
+
+#### when jump_on_proxmox == NO (fallback: ssh-copy-id, interactive)
+
+- name: PROXMOX JUMP-USER - DISPLAY AUTH NOTICE (JUMP HOST IS EXTERNAL)
+  ansible.builtin.debug:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+
+      JUMP HOST SSH KEY INSTALLATION
+
+      The jump host is NOT on the Proxmox server.
+      You will be prompted for the password of:
+
+        {{ jump_user }}@{{ jump_host }}
+
+      #### #### #### #### #### #### #### #### #### #### ####
+  when: jump_on_proxmox | default('YES') | upper != 'YES'
+
+- name: PROXMOX JUMP-USER - INSTALL PUBLIC KEY VIA SSH-COPY-ID (INTERACTIVE)
+  ansible.builtin.command: >
+    ssh-copy-id -i "{{ proxmox_jump_ssh_key_path }}"
+    {{ jump_user }}@{{ jump_host }}
+  when: jump_on_proxmox | default('YES') | upper != 'YES'

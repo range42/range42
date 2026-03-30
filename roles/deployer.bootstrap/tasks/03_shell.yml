@@ -1,0 +1,41 @@
+---
+# deployer bootstrap - install oh-my-zsh and set zsh as default shell
+#
+# installs for DEPLOYER_CLI_USER and root
+#
+# source: configure.deployer-cli/tasks/02_shell.yml
+
+- name: DEPLOYER BOOTSTRAP - CLONE OH-MY-ZSH FOR DEPLOYER USER
+  ansible.builtin.git:
+    repo: https://github.com/ohmyzsh/ohmyzsh.git
+    dest: "/home/{{ DEPLOYER_CLI_USER }}/.oh-my-zsh"
+    update: false
+
+- name: DEPLOYER BOOTSTRAP - CHECK ZSH BINARY EXISTS
+  ansible.builtin.stat:
+    path: /usr/bin/zsh
+  register: zsh_binary
+
+- name: DEPLOYER BOOTSTRAP - SET ZSH AS DEFAULT SHELL FOR DEPLOYER USER
+  ansible.builtin.user:
+    name: "{{ DEPLOYER_CLI_USER }}"
+    shell: /usr/bin/zsh
+  when: zsh_binary.stat.exists
+  become: true
+
+- name: DEPLOYER BOOTSTRAP - COPY OH-MY-ZSH TO ROOT
+  ansible.builtin.copy:
+    src: "/home/{{ DEPLOYER_CLI_USER }}/.oh-my-zsh"
+    dest: "/root/.oh-my-zsh"
+    remote_src: true
+    owner: root
+    group: root
+    mode: preserve
+  become: true
+
+- name: DEPLOYER BOOTSTRAP - SET ZSH AS DEFAULT SHELL FOR ROOT
+  ansible.builtin.user:
+    name: root
+    shell: /usr/bin/zsh
+  when: zsh_binary.stat.exists
+  become: true

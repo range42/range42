@@ -1,0 +1,45 @@
+---
+################################################################################
+# workspace.ssh-config
+#
+# Configure the SSH client on the deployer-cli for a CODENAME-SCENARIO.
+#
+# Runs on: deployer-cli (SSH)
+# Idempotent: yes
+#
+# Extracted from: configure.deployer-cli/tasks/04_ssh_client.yml
+#
+# What this role does:
+#   1. Ensure ~/.ssh/ directory and base files exist
+#   2. Create SSH key directories under ~/.ssh/range42/CODENAME-SCENARIO/
+#   3. Inject an Include block in ~/.ssh/config (one per CODENAME-SCENARIO)
+#   4. Generate the range42 SSH config file from template
+#
+# Fixes included:
+#   - B1: insertbefore: BOF (was insertafter: EOF)
+#   - T1: pattern r42.init-vm-* (was r42.init-box-*)
+#   - T2: alias proxmox-cli prefixed by CODENAME (was global)
+#
+# 3 sources of variables for the SSH config template:
+#   - infra vars: INFRASTRUCTURE_CODENAME, INFRASTRUCTURE_PROXMOX_ADDRESS
+#   - scenario vars: INFRASTRUCTURE_SCENARIO
+#   - ssh key paths: DEPLOYER_CLI__DST_SSH_KEYS_*_DEST_DIR
+#
+# Variables consumed:
+#   - DEPLOYER_CLI_USER
+#   - INFRASTRUCTURE_CODENAME, INFRASTRUCTURE_SCENARIO
+#   - INFRASTRUCTURE_PROXMOX_ADDRESS
+#   - DEPLOYER_CLI__DST_SSH_CONFIG_DIR
+#   - DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE
+#   - DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE
+#   - DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR
+#   - DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR
+#   - DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR
+#   - DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR
+#
+################################################################################
+
+- import_tasks: ./00_ensure_ssh_base.yml
+- import_tasks: ./01_create_key_directories.yml
+- import_tasks: ./02_inject_include_block.yml
+- import_tasks: ./03_generate_ssh_config.yml

@@ -1,0 +1,97 @@
+---
+# credentials generate - generate ssh keys (proxmox root, jump, alice, bob)
+#
+# key type: ed25519 (matches original ssh-keygen -t ed25519)
+# idempotent: community.crypto.openssh_keypair skips if key already exists
+#
+# if context_ssh_keys_use_passphrase == NO : keys are created without passphrase
+# if context_auto_generate_ssh_keys == NO  : keys must already exist at expected paths
+
+- name: CREDENTIALS GENERATE - GENERATE PASSPHRASES FOR SSH KEYS
+  ansible.builtin.set_fact:
+    generated_px_root_passphrase: "{{ lookup('community.general.random_string', length=32, override_special='_-') }}"
+    generated_px_jump_passphrase: "{{ lookup('community.general.random_string', length=32, override_special='_-') }}"
+    generated_deployer_passphrase: "{{ lookup('community.general.random_string', length=32, override_special='_-') }}"
+    generated_student_passphrase: "{{ lookup('community.general.random_string', length=32, override_special='_-') }}"
+  when:
+    - context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
+    - context_ssh_keys_use_passphrase | default('YES') | upper == 'YES'
+  no_log: true
+
+- name: CREDENTIALS GENERATE - SET EMPTY PASSPHRASES (NO PASSPHRASE MODE)
+  ansible.builtin.set_fact:
+    generated_px_root_passphrase: ""
+    generated_px_jump_passphrase: ""
+    generated_deployer_passphrase: ""
+    generated_student_passphrase: ""
+  when:
+    - context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
+    - context_ssh_keys_use_passphrase | default('YES') | upper != 'YES'
+
+- name: CREDENTIALS GENERATE - SET PASSPHRASES PLACEHOLDER (AUTO-GENERATE DISABLED)
+  ansible.builtin.set_fact:
+    generated_px_root_passphrase: "(not generated)"
+    generated_px_jump_passphrase: "(not generated)"
+    generated_deployer_passphrase: "(not generated)"
+    generated_student_passphrase: "(not generated)"
+  when: context_auto_generate_ssh_keys | default('YES') | upper != 'YES'
+
+###
+###
+###
+
+- name: CREDENTIALS GENERATE - GENERATE PROXMOX ROOT SSH KEY
+  community.crypto.openssh_keypair:
+    path: "{{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
+    type: ed25519
+    comment: "proxmox root {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    passphrase: "{{ generated_px_root_passphrase | default(omit, true) }}"
+    mode: "0600"
+  when: context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
+  register: ssh_key_px_root
+
+- name: CREDENTIALS GENERATE - GENERATE PROXMOX JUMP USER SSH KEY
+  community.crypto.openssh_keypair:
+    path: "{{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user"
+    type: ed25519
+    comment: "proxmox jump {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    passphrase: "{{ generated_px_jump_passphrase | default(omit, true) }}"
+    mode: "0600"
+  when: context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
+  register: ssh_key_px_jump
+
+- name: CREDENTIALS GENERATE - GENERATE DEPLOYER ADMIN ALICE SSH KEY
+  community.crypto.openssh_keypair:
+    path: "{{ credentials_output_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice"
+    type: ed25519
+    comment: "r42 deployer (admin) - alice {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    passphrase: "{{ generated_deployer_passphrase | default(omit, true) }}"
+    mode: "0600"
+  when: context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
+  register: ssh_key_alice
+
+- name: CREDENTIALS GENERATE - GENERATE STUDENT BOB SSH KEY
+  community.crypto.openssh_keypair:
+    path: "{{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob"
+    type: ed25519
+    comment: "r42 student (user) - bob {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    passphrase: "{{ generated_student_passphrase | default(omit, true) }}"
+    mode: "0600"
+  when: context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
+  register: ssh_key_bob
+
+###
+###
+###
+
+- name: CREDENTIALS GENERATE - VERIFY SSH KEYS EXIST (AUTO-GENERATE DISABLED)
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: key_check
+  failed_when: not key_check.stat.exists
+  loop:
+    - "{{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
+    - "{{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user"
+    - "{{ credentials_output_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice"
+    - "{{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob"
+  when: context_auto_generate_ssh_keys | default('YES') | upper != 'YES'

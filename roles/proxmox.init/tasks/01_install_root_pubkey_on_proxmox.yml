@@ -1,0 +1,84 @@
+---
+# proxmox init - install root public key on proxmox server
+#
+# idempotent: checks if key auth works first, skips ssh-copy-id if already installed
+# first run: requires root password (interactive prompt or sshpass)
+#
+# source: proxmox_load_root_ssh_key() lines 784-801
+
+- name: PROXMOX INIT - TEST IF ROOT KEY AUTH ALREADY WORKS
+  ansible.builtin.command: >
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
+  register: root_ssh_test
+  changed_when: false
+  failed_when: false
+
+- name: PROXMOX INIT - DISPLAY FIRST-TIME AUTH NOTICE
+  ansible.builtin.debug:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+
+      FIRST TIME PROXMOX SETUP — SSH KEY INSTALLATION
+
+      Your SSH key is not yet installed on the Proxmox server.
+      You will be prompted for the ROOT PASSWORD of:
+
+        root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+
+      This is a one-time operation. After this, all access
+      will use SSH key authentication.
+
+      #### #### #### #### #### #### #### #### #### #### ####
+  when: root_ssh_test.rc != 0
+
+- name: PROXMOX INIT - INSTALL ROOT PUBLIC KEY VIA SSHPASS + SSH-COPY-ID
+  ansible.builtin.shell: >
+    sshpass -e ssh-copy-id
+    -o StrictHostKeyChecking=accept-new
+    -o IdentitiesOnly=yes
+    -i "{{ proxmox_root_ssh_key_path }}.pub"
+    root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+  environment:
+    SSHPASS: "{{ ansible_ssh_pass | default(lookup('env', 'SSHPASS')) }}"
+  when:
+    - root_ssh_test.rc != 0
+    - ansible_ssh_pass is defined or lookup('env', 'SSHPASS') | length > 0
+  register: ssh_copy_sshpass
+  changed_when: "'Number of key(s) added' in (ssh_copy_sshpass.stderr | default(''))"
+  failed_when: false
+
+- name: PROXMOX INIT - INSTALL ROOT PUBLIC KEY VIA SSH-COPY-ID (INTERACTIVE FALLBACK)
+  ansible.builtin.command: >
+    ssh-copy-id
+    -o StrictHostKeyChecking=accept-new
+    -o IdentitiesOnly=yes
+    -o PreferredAuthentications=password
+    -i "{{ proxmox_root_ssh_key_path }}.pub"
+    root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+  when:
+    - root_ssh_test.rc != 0
+    - ssh_copy_sshpass is skipped or (ssh_copy_sshpass.rc | default(1)) != 0
+  register: ssh_copy_result
+  changed_when: "'Number of key(s) added' in (ssh_copy_result.stderr | default(''))"
+
+- name: PROXMOX INIT - VERIFY ROOT KEY AUTH WORKS AFTER INSTALL
+  ansible.builtin.command: >
+    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
+  when: root_ssh_test.rc != 0
+  changed_when: false
+  register: root_ssh_verify
+
+- name: PROXMOX INIT - FAIL IF ROOT KEY AUTH STILL NOT WORKING
+  ansible.builtin.fail:
+    msg: |
+      SSH key authentication to root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} failed.
+      Please check:
+        - the Proxmox server is reachable
+        - the root password was entered correctly
+        - SSH is enabled on the Proxmox server (port 22)
+  when:
+    - root_ssh_test.rc != 0
+    - root_ssh_verify.rc != 0

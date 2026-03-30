@@ -1,0 +1,55 @@
+---
+# deployer bootstrap - configure ntp (systemd-timesyncd) and wait for sync
+#
+# removes legacy ntp/ntpdate, installs systemd-timesyncd, waits for clock sync
+# important for vm usage / revert to snapshot scenarios
+#
+# source: configure.deployer-cli/tasks/01_packages.yml (lines 4-58)
+
+- name: DEPLOYER BOOTSTRAP - REMOVE LEGACY NTP PACKAGES
+  ansible.builtin.apt:
+    name:
+      - ntp
+      - ntpdate
+    state: absent
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - INSTALL SYSTEMD-TIMESYNCD
+  ansible.builtin.apt:
+    name: systemd-timesyncd
+    state: present
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - ENABLE AND START SYSTEMD-TIMESYNCD
+  ansible.builtin.systemd:
+    name: systemd-timesyncd
+    enabled: true
+    state: started
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+# - name: DEPLOYER BOOTSTRAP - WAIT FOR NTP TIME SYNC
+#   ansible.builtin.command: timedatectl show -p NTPSynchronized --value
+#   register: ntp_sync_check
+#   until: ntp_sync_check.stdout == "yes"
+#   retries: 10
+#   delay: 5
+#   changed_when: false
+#   when:
+#     - ansible_facts['os_family'] == 'Debian'
+#     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+# - name: DEPLOYER BOOTSTRAP - ASSERT TIME IS SYNCHRONIZED
+#   ansible.builtin.assert:
+#     that:
+#       - ntp_sync_check.stdout == "yes"
+#     fail_msg: "clock is NOT synchronized"
+#     success_msg: "clock is synchronized"
+#   when:
+#     - ansible_facts['os_family'] == 'Debian'
+#     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'

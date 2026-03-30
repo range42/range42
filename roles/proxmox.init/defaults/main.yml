@@ -1,0 +1,14 @@
+---
+################################################################################
+# proxmox.init — default variables
+################################################################################
+
+# proxmox server address (required — FQDN or IP)
+INFRASTRUCTURE_PROXMOX_ADDRESS: "to_define"
+
+# path to the generated root SSH key (from credentials.generate)
+# typically: ./config/CODENAME-SCENARIO/ssh_keys/jump_keys/px.CODENAME-SCENARIO-ssh_cli.root
+proxmox_root_ssh_key_path: "to_define"
+
+# locale to set on proxmox
+proxmox_locale: "C.UTF-8"

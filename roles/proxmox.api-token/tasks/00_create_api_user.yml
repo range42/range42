@@ -1,0 +1,22 @@
+---
+# proxmox api-token - create pve api user (idempotent)
+#
+# pveum user add fails if user exists — we catch that and continue
+# this is more reliable than checking first (ssh rc handling is fragile)
+#
+# source: proxmox_generate_api_credentials() lines 993-1008
+
+- name: PROXMOX API-TOKEN - STRIP @PAM SUFFIX FOR USER OPERATIONS
+  ansible.builtin.set_fact:
+    api_user_name: "{{ proxmox_api_user | regex_replace('@pam$', '') }}"
+
+- name: PROXMOX API-TOKEN - CREATE PVE USER (SKIP IF EXISTS)
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pveum user add {{ proxmox_api_user }} 2>&1 || true"
+  register: pve_user_create
+  changed_when: "'already exists' not in pve_user_create.stdout"
+
+- name: PROXMOX API-TOKEN - PVE USER STATUS
+  ansible.builtin.debug:
+    msg: "{{ ('user already exists' in pve_user_create.stdout) | ternary('user ' + proxmox_api_user + ' already exists — ok', 'user ' + proxmox_api_user + ' created') }}"

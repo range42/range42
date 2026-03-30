@@ -1,0 +1,107 @@
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+#  range42 - credentials summary
+#
+#  infrastructure : {{ INFRASTRUCTURE_CODENAME }}
+#  scenario       : {{ INFRASTRUCTURE_SCENARIO }}
+#  generated      : {{ ansible_date_time.iso8601 | default('unknown') }}
+#  passphrase     : {{ (context_ssh_keys_use_passphrase | default('YES') | upper == 'YES') | ternary('enabled', 'disabled (no passphrase)') }}
+#
+#  DO NOT COMMIT THIS FILE
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+
+==============================================================================
+ 1 - SSH KEY PATHS
+==============================================================================
+
+  jump keys (proxmox access):
+    root     : {{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root
+    root.pub : {{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root.pub
+    jump     : {{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user
+    jump.pub : {{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user.pub
+
+  backend keys (admin vms):
+    alice     : {{ credentials_output_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice
+    alice.pub : {{ credentials_output_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice.pub
+
+  student keys:
+    bob       : {{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob
+    bob.pub   : {{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob.pub
+{% if student_additionnal_keys_count | default(0) | int > 0 %}
+
+  additional student keys ({{ student_additionnal_keys_count }}):
+{% for i in range(1, student_additionnal_keys_count + 1) %}
+    bob_{{ i }}     : {{ credentials_output_dir }}/ssh_keys/student_keys/additionnal.students/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob_{{ i }}
+{% endfor %}
+{% endif %}
+
+
+==============================================================================
+ 2 - SSH KEY PASSPHRASES
+==============================================================================
+
+    px root    : {{ generated_px_root_passphrase }}
+    px jump    : {{ generated_px_jump_passphrase }}
+    alice      : {{ generated_deployer_passphrase }}
+    bob        : {{ generated_student_passphrase }}
+
+
+==============================================================================
+ 3 - VM USER PASSWORDS
+==============================================================================
+
+    alice (admin)   : {{ generated_admin_password }}
+    bob (student)   : {{ generated_trainee_password }}
+    wazuh (admin)   : {{ generated_wazuh_password }}
+
+
+==============================================================================
+ 4 - WORKSPACE PATHS (after deployer-cli deployment)
+==============================================================================
+
+  on deployer-cli:
+    workspace        : ~/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/
+    inventory        : ~/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/inventory/inventory_default.yml
+    secrets          : ~/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/secrets/
+    vault file       : ~/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/secrets/default_vault.yml
+    vault password   : ~/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/secrets/vault_pass.txt
+    env source       : ~/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/sourced_range42.sh
+    context tools    : ~/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/bin/
+
+  ssh config:
+    ssh config file  : ~/.ssh/config_range42-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}
+    ssh keys dir     : ~/.ssh/range42/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/
+      backend_keys/  : ~/.ssh/range42/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/backend_keys/
+      jump_keys/     : ~/.ssh/range42/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/jump_keys/
+      student_keys/  : ~/.ssh/range42/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/student_keys/
+
+  git repos:
+    root             : ~/range42/
+
+
+==============================================================================
+ 5 - SSH HOSTS (after ssh-config deployment)
+==============================================================================
+
+  proxmox:
+    web interface    : px.{{ INFRASTRUCTURE_CODENAME }}.redirect_www.proxmox
+    root ssh         : px.{{ INFRASTRUCTURE_CODENAME }}-ssh_cli.root
+    jump host        : px.{{ INFRASTRUCTURE_CODENAME }}.jumper
+
+  admin vms (user: alice, via jump):
+    wazuh            : r42.admin-wazuh
+    docker registry  : r42.admin-builder-docker-registry
+    api devkit       : r42.admin-builder-api-devkit
+    web kong         : r42.admin-web-api-kong
+    web api          : r42.admin-web-builder-api
+    web emp          : r42.admin-web-emp
+    web deployer-ui  : r42.admin-web-deployer-ui
+    wazuh test       : r42.testing-wazuh-client
+
+  student vms (user: alice, via jump):
+    student box 01   : r42.student-box-01
+
+  vuln vms (user: alice, via jump):
+    vuln box 00-04   : r42.vuln-box-{00..04}

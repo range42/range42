@@ -1,0 +1,10 @@
+---
+################################################################################
+# deployer.bootstrap — default variables
+################################################################################
+
+# deployer-cli user (required)
+DEPLOYER_CLI_USER: "to_define"
+
+# package installation flag
+DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES: "YES"

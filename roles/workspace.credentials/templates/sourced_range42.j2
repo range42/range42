@@ -1,0 +1,35 @@
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#### DIR VARS
+
+export LC_ALL="C.UTF-8"
+
+export RANGE42_INFRASTRUCTURE_CODENAME="{{ INFRASTRUCTURE_CODENAME }}"
+export RANGE42_INFRASTRUCTURE_LAB="{{ INFRASTRUCTURE_SCENARIO }}"
+export RANGE42_INFRASTRUCTURE_CODENAME_LAB_NAMES="$RANGE42_INFRASTRUCTURE_CODENAME-$RANGE42_INFRASTRUCTURE_LAB"
+
+export RANGE42_GITDIR__ROOT_DIR="$HOME/range42/"
+export RANGE42_CONFIG__ROOT_DIR="$HOME/range42.config/$RANGE42_INFRASTRUCTURE_CODENAME_LAB_NAMES/"
+
+export RANGE42_ANSIBLE_ROLES__ROOT_DIR="${RANGE42_GITDIR__ROOT_DIR%/}/"
+
+export RANGE42_ANSIBLE_ROLES__DEVKITS_DIR="${RANGE42_GITDIR__ROOT_DIR%/}/range42-ansible_roles-debug-devkit/"
+export RANGE42_ANSIBLE_ROLES__INVENTORY_DIR="${RANGE42_CONFIG__ROOT_DIR%/}/inventory/"
+
+export RANGE42_INVENTORY="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42-catalog"
+export RANGE42_INVENTORY__DOCKER__CTF="${RANGE42_INVENTORY%/}/03_container_layer/docker/_ctf/"
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# :: ROLES PATH
+
+TMP_ANSIBLE_ROLES_PATHS="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42-ansible_roles-proxmox_controller/roles/:"
+TMP_ANSIBLE_ROLES_PATHS+="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42-catalog/02_ansible_layer/admin/roles/:"
+TMP_ANSIBLE_ROLES_PATHS+="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42-catalog/02_ansible_layer/trainee/roles/"
+
+export ANSIBLE_ROLES_PATH="$TMP_ANSIBLE_ROLES_PATHS"
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# :: VAULT PASSWORD FILE
+
+export RANGE42_VAULT_PASSWORD_FILE="${RANGE42_CONFIG__ROOT_DIR%/}/secrets/vault_pass.txt"
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####

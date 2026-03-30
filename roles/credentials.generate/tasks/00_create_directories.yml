@@ -1,0 +1,13 @@
+---
+# credentials generate - create output directory structure
+
+- name: CREDENTIALS GENERATE - CREATE SSH KEYS DIRECTORIES
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ credentials_output_dir }}/ssh_keys/jump_keys"
+    - "{{ credentials_output_dir }}/ssh_keys/backend_keys"
+    - "{{ credentials_output_dir }}/ssh_keys/student_keys"
+    - "{{ credentials_output_dir }}/ssh_keys/student_keys/additionnal.students"

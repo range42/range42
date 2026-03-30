@@ -1,0 +1,37 @@
+---
+# workspace init - create workspace directory structure for CODENAME-SCENARIO
+#
+# source: configure.deployer-cli/tasks/06_symlinks.yml (lines 1-38)
+#         configure.deployer-cli/tasks/10_context_tools.yml (line 13 — bin/)
+#         configure.deployer-cli/tasks/07_01_deploy_inventory.yml (line 8 — inventory/)
+
+# NOTE: do not refactor these 2 tasks — workaround required for dev platform configuration
+# mkdir -p is used instead of ansible.builtin.file state=directory because
+# the parent directory may be a pre-existing volume mount that cannot be recreated
+- name: WORKSPACE INIT - CREATE WORKSPACE ROOT DIRECTORY
+  ansible.builtin.command:
+    cmd: "mkdir -p {{ DEPLOYER_CLI__DST_CONFIG_DIR }}"
+    creates: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}"
+  become: true
+  become_user: "{{ DEPLOYER_CLI_USER }}"
+
+- name: WORKSPACE INIT - SET WORKSPACE ROOT DIRECTORY PERMISSIONS
+  ansible.builtin.file:
+    path: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}"
+    state: directory
+    mode: "0755"
+  become: true
+  become_user: "{{ DEPLOYER_CLI_USER }}"
+
+- name: WORKSPACE INIT - CREATE WORKSPACE SUBDIRECTORIES
+  ansible.builtin.file:
+    path: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/{{ item.name }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  become: true
+  become_user: "{{ DEPLOYER_CLI_USER }}"
+  loop:
+    - { name: inventory,  mode: "0700" }
+    - { name: ssh_keys,   mode: "0700" }
+    - { name: secrets,    mode: "0700" }
+    - { name: bin,        mode: "0700" }

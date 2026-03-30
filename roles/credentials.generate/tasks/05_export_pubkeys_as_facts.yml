@@ -1,0 +1,20 @@
+---
+# credentials generate - export public keys as facts for credentials.vault
+#
+# the vault role needs the public keys to populate cloud-init variables
+# (default_admin_vm_ci_ssh_key, default_trainee_vm_ci_ssh_key)
+
+- name: CREDENTIALS GENERATE - READ ALICE PUBLIC KEY
+  ansible.builtin.slurp:
+    src: "{{ credentials_output_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice.pub"
+  register: alice_pubkey_raw
+
+- name: CREDENTIALS GENERATE - READ BOB PUBLIC KEY
+  ansible.builtin.slurp:
+    src: "{{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob.pub"
+  register: bob_pubkey_raw
+
+- name: CREDENTIALS GENERATE - SET PUBLIC KEY FACTS FOR VAULT
+  ansible.builtin.set_fact:
+    generated_admin_ssh_pubkey: "{{ alice_pubkey_raw.content | b64decode | trim }}"
+    generated_trainee_ssh_pubkey: "{{ bob_pubkey_raw.content | b64decode | trim }}"

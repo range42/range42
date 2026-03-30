@@ -1,0 +1,21 @@
+---
+# deployer bootstrap - configure locale (en_US.UTF-8)
+#
+# source: configure.deployer-cli/tasks/01_packages.yml (lines 138-151)
+
+- name: DEPLOYER BOOTSTRAP - ENSURE EN_US.UTF-8 LOCALE EXISTS
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+- name: DEPLOYER BOOTSTRAP - SET DEFAULT LOCALE TO EN_US.UTF-8
+  ansible.builtin.lineinfile:
+    path: /etc/default/locale
+    regexp: "^LANG="
+    line: "LANG=en_US.UTF-8"
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'

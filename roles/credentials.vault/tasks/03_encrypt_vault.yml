@@ -1,0 +1,36 @@
+---
+# credentials vault - encrypt vault file with ansible-vault
+
+- name: CREDENTIALS VAULT - CHECK IF VAULT IS ALREADY ENCRYPTED
+  ansible.builtin.shell: head -1 "{{ vault_output_dir }}/default_vault.yml" | grep -q '^\$ANSIBLE_VAULT'
+  register: vault_encrypted_check
+  changed_when: false
+  failed_when: false
+
+###
+###
+###
+
+- name: CREDENTIALS VAULT - ENCRYPT VAULT FILE
+  ansible.builtin.command:
+    cmd: >
+      ansible-vault encrypt
+      "{{ vault_output_dir }}/default_vault.yml"
+      --vault-password-file "{{ vault_output_dir }}/vault_pass.txt"
+  when: vault_encrypted_check.rc != 0
+  changed_when: true
+
+###
+###
+###
+
+- name: CREDENTIALS VAULT - DISPLAY VAULT INFO
+  ansible.builtin.debug:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+      vault {{ (vault_encrypted_check.rc == 0) | ternary('already encrypted', 'created and encrypted') }}
+
+      vault file     : {{ vault_output_dir }}/default_vault.yml
+      vault password : {{ vault_output_dir }}/vault_pass.txt
+      #### #### #### #### #### #### #### #### #### #### ####

@@ -1,0 +1,37 @@
+---
+# workspace credentials - deploy sourced_range42.sh and inject in shell rc files
+#
+# generates the environment file from template, then injects source blocks
+# in .bashrc and .zshrc
+#
+# source: configure.deployer-cli/tasks/07_04_deploy_sources_file.yml
+
+- name: WORKSPACE CREDENTIALS - GENERATE SOURCED_RANGE42.SH FROM TEMPLATE
+  ansible.builtin.template:
+    src: sourced_range42.j2
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/sourced_range42.sh"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"
+
+- name: WORKSPACE CREDENTIALS - INJECT RANGE42 ENV BLOCK IN .BASHRC
+  ansible.builtin.blockinfile:
+    path: "/home/{{ DEPLOYER_CLI_USER }}/.bashrc"
+    marker: "# {mark} RANGE42 ENV - {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    insertafter: EOF
+    block: |
+      source "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/sourced_range42.sh"
+      export PATH=$PATH:$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR
+      alias gdk="cd $RANGE42_ANSIBLE_ROLES__DEVKITS_DIR"
+
+- name: WORKSPACE CREDENTIALS - INJECT RANGE42 ENV BLOCK IN .ZSHRC
+  ansible.builtin.blockinfile:
+    path: "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
+    marker: "# {mark} RANGE42 ENV - {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    insertafter: EOF
+    block: |
+      source "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/sourced_range42.sh"
+      export PATH=$PATH:$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR
+      alias gdk="cd $RANGE42_ANSIBLE_ROLES__DEVKITS_DIR"
+# NOTE: marker includes CODENAME-SCENARIO so each workspace gets its own block
+#       (fixes bug B7 where identical markers caused overwrite)

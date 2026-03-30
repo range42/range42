@@ -1,0 +1,13 @@
+---
+# deployer bootstrap - deploy ~/.ansible.cfg to suppress warnings globally
+#
+# this applies to ALL ansible commands on the deployer-cli
+# including devkit scripts that run from other directories
+
+- name: DEPLOYER BOOTSTRAP - DEPLOY GLOBAL ANSIBLE.CFG
+  ansible.builtin.template:
+    src: ansible.cfg.j2
+    dest: "/home/{{ DEPLOYER_CLI_USER }}/.ansible.cfg"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0644"

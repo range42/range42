@@ -1,0 +1,25 @@
+---
+################################################################################
+# range42 — site.yml
+#
+# Orchestrates the full deployment pipeline in sequence:
+#   1. Generate credentials (localhost)
+#   2. Configure Proxmox (SSH + API)
+#   3. Deploy deployer-cli (bootstrap + workspace)
+#
+# Usage:
+#   ansible-playbook site.yml \
+#     -i inventories/<your-codename>/hosts.yml \
+#     -e INFRASTRUCTURE_SCENARIO=demo_lab \
+#     --vault-password-file ./config/<CODENAME>-<SCENARIO>/secrets/vault_pass.txt
+#
+# Or run each step individually:
+#   ansible-playbook playbooks/01_generate_credentials.yml -i ...
+#   ansible-playbook playbooks/02_configure_proxmox.yml -i ...
+#   ansible-playbook playbooks/03_deploy_deployer_cli.yml -i ... --vault-password-file ...
+#
+################################################################################
+
+- import_playbook: playbooks/01_generate_credentials.yml
+- import_playbook: playbooks/02_configure_proxmox.yml
+- import_playbook: playbooks/03_deploy_deployer_cli.yml

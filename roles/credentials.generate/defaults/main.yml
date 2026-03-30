@@ -1,0 +1,23 @@
+---
+################################################################################
+# credentials.generate — default variables
+################################################################################
+
+# infrastructure identification (required — must be overridden)
+INFRASTRUCTURE_CODENAME: "to_define"
+INFRASTRUCTURE_SCENARIO: "to_define"
+
+# output directory for generated credentials
+# typically: ./config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}
+credentials_output_dir: "to_define"
+
+# auto-generation flags
+context_auto_generate_ssh_keys: "YES"
+context_auto_generate_vm_passwords: "YES"
+
+# protect ssh keys with a passphrase (YES/NO)
+# NO = keys without passphrase (some users prefer this for automation)
+context_ssh_keys_use_passphrase: "YES"
+
+# number of additional student keys (bob_1 .. bob_N)
+student_additionnal_keys_count: 5

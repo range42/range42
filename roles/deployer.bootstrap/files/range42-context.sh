@@ -1,0 +1,764 @@
+#!/usr/bin/env zsh
+################################################################################
+# range42-context — workspace context manager (zsh function)
+#
+# This file is SOURCED in .zshrc, not executed as a script.
+# All functions run in the current shell process — they can modify
+# environment variables, source files, and update the prompt.
+#
+# Usage:
+#   range42-context list                          — list available workspaces
+#   range42-context current                       — show active workspace
+#   range42-context use <codename> <scenario>     — switch workspace (T46)
+#   range42-context ssh-reload                    — reload SSH keys (T45)
+#   range42-context help                          — show help
+#
+# Sourced by deployer.bootstrap via .zshrc (T47)
+#
+################################################################################
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# constants
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+RANGE42_SSH_CONFIG_FILE="$HOME/.ssh/config"
+RANGE42_SSH_BEGIN_MARK='^#### BEGIN RANGE42 INCLUDE'
+RANGE42_SSH_END_MARK='^#### END RANGE42 INCLUDE'
+RANGE42_CONFIG_BASE_DIR="$HOME/range42.config"
+
+# banner on load
+_r42_last_workspace="$(sed -n "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/{/^[[:space:]]*Include /{s@.*config_range42-@@;s@[[:space:]].*@@;p;}}" "$RANGE42_SSH_CONFIG_FILE" 2>/dev/null | head -1)"
+printf "\033[0;90m  range42 context loaded — type \033[0;37mrange42-context help\033[0;90m for commands\033[0m\n"
+if [[ -n "$_r42_last_workspace" ]]; then
+    # split CODENAME-SCENARIO: scenario is after the last known separator
+    local _last_scenario _last_codename
+    for _sd in "$RANGE42_CONFIG_BASE_DIR/$_r42_last_workspace"/; do
+        if [[ -d "$_sd" ]]; then
+            # find scenario from scenario dir in range42-playbooks
+            for _pd in "$HOME/range42/range42-playbooks/scenarios"/*/; do
+                _last_scenario="$(basename "$_pd")"
+                if [[ "$_r42_last_workspace" == *"-${_last_scenario}" ]]; then
+                    _last_codename="${_r42_last_workspace%-${_last_scenario}}"
+                    break 2
+                fi
+            done
+        fi
+    done
+    if [[ -n "$_last_codename" && -n "$_last_scenario" ]]; then
+        printf "\033[0;90m  last workspace: \033[0;37mrange42-context use %s %s\033[0m\n" "$_last_codename" "$_last_scenario"
+    fi
+fi
+unset _r42_last_workspace _last_scenario _last_codename
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# display helpers
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_print_section() {
+    printf "\n\033[34m----[ %s ]----\033[0m\n\n" "$1"
+}
+
+_r42_print_step() {
+    printf "    \033[34m➜\033[0m %s\n" "$1"
+}
+
+_r42_print_check() {
+    printf "    \033[32m✓\033[0m %s\n" "$1"
+}
+
+_r42_print_fail() {
+    printf "    \033[31m✗\033[0m %s\n" "$1"
+}
+
+_r42_print_warning() {
+    printf "    \033[31m▲\033[0m %s\n" "$1"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context current — show active workspace
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_current() {
+
+    local active_targets
+
+    active_targets="$(
+        sed -n \
+            "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/ {
+            /^[[:space:]]*Include / {
+                s@.*config_range42-@@
+                s@[[:space:]].*@@
+                p
+            }
+        }" "$RANGE42_SSH_CONFIG_FILE" | sort -u
+    )"
+
+    if [[ -z "$active_targets" ]]; then
+        _r42_print_warning "active workspace is: NOT SET"
+        return 1  # FIX P1: return instead of exit (function, not script)
+    fi
+
+    printf "%s\n" "${active_targets}"
+    return 0
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context list — list available workspaces
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_list() {
+
+    _r42_print_section "available workspaces"
+
+    # method 1: from ssh config (Include lines, commented or not)
+    local ssh_targets
+    ssh_targets="$(
+        sed -n \
+            "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/{
+            /^[[:space:]]*#*[[:space:]]*Include /{
+                s@.*config_range42-@@
+                s@[[:space:]].*@@
+                p
+            }
+        }" "$RANGE42_SSH_CONFIG_FILE" | sort -u
+    )"
+
+    # method 2: from filesystem (range42.config directories)
+    local fs_targets
+    fs_targets="$(
+        ls -1d "$RANGE42_CONFIG_BASE_DIR"/*/ 2>/dev/null |
+        xargs -I{} basename {} |
+        sort -u
+    )"
+
+    # merge both sources, deduplicate
+    local all_targets
+    all_targets="$(printf "%s\n%s\n" "$ssh_targets" "$fs_targets" | grep -v '^$' | sort -u)"
+
+    # show with active marker
+    local current
+    current="$(_r42_current 2>/dev/null)"
+
+    local target
+    for target in ${(f)all_targets}; do
+        if [[ "$target" == "$current" ]]; then
+            _r42_print_check "$target  (active)"
+        else
+            _r42_print_step "$target"
+        fi
+    done
+
+    echo ""
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context ssh-reload — reload SSH keys for active workspace (T45)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_ssh_reload() {
+
+    local verbose="${1:-}"
+
+    # check ssh-agent
+    if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+        _r42_print_fail "ssh-agent is not running (SSH_AUTH_SOCK not set)"
+        _r42_print_warning "run: eval \`keychain --eval id_rsa\`"
+        return 1
+    fi
+
+    # unload all keys
+    ssh-add -D 2>/dev/null
+
+    # get active workspace
+    local workspace
+    workspace="$(_r42_current)" || {
+        _r42_print_warning "cannot reload SSH keys: no active workspace"
+        return 1
+    }
+
+    # parse active ssh config for IdentityFile entries
+    # FIX P4: trim leading whitespace from IdentityFile paths
+    local key_count=0
+    grep '^Include ' "$RANGE42_SSH_CONFIG_FILE" |
+        grep 'config_range42' |
+        grep -v '^#' |
+        sed 's/^Include //' |
+        while read -r config_file; do
+            grep 'IdentityFile ' "$config_file" 2>/dev/null |
+                sed 's/^[[:space:]]*IdentityFile[[:space:]]*//' |
+                sort -u |
+                while read -r identity_file; do
+                    if [[ "$verbose" == "-v" ]]; then
+                        _r42_print_warning "loading: $identity_file"
+                    fi
+                    ssh-add "$identity_file" </dev/tty 2>/dev/null
+                    key_count=$((key_count + 1))
+                done
+        done
+
+    local loaded
+    loaded=$(ssh-add -l 2>/dev/null | wc -l)
+    _r42_print_check "ssh keys reloaded ($loaded key(s) loaded)"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context use — switch active workspace (T46)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_use() {
+
+    local codename="$1"
+    local scenario="$2"
+
+    if [[ -z "$codename" || -z "$scenario" ]]; then
+        _r42_print_fail "usage: range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    local target="${codename}-${scenario}"
+    local config_dir="$RANGE42_CONFIG_BASE_DIR/$target"
+
+    # verify workspace exists
+    if [[ ! -d "$config_dir" ]]; then
+        _r42_print_fail "workspace not found: $config_dir"
+        _r42_print_warning "available workspaces:"
+        _r42_list
+        return 1
+    fi
+
+    _r42_print_section "switching to $target"
+
+    #### ssh config switch — comment all, uncomment target
+
+    sed -i "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/ s/^Include /# Include /" \
+        "$RANGE42_SSH_CONFIG_FILE"
+    _r42_print_step "commented all active Include lines"
+
+    sed -i "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/ s/^# Include \(.*config_range42-${target}.*\)/Include \1/" \
+        "$RANGE42_SSH_CONFIG_FILE"
+    _r42_print_step "uncommented Include for $target"
+
+    #### zshrc switch — comment all sourced_range42.sh, uncomment target
+    # ensures the correct workspace is sourced on next login too
+
+    sed -i 's|^[# ]*source "\(.*sourced_range42\.sh\)"|#source "\1"|' \
+        "$HOME/.zshrc"
+    _r42_print_step "commented all sourced_range42.sh in .zshrc"
+
+    sed -i "s|^#source \"\(.*/${target}/sourced_range42\.sh\)\"|source \"\1\"|" \
+        "$HOME/.zshrc"
+    _r42_print_step "uncommented sourced_range42.sh for $target in .zshrc"
+
+    #### source the workspace environment directly in this shell (no restart needed)
+
+    local sourced_file="$config_dir/sourced_range42.sh"
+    if [[ -f "$sourced_file" ]]; then
+        source "$sourced_file"
+        _r42_print_step "sourced $sourced_file"
+    else
+        _r42_print_warning "sourced_range42.sh not found in $config_dir"
+    fi
+
+    #### export vault password file path (T46b)
+
+    local vault_pass_file="$config_dir/secrets/vault_pass.txt"
+    if [[ -f "$vault_pass_file" ]]; then
+        export RANGE42_VAULT_PASSWORD_FILE="$vault_pass_file"
+        _r42_print_step "exported RANGE42_VAULT_PASSWORD_FILE=$vault_pass_file"
+    else
+        _r42_print_warning "vault_pass.txt not found in $config_dir/secrets/"
+    fi
+
+    #### export active workspace info
+
+    export RANGE42_ACTIVE_WORKSPACE="$target"
+    export RANGE42_ACTIVE_CONFIG_DIR="$config_dir"
+
+    #### export ansible config so our settings apply everywhere (suppress warnings etc.)
+    local r42_ansible_cfg="$HOME/range42/range42/ansible.cfg"
+    if [[ -f "$r42_ansible_cfg" ]]; then
+        export ANSIBLE_CONFIG="$r42_ansible_cfg"
+        _r42_print_step "exported ANSIBLE_CONFIG=$r42_ansible_cfg"
+    fi
+
+    #### update zsh prompt to show active workspace (green tag)
+
+    export RANGE42_PROMPT_TAG="%F{green}[r42:${target}]%f"
+    if [[ "$PROMPT" != *"RANGE42_PROMPT_TAG"* ]]; then
+        export PROMPT='${RANGE42_PROMPT_TAG} '"${PROMPT}"
+    fi
+
+    #### reload ssh keys
+
+    _r42_ssh_reload
+
+    #### show status after switch
+
+    _r42_status
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context inventory — show ansible inventory tree
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_inventory() {
+
+    local inventory_dir="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR:-}"
+
+    if [[ -z "$inventory_dir" ]]; then
+        _r42_print_fail "no active workspace (RANGE42_ANSIBLE_ROLES__INVENTORY_DIR not set)"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    local inventory_file="${inventory_dir%/}/inventory_default.yml"
+
+    if [[ ! -f "$inventory_file" ]]; then
+        _r42_print_fail "inventory not found: $inventory_file"
+        return 1
+    fi
+
+    _r42_print_section "ansible inventory — ${RANGE42_ACTIVE_WORKSPACE:-unknown}"
+    ansible-inventory -i "$inventory_file" --graph
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context cd — navigate to workspace directories
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_cd() {
+    local target="${1:-config}"
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    case "$target" in
+        config)
+            cd "$config_dir" && _r42_print_check "cd $config_dir"
+            ;;
+        scenario)
+            if [[ -L "$config_dir/scenario" ]]; then
+                cd "$config_dir/scenario" && _r42_print_check "cd $(readlink -f "$config_dir/scenario")"
+            else
+                _r42_print_fail "scenario symlink not found in $config_dir"
+                return 1
+            fi
+            ;;
+        secrets|vault)
+            cd "$config_dir/secrets" && _r42_print_check "cd $config_dir/secrets"
+            ;;
+        *)
+            _r42_print_fail "unknown target: $target"
+            echo "  usage: range42-context cd [config|scenario|secrets]"
+            return 1
+            ;;
+    esac
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context status — check workspace health
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_status() {
+
+    local workspace="${RANGE42_ACTIVE_WORKSPACE:-}"
+    if [[ -z "$workspace" ]]; then
+        _r42_print_fail "no active workspace"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    local vault_pass="${RANGE42_VAULT_PASSWORD_FILE:-}"
+    local vault_file="$config_dir/secrets/default_vault.yml"
+    local inv_file="$config_dir/inventory/inventory_default.yml"
+
+    # status line helper: component, value, ok/fail
+    _s_ok()   { printf "    \033[1;37m%-16s\033[0m %-36s \033[1;32m%s\033[0m\n" "$1" "$2" "$3"; }
+    _s_fail() { printf "    \033[1;37m%-16s\033[0m %-36s \033[1;31m%s\033[0m\n" "$1" "$2" "$3"; }
+    _s_warn() { printf "    \033[1;37m%-16s\033[0m %-36s \033[1;33m%s\033[0m\n" "$1" "$2" "$3"; }
+
+    echo ""
+    printf "    \033[1;34m--- status : %s ---\033[0m\n" "$workspace"
+    echo ""
+
+    # workspace
+    _s_ok "workspace" "$workspace" "ok"
+
+    # vault password
+    if [[ -n "$vault_pass" && -f "$vault_pass" ]]; then
+        _s_ok "vault pass" "vault_pass.txt" "ok"
+    else
+        _s_fail "vault pass" "${vault_pass:-not set}" "missing"
+    fi
+
+    # vault encrypted
+    if [[ -f "$vault_file" ]]; then
+        if head -1 "$vault_file" | grep -q '^\$ANSIBLE_VAULT'; then
+            _s_ok "vault" "encrypted" "ok"
+        else
+            _s_warn "vault" "NOT encrypted (cleartext)" "warn"
+        fi
+    else
+        _s_fail "vault" "not found" "missing"
+    fi
+
+    # vault decryptable
+    if [[ -f "$vault_file" && -f "$vault_pass" ]]; then
+        if ansible-vault view "$vault_file" --vault-password-file "$vault_pass" >/dev/null 2>&1; then
+            _s_ok "vault decrypt" "password valid" "ok"
+        else
+            _s_fail "vault decrypt" "wrong password?" "fail"
+        fi
+    fi
+
+    # ssh agent
+    if [[ -n "${SSH_AUTH_SOCK:-}" ]] && ssh-add -l >/dev/null 2>&1; then
+        local key_count
+        key_count=$(ssh-add -l | wc -l)
+        _s_ok "ssh-agent" "$key_count key(s) loaded" "ok"
+    else
+        _s_fail "ssh-agent" "no keys loaded" "fail"
+    fi
+
+    # inventory
+    if [[ -f "$inv_file" ]]; then
+        _s_ok "inventory" "inventory_default.yml" "ok"
+    else
+        _s_fail "inventory" "not found" "missing"
+    fi
+
+    # scenario symlink
+    if [[ -L "$config_dir/scenario" ]]; then
+        _s_ok "scenario" "$(basename "$(readlink "$config_dir/scenario")")" "ok"
+    else
+        _s_warn "scenario" "symlink missing" "warn"
+    fi
+
+    echo ""
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context passwords — show generated credentials
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_passwords() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        return 1
+    fi
+
+    # try summary.txt first, then passwords.env
+    local summary="$config_dir/summary.txt"
+    local passwords="$config_dir/passwords.env"
+
+    if [[ -f "$summary" ]]; then
+        _r42_print_section "credentials summary"
+        cat "$summary"
+    elif [[ -f "$passwords" ]]; then
+        _r42_print_section "passwords"
+        cat "$passwords"
+    else
+        _r42_print_fail "no summary.txt or passwords.env found in $config_dir"
+        _r42_print_warning "credentials may not have been generated yet"
+    fi
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context ssh — quick ssh to a VM by partial name
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_ssh() {
+    local pattern="$1"
+
+    if [[ -z "$pattern" ]]; then
+        _r42_print_fail "usage: range42-context ssh <hostname-pattern>"
+        echo "  example: range42-context ssh wazuh"
+        return 1
+    fi
+
+    # find matching host in active ssh config
+    local ssh_config="${HOME}/.ssh/config"
+    local matches
+    matches=$(grep "^Host r42\." "$ssh_config" 2>/dev/null | awk '{print $2}' | grep -i "$pattern" | sort -u)
+
+    if [[ -z "$matches" ]]; then
+        _r42_print_fail "no host matching '$pattern' found"
+        return 1
+    fi
+
+    local count
+    count=$(echo "$matches" | wc -l)
+
+    if [[ $count -gt 1 ]]; then
+        _r42_print_warning "multiple hosts match '$pattern':"
+        echo "$matches" | while read -r h; do
+            echo "    $h"
+        done
+        echo ""
+        echo "  be more specific or use: ssh <full-hostname>"
+        return 1
+    fi
+
+    local host="$matches"
+    _r42_print_step "connecting to $host"
+    ssh "$host"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context deploy — run scenario setup script
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_deploy() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        return 1
+    fi
+
+    local scenario_dir="$config_dir/scenario"
+    if [[ ! -L "$scenario_dir" ]]; then
+        _r42_print_fail "scenario symlink not found"
+        return 1
+    fi
+
+    local setup_script
+    setup_script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.setup.sh" | head -1)
+
+    if [[ -z "$setup_script" ]]; then
+        _r42_print_fail "no setup script found in scenario directory"
+        return 1
+    fi
+
+    _r42_print_section "deploying scenario"
+    _r42_print_step "running: $setup_script"
+    echo ""
+
+    cd "$(dirname "$setup_script")" && bash "$setup_script"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context deploy-vms — deploy VMs only (skip templates)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_deploy_vms() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        return 1
+    fi
+
+    local scenario_dir="$config_dir/scenario"
+    if [[ ! -L "$scenario_dir" ]]; then
+        _r42_print_fail "scenario symlink not found"
+        return 1
+    fi
+
+    local script
+    script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.setup_vms_only.sh" | head -1)
+
+    if [[ -z "$script" ]]; then
+        _r42_print_fail "no setup_vms_only.sh script found in scenario directory"
+        return 1
+    fi
+
+    _r42_print_section "deploying VMs only (skip templates)"
+    _r42_print_step "running: $script"
+    echo ""
+
+    cd "$(dirname "$script")" && bash "$script"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context delete — run scenario delete script
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_delete() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        return 1
+    fi
+
+    local scenario_dir="$config_dir/scenario"
+    if [[ ! -L "$scenario_dir" ]]; then
+        _r42_print_fail "scenario symlink not found"
+        return 1
+    fi
+
+    local delete_script
+    delete_script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.delete_all.sh" | head -1)
+
+    if [[ -z "$delete_script" ]]; then
+        _r42_print_fail "no delete script found in scenario directory"
+        return 1
+    fi
+
+    _r42_print_section "deleting scenario VMs"
+    _r42_print_warning "this will destroy all VMs for the active scenario"
+    _r42_print_step "running: $delete_script"
+    echo ""
+
+    cd "$(dirname "$delete_script")" && bash "$delete_script"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context reset — run scenario reset script
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_reset() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        return 1
+    fi
+
+    local scenario_dir="$config_dir/scenario"
+    if [[ ! -L "$scenario_dir" ]]; then
+        _r42_print_fail "scenario symlink not found"
+        return 1
+    fi
+
+    local reset_script
+    reset_script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.reset.setup.sh" | head -1)
+
+    if [[ -z "$reset_script" ]]; then
+        _r42_print_fail "no reset script found in scenario directory"
+        return 1
+    fi
+
+    _r42_print_section "resetting scenario (delete + reinstall)"
+    _r42_print_warning "this will destroy and recreate all VMs"
+    _r42_print_step "running: $reset_script"
+    echo ""
+
+    cd "$(dirname "$reset_script")" && bash "$reset_script"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context delete-vms — delete VMs only (keep templates)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_delete_vms() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        return 1
+    fi
+
+    local scenario_dir="$config_dir/scenario"
+    if [[ ! -L "$scenario_dir" ]]; then
+        _r42_print_fail "scenario symlink not found"
+        return 1
+    fi
+
+    local script
+    script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.delete_vms_only.sh" | head -1)
+
+    if [[ -z "$script" ]]; then
+        _r42_print_fail "no delete_vms_only.sh script found in scenario directory"
+        return 1
+    fi
+
+    _r42_print_section "deleting VMs only (keeping templates)"
+    _r42_print_step "running: $script"
+    echo ""
+
+    cd "$(dirname "$script")" && bash "$script"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context init — launch the setup wizard from anywhere
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_init() {
+    local init_script="$HOME/range42/range42/range42-init.py"
+
+    if [[ ! -f "$init_script" ]]; then
+        _r42_print_fail "init script not found: $init_script"
+        return 1
+    fi
+
+    python3 "$init_script"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context help
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_help() {
+    local C="\033[1;34m"  # category color (blue)
+    local N="\033[1;37m"  # command name (white bold)
+    local D="\033[0;90m"  # description (gray)
+    local R="\033[0m"     # reset
+
+    echo ""
+    printf "  ${N}usage:${R} range42-context <command>\n"
+    echo ""
+    printf "  ${C}workspace${R}\n"
+    printf "    ${N}list${R}                           ${D}list available workspaces${R}\n"
+    printf "    ${N}current${R}                        ${D}show active workspace${R}\n"
+    printf "    ${N}use${R} <codename> <scenario>      ${D}switch to a workspace${R}\n"
+    printf "    ${N}status${R}                         ${D}check workspace health${R}\n"
+    printf "    ${N}init${R}                           ${D}launch setup wizard${R}\n"
+    echo ""
+    printf "  ${C}navigation${R}\n"
+    printf "    ${N}cd config${R}                      ${D}go to workspace config directory${R}\n"
+    printf "    ${N}cd scenario${R}                    ${D}go to scenario playbooks directory${R}\n"
+    printf "    ${N}cd secrets${R}                     ${D}go to vault/secrets directory${R}\n"
+    echo ""
+    printf "  ${C}operations${R}\n"
+    printf "    ${N}deploy${R}                         ${D}run full scenario setup (templates + VMs)${R}\n"
+    printf "    ${N}deploy-vms${R}                     ${D}deploy VMs only (skip templates)${R}\n"
+    printf "    ${N}delete${R}                         ${D}delete all scenario VMs + templates${R}\n"
+    printf "    ${N}delete-vms${R}                     ${D}delete VMs only (keep templates)${R}\n"
+    printf "    ${N}reset${R}                          ${D}delete + recreate all VMs${R}\n"
+    printf "    ${N}ssh-reload${R}                     ${D}reload SSH keys for active workspace${R}\n"
+    echo ""
+    printf "  ${C}info${R}\n"
+    printf "    ${N}inventory${R}                      ${D}show ansible inventory tree${R}\n"
+    printf "    ${N}passwords${R}                      ${D}show generated credentials${R}\n"
+    printf "    ${N}ssh${R} <pattern>                  ${D}quick ssh to a VM by name${R}\n"
+    printf "    ${N}help${R}                           ${D}show this help${R}\n"
+    echo ""
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# main entry point — range42-context function
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+range42-context() {
+
+    local cmd="${1:-help}"
+    shift 2>/dev/null
+
+    case "$cmd" in
+        list|ls)        _r42_list ;;
+        current)        _r42_current ;;
+        use)            _r42_use "$@" ;;
+        status)         _r42_status ;;
+        init)           _r42_init ;;
+        deploy)         _r42_deploy ;;
+        deploy-vms)     _r42_deploy_vms ;;
+        delete)         _r42_delete ;;
+        delete-vms)     _r42_delete_vms ;;
+        reset)          _r42_reset ;;
+        ssh-reload)     _r42_ssh_reload ;;
+        inventory|inv)  _r42_inventory ;;
+        passwords|pw)   _r42_passwords ;;
+        ssh)            _r42_ssh "$@" ;;
+        cd)             _r42_cd "$@" ;;
+        help|--help|-h) _r42_help ;;
+        *)
+            _r42_print_fail "unknown command: $cmd"
+            _r42_help
+            return 1
+            ;;
+    esac
+}

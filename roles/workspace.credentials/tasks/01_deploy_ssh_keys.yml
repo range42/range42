@@ -1,0 +1,44 @@
+---
+# workspace credentials - upload ssh keys to deployer-cli
+#
+# copies keys to two locations:
+#   1. config_dir/ssh_keys/ (backup in workspace)
+#   2. ~/.ssh/range42/CODENAME-SCENARIO/{backend,jump,student}_keys/ (for ssh client)
+#
+# source: configure.deployer-cli/tasks/07_02_deploy_ssh_keys.yml
+
+- name: WORKSPACE CREDENTIALS - BACKUP ALL SSH KEYS TO WORKSPACE
+  ansible.builtin.copy:
+    src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/"
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/ssh_keys/"
+    mode: "0600"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    directory_mode: "0700"
+
+- name: WORKSPACE CREDENTIALS - DEPLOY BACKEND KEYS (ALICE)
+  ansible.builtin.copy:
+    src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/backend_keys/"
+    dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"
+    directory_mode: "0700"
+
+- name: WORKSPACE CREDENTIALS - DEPLOY JUMP KEYS (ROOT + JUMP_USER)
+  ansible.builtin.copy:
+    src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/jump_keys/"
+    dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"
+    directory_mode: "0700"
+
+- name: WORKSPACE CREDENTIALS - DEPLOY STUDENT KEYS (BOB + ADDITIONNAL)
+  ansible.builtin.copy:
+    src: "{{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/student_keys/"
+    dest: "{{ DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR }}"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"
+    directory_mode: "0700"

@@ -1,0 +1,19 @@
+---
+# workspace ssh-config - generate range42 ssh config from template
+#
+# produces ~/.ssh/config_range42-CODENAME-SCENARIO
+# contains all Host entries for this infrastructure (proxmox, jump, admin, student, vuln, init)
+#
+# fixes included in the template:
+#   - T1: pattern r42.init-vm-* (was r42.init-box-*)
+#   - T2: alias proxmox-cli prefixed by CODENAME (was global, conflict in multi-infra)
+#
+# source: configure.deployer-cli/tasks/04_ssh_client.yml (lines 85-91)
+
+- name: WORKSPACE SSH-CONFIG - GENERATE RANGE42 SSH CONFIG FROM TEMPLATE
+  ansible.builtin.template:
+    src: ssh-config-range42.j2
+    dest: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"

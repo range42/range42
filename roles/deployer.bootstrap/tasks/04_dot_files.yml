@@ -1,0 +1,42 @@
+---
+# deployer bootstrap - deploy dotfiles (vimrc, zshrc) for deployer user and root
+#
+# FIX B3: original code wrote root's zshrc to /home/DEPLOYER_CLI_USER/.zshrc
+#         instead of /root/.zshrc — fixed here
+#
+# source: configure.deployer-cli/tasks/03_dot_files.yml
+
+- name: DEPLOYER BOOTSTRAP - DEPLOY VIMRC FOR DEPLOYER USER
+  ansible.builtin.copy:
+    src: dot_files/vimrc
+    dest: "/home/{{ DEPLOYER_CLI_USER }}/.vimrc"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0644"
+
+- name: DEPLOYER BOOTSTRAP - DEPLOY ZSHRC FOR DEPLOYER USER
+  ansible.builtin.copy:
+    src: dot_files/zshrc
+    dest: "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0644"
+
+- name: DEPLOYER BOOTSTRAP - DEPLOY VIMRC FOR ROOT
+  ansible.builtin.copy:
+    src: dot_files/vimrc
+    dest: "/root/.vimrc"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+
+- name: DEPLOYER BOOTSTRAP - DEPLOY ZSHRC FOR ROOT
+  ansible.builtin.copy:
+    src: dot_files/zshrc
+    dest: "/root/.zshrc"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  # FIX B3: was /home/{{ DEPLOYER_CLI_USER }}/.zshrc in original code

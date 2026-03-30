@@ -1,0 +1,89 @@
+---
+# proxmox api-token - create new token or import existing
+#
+# strategy:
+#   1. try to create the token
+#   2. if already exists AND we have a secret in config → import it
+#   3. if already exists AND no secret → delete and recreate (auto-recovery)
+#
+# source: proxmox_generate_api_credentials() lines 1016-1155
+
+- name: PROXMOX API-TOKEN - TRY TO CREATE TOKEN ON PROXMOX
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pveum user token add {{ proxmox_api_user }} {{ proxmox_api_token_id }}
+    --privsep 0 --output-format json 2>&1"
+  register: token_create_raw
+  changed_when: "'already exists' not in token_create_raw.stdout"
+  failed_when: false
+
+- name: PROXMOX API-TOKEN - DETERMINE TOKEN STATUS
+  ansible.builtin.set_fact:
+    token_already_existed: "{{ 'already exists' in token_create_raw.stdout }}"
+
+#### token was just created — extract secret from response
+
+- name: PROXMOX API-TOKEN - EXTRACT SECRET FROM NEW TOKEN
+  ansible.builtin.set_fact:
+    proxmox_api_token_secret_result: "{{ (token_create_raw.stdout | from_json).value }}"
+  when:
+    - not (token_already_existed | bool)
+    - token_create_raw.stdout | default('') | length > 0
+    - "'value' in (token_create_raw.stdout | from_json)"
+  no_log: true
+  failed_when: false
+
+#### token already existed AND we have a secret in config — use it
+
+- name: PROXMOX API-TOKEN - USE SECRET FROM CONFIG (TOKEN ALREADY EXISTED)
+  ansible.builtin.set_fact:
+    proxmox_api_token_secret_result: "{{ proxmox_api_token_secret }}"
+  when:
+    - token_already_existed | bool
+    - proxmox_api_token_secret | default('') | length > 0
+  no_log: true
+
+#### token already existed BUT no secret — auto-recovery: delete and recreate
+
+- name: PROXMOX API-TOKEN - AUTO-RECOVERY — DELETE TOKEN (NO SECRET AVAILABLE)
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pveum user token remove {{ proxmox_api_user }} {{ proxmox_api_token_id }} 2>&1 || true"
+  when:
+    - token_already_existed | bool
+    - proxmox_api_token_secret | default('') | length == 0
+    - proxmox_api_token_secret_result is not defined
+
+- name: PROXMOX API-TOKEN - AUTO-RECOVERY — RECREATE TOKEN
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pveum user token add {{ proxmox_api_user }} {{ proxmox_api_token_id }}
+    --privsep 0 --output-format json 2>&1"
+  register: token_recreate_raw
+  when:
+    - token_already_existed | bool
+    - proxmox_api_token_secret | default('') | length == 0
+    - proxmox_api_token_secret_result is not defined
+
+- name: PROXMOX API-TOKEN - AUTO-RECOVERY — EXTRACT SECRET FROM RECREATED TOKEN
+  ansible.builtin.set_fact:
+    proxmox_api_token_secret_result: "{{ (token_recreate_raw.stdout | from_json).value }}"
+  when:
+    - token_recreate_raw is not skipped
+    - token_recreate_raw.stdout | default('') | length > 0
+    - "'value' in (token_recreate_raw.stdout | from_json)"
+  no_log: true
+
+#### display result
+
+- name: PROXMOX API-TOKEN - DISPLAY TOKEN INFO
+  ansible.builtin.debug:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+      proxmox api token {{ (proxmox_api_token_secret_result is defined) | ternary('ready', 'FAILED — no secret available') }}
+
+      api user     : {{ proxmox_api_user }}
+      token id     : {{ proxmox_api_token_id }}
+      secret       : {{ (proxmox_api_token_secret_result is defined) | ternary('available', 'MISSING') }}
+      #### #### #### #### #### #### #### #### #### #### ####

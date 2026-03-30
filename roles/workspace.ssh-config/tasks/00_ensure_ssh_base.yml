@@ -1,0 +1,28 @@
+---
+# workspace ssh-config - ensure base ssh directory and files exist
+#
+# source: configure.deployer-cli/tasks/04_ssh_client.yml (lines 13-35)
+
+- name: WORKSPACE SSH-CONFIG - ENSURE ~/.SSH DIRECTORY EXISTS
+  ansible.builtin.file:
+    path: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DIR }}"
+    state: directory
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0700"
+
+- name: WORKSPACE SSH-CONFIG - ENSURE ~/.SSH/CONFIG FILE EXISTS
+  ansible.builtin.file:
+    path: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_DEFAULT_FILE }}"
+    state: touch
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"
+
+- name: WORKSPACE SSH-CONFIG - ENSURE ~/.SSH/AUTHORIZED_KEYS FILE EXISTS
+  ansible.builtin.file:
+    path: "/home/{{ DEPLOYER_CLI_USER }}/.ssh/authorized_keys"
+    state: touch
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"

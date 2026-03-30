@@ -1,0 +1,31 @@
+---
+# proxmox jump-user - create linux user on proxmox and set password
+#
+# only when jump_on_proxmox == YES (the jump host is the proxmox server itself)
+# uses root SSH access (established by proxmox.init)
+#
+# source: proxmox_load_jump_ssh_key() lines 855-883
+
+- name: PROXMOX JUMP-USER - CHECK IF JUMP USER ALREADY EXISTS
+  ansible.builtin.command: >
+    ssh root@{{ jump_host }}
+    id {{ jump_user }}
+  register: jump_user_check
+  changed_when: false
+  failed_when: false
+  when: jump_on_proxmox | default('YES') | upper == 'YES'
+
+- name: PROXMOX JUMP-USER - CREATE LINUX USER ON PROXMOX
+  ansible.builtin.command: >
+    ssh root@{{ jump_host }}
+    useradd -m -s /bin/bash {{ jump_user }}
+  when:
+    - jump_on_proxmox | default('YES') | upper == 'YES'
+    - jump_user_check.rc != 0
+
+- name: PROXMOX JUMP-USER - SET JUMP USER PASSWORD
+  ansible.builtin.shell: >
+    ssh root@{{ jump_host }}
+    "echo '{{ jump_user }}:{{ jump_password }}' | chpasswd"
+  when: jump_on_proxmox | default('YES') | upper == 'YES'
+  no_log: true

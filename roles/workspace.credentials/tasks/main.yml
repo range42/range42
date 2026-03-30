@@ -1,0 +1,34 @@
+---
+################################################################################
+# workspace.credentials
+#
+# Upload SSH keys, secrets vault, and inventory to the deployer-cli workspace.
+#
+# Runs on: deployer-cli (SSH)
+# Idempotent: yes (copy overwrites if content changed)
+#
+# Extracted from: configure.deployer-cli tasks:
+#   - 07_01_deploy_inventory.yml       → 00_deploy_inventory.yml
+#   - 07_02_deploy_ssh_keys.yml        → 01_deploy_ssh_keys.yml
+#   - 07_03_deploy_secrets_tarball.yml  → 02_deploy_secrets.yml
+#   - 07_04_deploy_sources_file.yml     → 03_deploy_sourced_env.yml
+#
+# Requires: workspace.init completed (directories exist)
+#
+# Variables consumed:
+#   - DEPLOYER_CLI_USER
+#   - DEPLOYER_CLI__DST_CONFIG_DIR
+#   - INFRASTRUCTURE_CODENAME, INFRASTRUCTURE_SCENARIO
+#   - INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL
+#   - INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL
+#   - DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR
+#   - DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR
+#   - DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR
+#   - DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR
+#
+################################################################################
+
+- import_tasks: ./00_deploy_inventory.yml
+- import_tasks: ./01_deploy_ssh_keys.yml
+- import_tasks: ./02_deploy_secrets.yml
+- import_tasks: ./03_deploy_sourced_env.yml
