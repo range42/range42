@@ -14,6 +14,8 @@ The wizard guides you through the configuration and can deploy automatically:
 python3 range42-init.py
 ```
 
+![range42-init wizard](screenshots/0002.png)
+
 Requires: `pip install --user textual` (do NOT use `apt install python3-textual`, version too old).
 
 It will:
