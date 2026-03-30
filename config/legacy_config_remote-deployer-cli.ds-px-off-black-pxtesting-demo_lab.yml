@@ -68,7 +68,7 @@ student_additionnal_keys_count: 5
 # ::
 ################################################################################
 
-ssh_client__dst_config_dir: "/home/dev/.ssh"
+ssh_client__dst_config_dir: "/home/grml/.ssh"
 
 ################################################################################
 # 2) INFRASTRUCTURE IDENTIFICATION
@@ -79,10 +79,10 @@ ssh_client__dst_config_dir: "/home/dev/.ssh"
 # ::                            **** values will be stored inside Ansible Vault.
 ################################################################################
 
-infrastructure_codename: "hv-hx" # recommended format max 6 chars...
+infrastructure_codename: "ds-px-off-black-pxtesting" # recommended format max 6 chars...
 infrastructure_scenario: "demo_lab" # default deployed scenario
 # infrastructure_proxmox_address: "redacted"
-infrastructure_proxmox_address: "192.168.42.242"
+infrastructure_proxmox_address: "ds-px-off-black-pxtesting.skate-eagle.ts.net"
 
 # INFRASTRUCTURE STORAGE
 
@@ -99,14 +99,14 @@ infrastructure_proxmox_default_network_card_interface: "enp3s0" # will be used a
 # ::
 ################################################################################
 
-deployer_cli_ip: "192.168.42.111"
+deployer_cli_ip: "127.0.0.1"
 deployer_cli_ssh_port: "22"
-deployer_cli_user: "range42-operator" # default deployer-cli username
+deployer_cli_user: "grml"  # default deployer-cli username
 
 # DEBUG NOTE :
 # must be rename to deployer_cli_user_ssh_known_hosts
 
-deployer_cli_user_ssh_known_hosts: "/home/range42-operator/.ssh/known_hosts" # :: **** values will be stored inside Ansible Vault.
+deployer_cli_user_ssh_known_hosts: "/home/grml/.ssh/known_hosts" # :: **** values will be stored inside Ansible Vault.
 
 ################################################################################
 # 4) PROXMOX API ACCESS
@@ -121,13 +121,13 @@ deployer_cli_user_ssh_known_hosts: "/home/range42-operator/.ssh/known_hosts" # :
 ################################################################################
 
 # proxmox_api_host: "127.0.0.1:18007"
-proxmox_api_host: "192.168.42.242:8006" # proxmox direct mode
+proxmox_api_host: "ds-px-off-black-pxtesting.skate-eagle.ts.net:8006" # proxmox direct mode
 
-proxmox_api_user: "abnaaaa_api_master01@pam"
-proxmox_api_token_id: "aanabaaa_api_master01"
-proxmox_api_token_secret: "aaabana_api_master01" # This field will be reset on api_token creation or imported from child configuration.
+proxmox_api_user: "abiikkkkjiiiinaaaa_api_master01@pam"
+proxmox_api_token_id: "aiikkkijiianabaaa_api_master01"
+proxmox_api_token_secret: "e74a8b27-0863-458a-8125-e03de47b41ab"
 
-proxmox_node: "hv-hx" # STRICT proxmox node name - IMPORTANT
+proxmox_node: "px-testing" # STRICT proxmox node name - IMPORTANT
 
 ################################################################################
 # 4.1) PROXMOX JUMP USER
@@ -147,7 +147,7 @@ jump_on_proxmox: "YES" # default value
 # WARNING : if set to NO, the jump_user must exist on the jump_host.
 #
 
-jump_host: "192.168.42.242" # by default jumper user is on proxmox server (you can of course modify this value)
+jump_host: "ds-px-off-black-pxtesting.skate-eagle.ts.net" # by default jumper user is on proxmox server (you can of course modify this value)
 jump_user: "jump_user"
 jump_port: "22"
 jump_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
@@ -164,12 +164,12 @@ jump_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
 # --- AMINISTRATOR/DEPLOYER VM - Alice ( backend range42 infrastructure administrator )
 default_admin_vm_ci_user: "alice"
 default_admin_vm_ci_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
-default_admin_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC1lZ...............redacted................................... user@host"
+default_admin_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAQrRDrHOtJqVPF3zdM6Fyk3Ktcn/n4Q2OOPTqdbEcJU r42 deployer (admin) - alice ds-px-off-black-pxtesting-demo_lab"
 
 # --- Student VM - Bob ( backend range42 infrastructure student )
 default_trainee_vm_ci_user: "bob"
 default_trainee_vm_ci_password: "cmFuZ2UtNDIK" # default password => echo range-42 | base64
-default_trainee_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC................redacted................................... user@host"
+default_trainee_vm_ci_ssh_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA147jV3yOzozL2Dg6qxpvNGgqYj1cNcEzDVW/2HTNex r42 student (user) - bob ds-px-off-black-pxtesting-demo_lab"
 
 ################################################################################
 # 6) VAULT SECRETS (TAILSCALE, WAZUH, ETC.)

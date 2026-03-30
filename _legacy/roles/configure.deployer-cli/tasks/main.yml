@@ -1,0 +1,54 @@
+####
+####
+####
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- import_tasks: 00_dev_mode.yml
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'
+
+- import_tasks: 01_packages.yml
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+- import_tasks: 02_shell.yml
+- import_tasks: 03_dot_files.yml
+- import_tasks: 04_ssh_client.yml
+- import_tasks: 05_git.yml
+- import_tasks: 06_symlinks.yml
+
+- import_tasks: ./07_01_deploy_inventory.yml
+- import_tasks: ./07_02_deploy_ssh_keys.yml
+- import_tasks: ./07_03_deploy_secrets_tarball.yml
+- import_tasks: ./07_04_deploy_sources_file.yml
+- import_tasks: ./08_clean_up.yml
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# to fix
+#
+- import_tasks: ./09_dirty_fixes.yml
+
+- import_tasks: ./10_context_tools.yml
+
+- name: DEV MODE WARNING NOTICE - REMINDER - refresh group membership
+  ansible.builtin.debug:
+    msg: |
+      !!! !!! !!! IMPORTANT
+
+      After adding a user to the group: range42-dev-mode-group
+      You MUST refresh the group membership for the current session:
+
+        via : 
+          - newgrp range42-dev-mode-group
+          - or logout / login.
+
+      Otherwise, permissions will NOT be applied correctly.
+
+  when:
+    - ansible_facts.distribution == 'Ubuntu'
+    - DEV_MODE_SETUP_LOCALHOST_USER | default('NO') | upper == 'YES'

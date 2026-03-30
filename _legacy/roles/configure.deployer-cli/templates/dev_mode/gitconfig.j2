@@ -1,0 +1,8 @@
+
+[core]
+    editor = vim
+
+[includeIf "gitdir:~/{{ DEV_MODE_GIT_DIRECTORY }}/"]
+    path = ~/.{{ DEV_MODE_GITCONFIG_FILE }}
+
+    
