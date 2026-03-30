@@ -1,0 +1,39 @@
+---
+################################################################################
+# 03 — Deploy deployer-cli (bootstrap system + create workspace)
+#
+# Connects to the deployer-cli via SSH.
+# Requires: 01_generate_credentials.yml completed (keys + vault exist).
+#
+# Usage:
+#   ansible-playbook playbooks/03_deploy_deployer_cli.yml \
+#     -i inventories/<your-codename>/hosts.yml \
+#     -e INFRASTRUCTURE_SCENARIO=demo_lab \
+#     --vault-password-file ./config/<CODENAME>-<SCENARIO>/secrets/vault_pass.txt
+#
+# After this playbook:
+#   - system bootstrapped (packages, zsh, dotfiles)
+#   - range42 repos cloned in ~/range42/
+#   - workspace created in ~/range42.config/CODENAME-SCENARIO/
+#   - SSH keys + vault + inventory deployed
+#   - SSH config configured (Include + range42 host entries)
+#   - symlinks created (secrets, scenario)
+#
+################################################################################
+
+- name: 03 deploy deployer-cli - bootstrap system
+  hosts: deployer_cli
+  gather_facts: true
+
+  vars:
+    DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
+    INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys"
+    INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+
+  roles:
+    - deployer.bootstrap
+    - deployer.repos
+    - workspace.init
+    - workspace.credentials
+    - workspace.ssh-config
+    - workspace.symlinks

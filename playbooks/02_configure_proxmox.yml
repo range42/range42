@@ -1,0 +1,34 @@
+---
+################################################################################
+# 02 — Configure Proxmox (SSH access, jump user, API token)
+#
+# Runs from localhost, connects to Proxmox via SSH (root).
+# Requires: 01_generate_credentials.yml completed (SSH keys exist).
+#
+# Usage:
+#   ansible-playbook playbooks/02_configure_proxmox.yml \
+#     -i inventories/<your-codename>/hosts.yml \
+#     -e INFRASTRUCTURE_SCENARIO=demo_lab
+#
+# After this playbook:
+#   - root@proxmox is accessible via SSH key
+#   - jump_user exists on proxmox with SSH key access
+#   - API token is created and tested
+#   - locale is set to C.UTF-8
+#
+################################################################################
+
+- name: 02 configure proxmox - bootstrap ssh access and api
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
+    proxmox_root_ssh_key_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
+    proxmox_jump_ssh_key_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user"
+
+  roles:
+    - proxmox.init
+    - proxmox.jump-user
+    - proxmox.api-token
