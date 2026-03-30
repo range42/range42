@@ -1,0 +1,63 @@
+---
+################################################################################
+# credentials.vault
+#
+# Generate the Ansible vault file (cleartext), then encrypt it.
+#
+# Runs on: localhost (delegate_to: localhost, connection: local)
+# Idempotent: no — regenerates vault on each run (encrypt overwrites)
+#
+# Source: prepare-infrastructure-workspace.sh
+#   - prepare_environment_ansible_vault()  (lines 1224-1376)
+#
+# Consumes facts set by credentials.generate:
+#   - generated_admin_password, generated_trainee_password, generated_wazuh_password
+#   - generated_admin_ssh_pubkey, generated_trainee_ssh_pubkey
+#
+# Produces:
+#
+#   {{ vault_output_dir }}/
+#   ├── default_vault.yml      ← encrypted ansible vault
+#   └── vault_pass.txt         ← vault password (plaintext, intentional by design)
+#
+# Vault contents (variables available after decryption):
+#
+#   Section 1 - Infrastructure:
+#     infrastructure_codename, infrastructure_scenario
+#     proxmox_address, proxmox_node
+#     proxmox_api_host, proxmox_api_user, proxmox_api_token_id, proxmox_api_token_secret
+#     proxmox_dest_iso_storage_name, proxmox_dest_vm_storage_name
+#     proxmox_default_network_card_interface
+#
+#   Section 2 - SSH key paths:
+#     ssh_key_deployer_admin, ssh_key_student_user
+#
+#   Section 3 - SSH public keys:
+#     ssh_key_deployer_admin_pub_key, ssh_key_student_user_pub_key
+#
+#   Section 4 - Cloud-init users:
+#     default_admin_vm_ci_user, default_admin_vm_ci_password, default_admin_vm_ci_ssh_key
+#     default_trainee_vm_ci_user, default_trainee_vm_ci_password, default_trainee_vm_ci_ssh_key
+#
+#   Section 5 - Misc:
+#     deployer_cli_user_ssh_known_hosts
+#     infrastructure_tailscale_authkey, infrastructure_tailscale_apikey
+#     infrastructure_wazuh_admin_password    ← mapped from WAZUH_PASSWORD in MASTER_FILE
+#
+# Variables consumed:
+#   - INFRASTRUCTURE_CODENAME          (required)
+#   - INFRASTRUCTURE_SCENARIO          (required)
+#   - INFRASTRUCTURE_PROXMOX_ADDRESS   (required)
+#   - vault_output_dir                 (required — where to write vault files)
+#   - credentials_output_dir           (required — where ssh keys were generated)
+#   - all proxmox_api_* variables
+#   - all default_*_vm_ci_* variables
+#   - all infrastructure_tailscale_* variables
+#   - WAZUH_PASSWORD                   (from config, mapped to infrastructure_wazuh_admin_password)
+#
+################################################################################
+
+- import_tasks: ./00_create_vault_directory.yml
+- import_tasks: ./01_generate_vault_password.yml
+- import_tasks: ./02_render_vault_cleartext.yml
+- import_tasks: ./03_encrypt_vault.yml

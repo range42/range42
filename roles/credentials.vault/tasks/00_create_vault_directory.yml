@@ -1,0 +1,8 @@
+---
+# credentials vault - create vault output directory
+
+- name: CREDENTIALS VAULT - CREATE VAULT DIRECTORY
+  ansible.builtin.file:
+    path: "{{ vault_output_dir }}"
+    state: directory
+    mode: "0700"

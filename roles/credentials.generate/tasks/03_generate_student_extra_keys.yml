@@ -1,0 +1,14 @@
+---
+# credentials generate - generate additional student ssh keys (bob_1 .. bob_N)
+
+- name: CREDENTIALS GENERATE - GENERATE ADDITIONAL STUDENT SSH KEYS
+  community.crypto.openssh_keypair:
+    path: "{{ credentials_output_dir }}/ssh_keys/student_keys/additionnal.students/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob_{{ item }}"
+    type: ed25519
+    comment: "r42 student (user) - bob [extra {{ item }}] {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    passphrase: "{{ (context_ssh_keys_use_passphrase | default('YES') | upper == 'YES') | ternary(lookup('community.general.random_string', length=32, override_special='_-'), omit) }}"
+    mode: "0600"
+  loop: "{{ range(1, student_additionnal_keys_count + 1) | list }}"
+  when:
+    - context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
+    - student_additionnal_keys_count | default(0) | int > 0

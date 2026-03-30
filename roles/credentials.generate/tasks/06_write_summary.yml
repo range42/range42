@@ -1,0 +1,23 @@
+---
+# credentials generate - write summary.txt (full recap of generated credentials)
+#
+# contains: passwords, passphrases, ssh key paths, config paths
+# NOT committed — one-time reference for the operator
+
+- name: CREDENTIALS GENERATE - WRITE SUMMARY.TXT
+  ansible.builtin.template:
+    src: summary.txt.j2
+    dest: "{{ credentials_output_dir }}/summary.txt"
+    mode: "0600"
+
+- name: CREDENTIALS GENERATE - DISPLAY SUMMARY LOCATION
+  ansible.builtin.debug:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+      credentials generated for {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}
+
+      full summary : {{ credentials_output_dir }}/summary.txt
+      passwords    : {{ credentials_output_dir }}/passwords.env
+      ssh keys     : {{ credentials_output_dir }}/ssh_keys/
+      #### #### #### #### #### #### #### #### #### #### ####

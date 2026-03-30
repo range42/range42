@@ -1,0 +1,73 @@
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+#                      VAULT AUTO-GENERATED VAULT FILE
+#                           !!! DO NOT COMMIT !!!
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+# Infrastructure: {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}
+# scenario      : {{ INFRASTRUCTURE_SCENARIO }}
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+
+###############################################################################
+# 1 - INFRASTRUCTURE INFORMATION
+###############################################################################
+
+infrastructure_codename: "{{ INFRASTRUCTURE_CODENAME }}"
+infrastructure_scenario: "{{ INFRASTRUCTURE_SCENARIO }}"
+
+proxmox_address: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}"
+proxmox_node: "{{ proxmox_node }}"
+
+proxmox_api_host: "{{ proxmox_api_host }}"
+proxmox_api_user: "{{ proxmox_api_user }}"
+proxmox_api_token_id: "{{ proxmox_api_token_id }}"
+proxmox_api_token_secret: "{{ proxmox_api_token_secret }}"
+
+proxmox_dest_iso_storage_name: "{{ infrastructure_proxmox_dest_iso_storage_name }}"
+proxmox_dest_vm_storage_name: "{{ infrastructure_proxmox_dest_vm_storage_name }}"
+proxmox_default_network_card_interface: "{{ infrastructure_proxmox_default_network_card_interface }}"
+
+
+###############################################################################
+# 2 - SSH KEY PATHS
+###############################################################################
+
+ssh_key_deployer_admin: "{{ credentials_output_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice"
+ssh_key_student_user: "{{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob"
+
+
+###############################################################################
+# 3 - SSH PUBLIC KEY CONTENT
+###############################################################################
+
+ssh_key_deployer_admin_pub_key: "{{ generated_admin_ssh_pubkey }}"
+ssh_key_student_user_pub_key: "{{ generated_trainee_ssh_pubkey }}"
+
+
+###############################################################################
+# 4 - CLOUD-INIT USERS CONFIGURATION
+###############################################################################
+
+# --- administrator vm (alice)
+default_admin_vm_ci_user: "{{ default_admin_vm_ci_user }}"
+default_admin_vm_ci_password: "{{ generated_admin_password }}"
+default_admin_vm_ci_ssh_key: "{{ generated_admin_ssh_pubkey }}"
+
+# --- student vm (bob)
+default_trainee_vm_ci_user: "{{ default_trainee_vm_ci_user }}"
+default_trainee_vm_ci_password: "{{ generated_trainee_password }}"
+default_trainee_vm_ci_ssh_key: "{{ generated_trainee_ssh_pubkey }}"
+
+
+###############################################################################
+# 5 - MISC
+###############################################################################
+
+deployer_cli_user_ssh_known_hosts: "/home/{{ DEPLOYER_CLI_USER }}/.ssh/known_hosts"
+
+infrastructure_tailscale_authkey: "{{ infrastructure_tailscale_authkey }}"
+infrastructure_tailscale_apikey: "{{ infrastructure_tailscale_apikey }}"
+infrastructure_wazuh_admin_password: "{{ generated_wazuh_password }}"

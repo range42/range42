@@ -1,0 +1,42 @@
+---
+################################################################################
+# credentials.vault — default variables
+################################################################################
+
+# infrastructure identification (required — must be overridden)
+INFRASTRUCTURE_CODENAME: "to_define"
+INFRASTRUCTURE_SCENARIO: "to_define"
+INFRASTRUCTURE_PROXMOX_ADDRESS: "to_define"
+
+# output directory for vault files (default_vault.yml + vault_pass.txt)
+# typically: ./config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/secrets
+vault_output_dir: "to_define"
+
+# directory where credentials.generate wrote the ssh keys
+# needed to read public keys and build key paths in the vault
+credentials_output_dir: "to_define"
+
+# deployer-cli user (for known_hosts path in vault)
+DEPLOYER_CLI_USER: "to_define"
+
+# cloud-init usernames (not secret — only the passwords and keys are)
+default_admin_vm_ci_user: "alice"
+default_trainee_vm_ci_user: "bob"
+
+# proxmox settings (come from inventory group_vars/all/vars.yml)
+proxmox_node: "pve"
+proxmox_api_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:8006"
+proxmox_api_user: "range42_api@pam"
+proxmox_api_token_id: "range42_api_token"
+proxmox_api_token_secret: ""
+infrastructure_proxmox_dest_iso_storage_name: "local"
+infrastructure_proxmox_dest_vm_storage_name: "local-lvm"
+infrastructure_proxmox_default_network_card_interface: "enp3s0"
+
+# tailscale keys (come from inventory vault.yml)
+infrastructure_tailscale_authkey: ""
+infrastructure_tailscale_apikey: ""
+
+# wazuh password (come from inventory vault.yml)
+# mapped to infrastructure_wazuh_admin_password in the generated vault
+WAZUH_PASSWORD: ""

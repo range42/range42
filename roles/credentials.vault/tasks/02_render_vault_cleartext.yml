@@ -1,0 +1,15 @@
+---
+# credentials vault - render vault file from template (cleartext, before encryption)
+#
+# the template produces a YAML file with all secrets needed by the playbooks
+# maps WAZUH_PASSWORD → infrastructure_wazuh_admin_password
+#
+# consumes facts set by credentials.generate:
+#   - generated_admin_password, generated_trainee_password, generated_wazuh_password
+#   - generated_admin_ssh_pubkey, generated_trainee_ssh_pubkey
+
+- name: CREDENTIALS VAULT - RENDER VAULT CLEARTEXT FROM TEMPLATE
+  ansible.builtin.template:
+    src: default_vault.yml.j2
+    dest: "{{ vault_output_dir }}/default_vault.yml"
+    mode: "0600"

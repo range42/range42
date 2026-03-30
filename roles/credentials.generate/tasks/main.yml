@@ -1,0 +1,42 @@
+---
+################################################################################
+# credentials.generate
+#
+# Generate SSH keys and passwords for a CODENAME-SCENARIO.
+#
+# Runs on: localhost (delegate_to: localhost, connection: local)
+# Idempotent: yes — skips key generation if files already exist
+#
+# Produces:
+#
+#   {{ credentials_output_dir }}/
+#   ├── ssh_keys/
+#   │   ├── jump_keys/
+#   │   │   ├── px.CODENAME-SCENARIO-ssh_cli.root (+.pub)
+#   │   │   └── px.CODENAME-SCENARIO-ssh_cli.jump_user (+.pub)
+#   │   ├── backend_keys/
+#   │   │   └── r42.CODENAME-SCENARIO-deployer-key_alice (+.pub)
+#   │   └── student_keys/
+#   │       ├── r42.CODENAME-SCENARIO-student-key_bob (+.pub)
+#   │       └── additionnal.students/
+#   │           └── r42.CODENAME-SCENARIO-student-key_bob_{1..N} (+.pub)
+#   ├── passwords.env         ← passphrases and passwords (plaintext reference)
+#   └── summary.txt           ← full recap: paths, passwords, config locations
+#
+# Variables consumed:
+#   - INFRASTRUCTURE_CODENAME       (required)
+#   - INFRASTRUCTURE_SCENARIO       (required)
+#   - credentials_output_dir        (required — base output path)
+#   - context_auto_generate_ssh_keys        (YES/NO, default YES)
+#   - context_auto_generate_vm_passwords    (YES/NO, default YES)
+#   - student_additionnal_keys_count        (int, default 5)
+#
+################################################################################
+
+- import_tasks: ./00_create_directories.yml
+- import_tasks: ./01_generate_passwords.yml
+- import_tasks: ./02_generate_ssh_keys.yml
+- import_tasks: ./03_generate_student_extra_keys.yml
+- import_tasks: ./04_write_passwords_env.yml
+- import_tasks: ./05_export_pubkeys_as_facts.yml
+- import_tasks: ./06_write_summary.yml
