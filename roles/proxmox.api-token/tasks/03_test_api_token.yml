@@ -1,0 +1,47 @@
+---
+# proxmox api-token - test api token via GET /api2/json/nodes
+#
+# skipped if token secret is not available (token existed but secret was lost)
+#
+# source: proxmox_api_call_test() lines 1167-1219
+
+- name: PROXMOX API-TOKEN - TEST API TOKEN
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}/api2/json/nodes"
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret_result }}"
+    validate_certs: false
+    status_code: 200
+  register: api_test_result
+  when: proxmox_api_token_secret_result is defined and proxmox_api_token_secret_result | length > 0
+
+- name: PROXMOX API-TOKEN - DISPLAY API TEST RESULT
+  ansible.builtin.debug:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+      proxmox api token is valid
+
+      host         : {{ proxmox_api_host }}
+      node(s) found: {{ api_test_result.json.data | length }}
+      #### #### #### #### #### #### #### #### #### #### ####
+  when: api_test_result is not skipped
+
+- name: PROXMOX API-TOKEN - SKIP API TEST (NO SECRET AVAILABLE)
+  ansible.builtin.debug:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+      api token test SKIPPED — no secret available
+
+      the token already exists on proxmox but the secret
+      is not in your configuration.
+
+      to fix: delete the token and re-run this playbook:
+
+        ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} \
+          "pveum user token remove {{ proxmox_api_user }} {{ proxmox_api_token_id }}"
+
+      #### #### #### #### #### #### #### #### #### #### ####
+  when: proxmox_api_token_secret_result is not defined or proxmox_api_token_secret_result | default('') | length == 0

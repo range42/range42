@@ -1,0 +1,28 @@
+---
+# proxmox init - fix locale on proxmox server (set C.UTF-8)
+#
+# uses ssh root@proxmox directly (same as original bash script)
+# delegate_to doesn't work well here because ansible connects as
+# the inventory user, not as root
+#
+# source: proxmox_fix_remote_locale() lines 946-979
+
+- name: PROXMOX INIT - SET /ETC/DEFAULT/LOCALE TO {{ proxmox_locale }}
+  ansible.builtin.shell: |
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} 'bash -c "
+      echo \"LANG={{ proxmox_locale }}\" > /etc/default/locale
+      echo \"LC_ALL={{ proxmox_locale }}\" >> /etc/default/locale
+      echo \"LANGUAGE={{ proxmox_locale }}\" >> /etc/default/locale
+    "'
+
+- name: PROXMOX INIT - RUN LOCALE-GEN {{ proxmox_locale }}
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "locale-gen {{ proxmox_locale }} 2>/dev/null || true"
+  changed_when: true
+
+- name: PROXMOX INIT - EXPORT LOCALE IN REMOTE SESSION
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "export LANG={{ proxmox_locale }} LC_ALL={{ proxmox_locale }} LANGUAGE={{ proxmox_locale }}"
+  changed_when: false

@@ -1,0 +1,18 @@
+---
+################################################################################
+# proxmox.jump-user — default variables
+################################################################################
+
+# proxmox server address (required)
+INFRASTRUCTURE_PROXMOX_ADDRESS: "to_define"
+
+# jump user configuration
+jump_on_proxmox: "YES"
+jump_user: "jump_user"
+jump_password: "to_define"
+jump_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}"
+jump_port: "22"
+
+# path to the generated jump SSH key (from credentials.generate)
+# typically: ./config/CODENAME-SCENARIO/ssh_keys/jump_keys/px.CODENAME-SCENARIO-ssh_cli.jump_user
+proxmox_jump_ssh_key_path: "to_define"

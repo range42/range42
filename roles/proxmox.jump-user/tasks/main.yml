@@ -1,0 +1,35 @@
+---
+################################################################################
+# proxmox.jump-user
+#
+# Create the SSH jump user on the Proxmox host and install its public key.
+#
+# Runs on: localhost (uses ssh commands via root@proxmox, not Ansible SSH)
+# Requires: proxmox.init completed (root SSH key access working)
+#
+# Source: prepare-infrastructure-workspace.sh
+#   - proxmox_load_jump_ssh_key()  (lines 807-941)
+#
+# Two modes:
+#   - jump_on_proxmox == YES : create Linux user via root SSH, upload key via root
+#   - jump_on_proxmox == NO  : assume user exists, use ssh-copy-id (interactive)
+#
+# What this role does:
+#   1. Create the jump user on Proxmox (useradd) if it doesn't exist
+#   2. Set the jump user password (chpasswd)
+#   3. Create ~jump_user/.ssh/ directory
+#   4. Install the jump public key in authorized_keys (idempotent — grep before append)
+#   5. Fix permissions on .ssh directory
+#
+# Variables consumed:
+#   - INFRASTRUCTURE_PROXMOX_ADDRESS   (required)
+#   - jump_on_proxmox                  (YES/NO, default YES)
+#   - jump_user                        (default: jump_user)
+#   - jump_password                    (required — initial password)
+#   - jump_host                        (default: same as PROXMOX_ADDRESS)
+#   - proxmox_jump_ssh_key_path        (required — path to the generated jump SSH key)
+#
+################################################################################
+
+- import_tasks: ./00_create_jump_user.yml
+- import_tasks: ./01_install_jump_pubkey.yml
