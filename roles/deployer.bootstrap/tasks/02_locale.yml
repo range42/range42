@@ -7,6 +7,7 @@
   community.general.locale_gen:
     name: en_US.UTF-8
     state: present
+  become: true
   when:
     - ansible_facts['os_family'] == 'Debian'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
@@ -16,6 +17,7 @@
     path: /etc/default/locale
     regexp: "^LANG="
     line: "LANG=en_US.UTF-8"
+  become: true
   when:
     - ansible_facts['os_family'] == 'Debian'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'

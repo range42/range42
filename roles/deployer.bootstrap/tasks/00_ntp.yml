@@ -12,6 +12,7 @@
       - ntp
       - ntpdate
     state: absent
+  become: true
   when:
     - ansible_facts['os_family'] == 'Debian'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
@@ -20,6 +21,7 @@
   ansible.builtin.apt:
     name: systemd-timesyncd
     state: present
+  become: true
   when:
     - ansible_facts['os_family'] == 'Debian'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
@@ -29,6 +31,7 @@
     name: systemd-timesyncd
     enabled: true
     state: started
+  become: true
   when:
     - ansible_facts['os_family'] == 'Debian'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
