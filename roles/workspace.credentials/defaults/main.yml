@@ -11,7 +11,8 @@ INFRASTRUCTURE_CODENAME: "to_define"
 INFRASTRUCTURE_SCENARIO: "to_define"
 
 # workspace directory (required)
-DEPLOYER_CLI__DST_CONFIG_DIR: "/home/{{ DEPLOYER_CLI_USER }}/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/{{ DEPLOYER_CLI_USER }}/range42.config"
+DEPLOYER_CLI__DST_CONFIG_DIR: "{{ DEPLOYER_CLI__DST_CONFIG_BASE_DIR }}/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
 
 # local source directories (required — where credentials.generate wrote the files)
 INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL: "to_define"

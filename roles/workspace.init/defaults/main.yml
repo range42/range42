@@ -8,7 +8,8 @@ DEPLOYER_CLI_USER: "to_define"
 
 # workspace directory (required)
 # typically: /home/DEPLOYER_CLI_USER/range42.config/CODENAME-SCENARIO
-DEPLOYER_CLI__DST_CONFIG_DIR: "/home/{{ DEPLOYER_CLI_USER }}/range42.config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/{{ DEPLOYER_CLI_USER }}/range42.config"
+DEPLOYER_CLI__DST_CONFIG_DIR: "{{ DEPLOYER_CLI__DST_CONFIG_BASE_DIR }}/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
 
 # infrastructure identification (required)
 INFRASTRUCTURE_CODENAME: "to_define"
