@@ -9,7 +9,7 @@ Terms used throughout the range42 project.
 A short name that identifies a Proxmox infrastructure (a physical server or cluster).
 Used in directory names, SSH config, key names.
 
-Examples: `hv-lab-01`, `ds-px-off-black-pxtesting`, `proxmox-home`
+Examples: `hv-lab-01`, `lab-proxmox-01`, `proxmox-home`
 
 One CODENAME = one Proxmox server. You can have multiple CODENAMEs if you manage
 multiple Proxmox servers.
