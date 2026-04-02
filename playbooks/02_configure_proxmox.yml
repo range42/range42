@@ -28,6 +28,35 @@
     proxmox_root_ssh_key_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
     proxmox_jump_ssh_key_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user"
 
+  # ensure ssh-agent is running for the entire play (all roles need it)
+  # if agent is already running (keychain, etc.), reuse it
+  # if not, start a temporary one for this playbook run
+  pre_tasks:
+    - name: CHECK SSH-AGENT IS RUNNING
+      ansible.builtin.command: ssh-add -l
+      register: _agent_check
+      changed_when: false
+      failed_when: false
+
+    - name: START SSH-AGENT IF NEEDED
+      ansible.builtin.shell: |
+        ssh-agent -s | head -2
+      register: _agent_start
+      when: _agent_check.rc == 2
+
+    - name: SET SSH_AUTH_SOCK FACT (NEW AGENT)
+      ansible.builtin.set_fact:
+        _ssh_auth_sock: "{{ _agent_start.stdout | regex_search('SSH_AUTH_SOCK=([^;]+)', '\\1') | first }}"
+      when: _agent_check.rc == 2
+
+    - name: SET SSH_AUTH_SOCK FACT (EXISTING AGENT)
+      ansible.builtin.set_fact:
+        _ssh_auth_sock: "{{ lookup('env', 'SSH_AUTH_SOCK') }}"
+      when: _agent_check.rc != 2
+
+  environment:
+    SSH_AUTH_SOCK: "{{ _ssh_auth_sock | default(lookup('env', 'SSH_AUTH_SOCK')) }}"
+
   roles:
     - proxmox.init
     - proxmox.jump-user
