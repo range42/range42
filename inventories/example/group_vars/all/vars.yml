@@ -20,7 +20,7 @@
 #
 # examples:
 #   "hv-lab-01"                        — simple lab server
-#   "ds-px-off-black-pxtesting"        — detailed naming (type-platform-access-provider)
+#   "lab-proxmox-01"                   — detailed naming
 #   "proxmox-home"                     — home server
 #
 INFRASTRUCTURE_CODENAME: "to_define"
@@ -120,9 +120,20 @@ jump_port: "22"
 #   DEPLOYER_CLI_USER: "operator"
 #   deployer_cli_ip: "192.168.1.50"
 #
-DEPLOYER_CLI_USER: "grml"
+DEPLOYER_CLI_USER: "your_deployer_cli_username"
 deployer_cli_ip: "127.0.0.1"
 deployer_cli_ssh_port: "22"
+
+# Where range42 git repos are cloned on the deployer-cli.
+# Default: ~/range42/
+#
+DEPLOYER_CLI__DST_GIT_DIR: "/home/your_deployer_cli_username/range42/"
+
+# Where workspace configs are stored on the deployer-cli.
+# Default: ~/range42.config/
+# Each workspace is a subdirectory: <config_dir>/<codename>-<scenario>/
+#
+DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/your_deployer_cli_username/range42.config"
 
 
 #### WORKSTATION (LOCAL) ####
@@ -131,7 +142,7 @@ deployer_cli_ssh_port: "22"
 # This is used by prepare scripts to configure your local SSH client.
 # Default: ~/.ssh
 #
-ssh_client__dst_config_dir: "/home/grml/.ssh"
+ssh_client__dst_config_dir: "/home/your_deployer_cli_username/.ssh"
 
 
 #### GIT ####

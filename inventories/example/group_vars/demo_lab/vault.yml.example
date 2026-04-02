@@ -62,4 +62,4 @@ WAZUH_PASSWORD: "REPLACE_ME"
 #### MISC ####
 
 # deployer-cli known_hosts path (not really secret, but stored in vault historically)
-deployer_cli_user_ssh_known_hosts: "/home/grml/.ssh/known_hosts"
+deployer_cli_user_ssh_known_hosts: "/home/your_deployer_cli_username/.ssh/known_hosts"
