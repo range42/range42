@@ -43,7 +43,7 @@
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:/tmp/inject_nat_rules.sh &&
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} "chmod +x /tmp/inject_nat_rules.sh"
 
-- name: PROXMOX INIT - RENDER NAT RULES FOR EACH BRIDGE
+- name: PROXMOX INIT - RENDER NAT RULES FOR ENABLED BRIDGES
   ansible.builtin.template:
     src: bridge_nat_rules.j2
     dest: "/tmp/range42_nat_{{ item.name }}.txt"
@@ -52,13 +52,19 @@
     bridge_ip: "{{ item.ip }}"
   loop: "{{ range42_lab_bridges | selectattr('nat') | list }}"
 
-- name: PROXMOX INIT - UPLOAD AND INJECT NAT RULES
+- name: PROXMOX INIT - UPLOAD AND INJECT NAT (ENABLED BRIDGES)
   ansible.builtin.shell: >
     scp /tmp/range42_nat_{{ item.name }}.txt
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:/tmp/range42_nat_{{ item.name }}.txt &&
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "/tmp/inject_nat_rules.sh {{ item.name }} /tmp/range42_nat_{{ item.name }}.txt"
   loop: "{{ range42_lab_bridges | selectattr('nat') | list }}"
+
+- name: PROXMOX INIT - REMOVE NAT (DISABLED BRIDGES)
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "/tmp/inject_nat_rules.sh {{ item.name }} REMOVE"
+  loop: "{{ range42_lab_bridges | rejectattr('nat') | list }}"
 
 - name: PROXMOX INIT - CLEAN UP LOCAL NAT TEMP FILES
   ansible.builtin.file:

@@ -26,7 +26,7 @@ try:
     from textual.widget import Widget
     from textual.widgets import (
         Button, DataTable, Footer, Header,
-        Input, Label, LoadingIndicator, RichLog, Static, Rule,
+        Input, Label, LoadingIndicator, RichLog, Static, Rule, Switch,
     )
 
     # themes — hex-only, independent of terminal palette
@@ -149,6 +149,8 @@ class _S:
     preflight_ok    = False
     deploy_now      = False
     install_dir     = os.path.expanduser("~/range42")
+    nat_interface   = "vmbr0"
+    nat_bridges     = {f"vmbr{i}": True for i in range(140, 152)}
 S = _S()
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
@@ -624,7 +626,7 @@ class StepNode(Step):
     def handle_next(self, app):
         node = self.query_one("#i-node", Input).value.strip()
         S.proxmox_node = node or "pve"
-        app._go(StepProxmoxCheck())
+        app._go(StepRootPassword())
 
     def handle_back(self, app): app._go(StepAddress())
 
@@ -679,8 +681,147 @@ class StepProxmoxCheck(Step):
         btn_back.display  = True
         btn_back.disabled = False
 
-    def handle_next(self, app): app._go(StepScenario())
-    def handle_back(self, app): app._go(StepNode())
+    def handle_next(self, app): app._go(StepAutoDetectNAT())
+    def handle_back(self, app): app._go(StepSudoPassword())
+
+
+# ── step 2c — auto-detect NAT interface ──────────────────────────────────────
+class StepAutoDetectNAT(Step):
+    STEP_NUM  = 2
+    SHOW_BACK = True
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  NAT outbound interface", classes="title")
+        yield Rule()
+        yield Static(
+            "  Detecting the outbound network interface on your Proxmox server.\n"
+            "  This is the interface VMs will use for internet access (NAT).\n",
+            classes="muted")
+        yield LoadingIndicator(id="nat-spin")
+        yield Label("", id="nat-result")
+        yield Static("")
+        yield Label("  NAT interface:", classes="muted")
+        yield Input(value=S.nat_interface, placeholder="vmbr0", id="i-nat-iface")
+
+    def on_mount(self):
+        self.app.query_one("#btn-next", Button).disabled = True
+        self._detect()
+
+    @work(thread=True)
+    def _detect(self):
+        detected = "vmbr0"
+        internet_ok = False
+        try:
+            if S.proxmox_root_pw:
+                env = os.environ.copy()
+                env["SSHPASS"] = S.proxmox_root_pw
+                env.pop("SSH_AUTH_SOCK", None)
+                r = subprocess.run(
+                    ["sshpass", "-e", "ssh",
+                     "-o", "StrictHostKeyChecking=accept-new",
+                     "-o", "ConnectTimeout=5",
+                     f"root@{S.proxmox_address}",
+                     "ip route | grep default | awk '{print $5}'"],
+                    env=env, capture_output=True, text=True, timeout=10)
+                if r.returncode == 0 and r.stdout.strip():
+                    detected = r.stdout.strip()
+                # test internet via detected interface
+                r2 = subprocess.run(
+                    ["sshpass", "-e", "ssh",
+                     "-o", "StrictHostKeyChecking=accept-new",
+                     "-o", "ConnectTimeout=5",
+                     f"root@{S.proxmox_address}",
+                     "ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 && echo OK || echo FAIL"],
+                    env=env, capture_output=True, text=True, timeout=15)
+                internet_ok = "OK" in r2.stdout
+            else:
+                # no root password — can't SSH, use default
+                detected = "vmbr0"
+        except Exception:
+            pass
+
+        S.nat_interface = detected
+
+        def _show():
+            self.query_one("#nat-spin").display = False
+            r = self.query_one("#nat-result", Label)
+            self.query_one("#i-nat-iface", Input).value = detected
+            if internet_ok:
+                r.update(
+                    f"\n  [bold #4ade80]✓[/bold #4ade80]  detected: {detected} — internet reachable")
+            elif S.proxmox_root_pw:
+                r.update(
+                    f"\n  [bold #fbbf24]![/bold #fbbf24]  detected: {detected} — could not verify internet\n"
+                    "  NAT may need manual configuration after deployment.")
+            else:
+                r.update(
+                    f"\n  [bold #fbbf24]![/bold #fbbf24]  no root password — using default: {detected}\n"
+                    "  Auto-detection requires root SSH access.")
+            self.app.query_one("#btn-next", Button).disabled = False
+        self.app.call_from_thread(_show)
+
+    def handle_next(self, app):
+        S.nat_interface = self.query_one("#i-nat-iface", Input).value.strip() or "vmbr0"
+        app._go(StepNATBridges())
+
+    def handle_back(self, app):
+        app._go(StepProxmoxCheck())
+
+
+# ── step 2d — NAT per bridge ─────────────────────────────────────────────────
+class StepNATBridges(Step):
+    STEP_NUM  = 2
+    SHOW_BACK = True
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  NAT per bridge", classes="title")
+        yield Rule()
+        yield Static(
+            "  Enable or disable outbound NAT (internet access) per bridge.\n"
+            "  Click a bridge to toggle NAT on/off.\n",
+            classes="muted")
+        yield Horizontal(id="nat-columns")
+
+    def _btn_label(self, name, enabled):
+        idx = name.replace("vmbr", "")
+        status = "active " if enabled else "disabled"
+        return f" {status}  {name}  .{idx}.0/24"
+
+    def on_mount(self):
+        cols = self.query_one("#nat-columns")
+        bridges = sorted(S.nat_bridges.keys())
+        # 3 columns of 4
+        for col_idx in range(3):
+            col = Vertical()
+            for row_idx in range(4):
+                i = col_idx * 4 + row_idx
+                if i < len(bridges):
+                    name = bridges[i]
+                    enabled = S.nat_bridges[name]
+                    btn = Button(
+                        self._btn_label(name, enabled),
+                        id=f"nat-{name}",
+                        classes="-ok" if enabled else "-danger")
+                    col.compose_add_child(btn)
+            cols.mount(col)
+
+    @on(Button.Pressed)
+    def on_toggle(self, event: Button.Pressed):
+        bid = event.button.id or ""
+        if not bid.startswith("nat-"):
+            return
+        name = bid.replace("nat-", "")
+        S.nat_bridges[name] = not S.nat_bridges[name]
+        enabled = S.nat_bridges[name]
+        event.button.label = self._btn_label(name, enabled)
+        event.button.remove_class("-ok", "-danger")
+        event.button.add_class("-ok" if enabled else "-danger")
+
+    def handle_next(self, app):
+        app._go(StepScenario())
+
+    def handle_back(self, app):
+        app._go(StepAutoDetectNAT())
 
 
 # ── step 3 — scenario, deployer, network (split) ─────────────────────────────
@@ -704,7 +845,7 @@ class StepScenario(Step):
         S.scenario = self.query_one("#i-scenario", Input).value.strip() or "demo_lab"
         app._go(StepDeployerUser())
 
-    def handle_back(self, app): app._go(StepProxmoxCheck())
+    def handle_back(self, app): app._go(StepNATBridges())
 
 
 class StepDeployerIP(Step):
@@ -743,31 +884,11 @@ class StepDeployerUser(Step):
 
     def handle_next(self, app):
         S.deployer_user = self.query_one("#i-duser", Input).value.strip() or os.environ.get("USER", "")
-        app._go(StepNetwork())
+        S.deployer_cli_pw = S.sudo_pw  # reuse sudo password for deployer SSH
+        app._go(StepReview())
 
     def handle_back(self, app): app._go(StepDeployerIP())
 
-
-class StepNetwork(Step):
-    STEP_NUM = 3
-
-    def compose(self) -> ComposeResult:
-        yield Label("◆  step 2/3  —  network interface", classes="title")
-        yield Rule()
-        yield Static(
-            "  Physical network interface on the Proxmox server.\n"
-            "  Used for VM networking (NAT bridges).\n\n"
-            "  Check with: ip link show on the Proxmox host.\n"
-            "  Common values: enp3s0, eno1, eth0",
-            classes="muted")
-        yield Static("")
-        yield Input(value=S.network_iface, placeholder="enp3s0", id="i-iface")
-
-    def handle_next(self, app):
-        S.network_iface = self.query_one("#i-iface", Input).value.strip() or "enp3s0"
-        app._go(StepRootPassword())
-
-    def handle_back(self, app): app._go(StepDeployerUser())
 
 
 # ── step 4 — passwords (split) ──────────────────────────────────────────────
@@ -833,7 +954,7 @@ class StepRootPassword(Step):
                     "✗ could not authenticate — check password or server access")
         self.app.call_from_thread(_show)
 
-    def handle_back(self, app): app._go(StepNetwork())
+    def handle_back(self, app): app._go(StepNode())
 
 
 class StepSudoPassword(Step):
@@ -858,15 +979,12 @@ class StepSudoPassword(Step):
     def handle_next(self, app):
         pw = self.query_one("#i-sudopw", Input).value
         S.sudo_pw = pw
-        if pw and S.deployer_ip in ("127.0.0.1", "localhost"):
+        if pw:
             self.query_one("#spin-sudopw").display = True
             self.query_one("#e-sudopw", Label).update("")
             self._test_sudo(pw)
-        elif S.deployer_ip not in ("127.0.0.1", "localhost"):
-            app._go(StepDeployerPassword())
         else:
-            S.deployer_cli_pw = ""
-            app._go(StepReview())
+            app._go(StepProxmoxCheck())
 
     @work(thread=True)
     def _test_sudo(self, pw):
@@ -883,11 +1001,7 @@ class StepSudoPassword(Step):
             self.query_one("#spin-sudopw").display = False
             if ok:
                 self.query_one("#e-sudopw", Label).update("")
-                if S.deployer_ip not in ("127.0.0.1", "localhost"):
-                    self.app._go(StepDeployerPassword())
-                else:
-                    S.deployer_cli_pw = ""
-                    self.app._go(StepReview())
+                self.app._go(StepProxmoxCheck())
             else:
                 self.query_one("#e-sudopw", Label).update(
                     "✗ sudo authentication failed — check password")
@@ -914,7 +1028,7 @@ class StepDeployerPassword(Step):
         S.deployer_cli_pw = self.query_one("#i-clipw", Input).value
         app._go(StepReview())
 
-    def handle_back(self, app): app._go(StepSudoPassword())
+    def handle_back(self, app): app._go(StepDeployerUser())
 
 
 # ── step 5 — review & confirm ─────────────────────────────────────────────────
@@ -947,7 +1061,8 @@ class StepReview(Step):
             ("scenario",        S.scenario),
             ("deployer user",   S.deployer_user),
             ("deployer IP",     S.deployer_ip),
-            ("network iface",   S.network_iface),
+            ("NAT interface",   S.nat_interface),
+            ("NAT bridges",     ", ".join(n for n, v in sorted(S.nat_bridges.items()) if v)),
             ("root password",   pw),
             ("sudo password",   spw),
             ("deployer access", dpw),
@@ -955,7 +1070,7 @@ class StepReview(Step):
             log.write(f"  [bold #268bd2]{label:20}[/bold #268bd2]  [bold #e2e8f0]{value}[/bold #e2e8f0]")
 
     def handle_next(self, app): app._go(StepDeploy())
-    def handle_back(self, app): app._go(StepSudoPassword())
+    def handle_back(self, app): app._go(StepDeployerUser())
 
 
 # ── step 6 — create inventory + optional deploy ───────────────────────────────
@@ -1051,8 +1166,8 @@ class StepDeploy(Step):
             ('INFRASTRUCTURE_PROXMOX_ADDRESS: "to_define"', f'INFRASTRUCTURE_PROXMOX_ADDRESS: "{S.proxmox_address}"'),
             ('proxmox_node: "to_define"',                   f'proxmox_node: "{S.proxmox_node}"'),
             ('proxmox_api_host: "to_define"',               f'proxmox_api_host: "{S.proxmox_address}:8006"'),
-            ('infrastructure_proxmox_default_network_card_interface: "enp3s0"',
-             f'infrastructure_proxmox_default_network_card_interface: "{S.network_iface}"'),
+            ('infrastructure_proxmox_default_network_card_interface: "vmbr0"',
+             f'infrastructure_proxmox_default_network_card_interface: "{S.nat_interface}"'),
             ('DEPLOYER_CLI_USER: "your_deployer_cli_username"', f'DEPLOYER_CLI_USER: "{S.deployer_user}"'),
             ('deployer_cli_ip: "127.0.0.1"',   f'deployer_cli_ip: "{S.deployer_ip}"'),
             ('DEPLOYER_CLI__DST_GIT_DIR: "/home/your_deployer_cli_username/range42/"',
@@ -1063,8 +1178,18 @@ class StepDeploy(Step):
              f'ssh_client__dst_config_dir: "/home/{S.deployer_user}/.ssh"'),
         ]:
             sed_f(vars_, old, new)
+        # inject range42_lab_bridges with NAT toggles
+        bridges_yaml = "\n\n# lab bridges NAT configuration (managed by wizard)\nrange42_lab_bridges:\n"
+        for name in sorted(S.nat_bridges.keys()):
+            idx = name.replace("vmbr", "")
+            ip = f"192.168.{idx}.1"
+            nat = "true" if S.nat_bridges[name] else "false"
+            bridges_yaml += f'  - {{ name: "{name}", ip: "{ip}", nat: {nat} }}\n'
+        with open(vars_, "a") as f:
+            f.write(bridges_yaml)
+
         log_row("PASS", "configured vars.yml",
-                f"codename={S.codename}  node={S.proxmox_node}  iface={S.network_iface}")
+                f"codename={S.codename}  node={S.proxmox_node}  nat={S.nat_interface}")
         time.sleep(0.1)
 
         if S.scenario != "demo_lab" and (dest/"group_vars"/"demo_lab").exists():
