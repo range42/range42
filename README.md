@@ -129,7 +129,6 @@ range42/
 ├── inventories/
 │   └── example/              — copy and customize for your infra
 ├── roles/                    — 11 modular roles
-├── utils/                    — range42-context and range42-workspace
 └── config/                   — generated credentials (not committed)
 ```
 
