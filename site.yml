@@ -20,6 +20,14 @@
 #
 ################################################################################
 
+# validate required variables before anything else
+- name: 00 validate configuration
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - configuration.validate
+
 - import_playbook: playbooks/01_generate_credentials.yml
 - import_playbook: playbooks/02_configure_proxmox.yml
 - import_playbook: playbooks/03_deploy_deployer_cli.yml

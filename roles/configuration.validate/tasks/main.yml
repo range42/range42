@@ -1,0 +1,38 @@
+---
+# configuration.validate — fail early if required variables are not configured
+#
+# runs at the beginning of site.yml before any other role
+# catches "to_define" placeholders left in the inventory
+#
+# this saves users from cryptic failures 10 minutes into the deployment
+
+- name: VALIDATE - CHECK REQUIRED VARIABLES
+  ansible.builtin.assert:
+    that:
+      - item.value != "to_define"
+      - item.value != "your_deployer_cli_username"
+    fail_msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+
+      MISSING CONFIGURATION: {{ item.name }}
+
+      The variable "{{ item.name }}" has not been configured.
+      Please edit your inventory file:
+
+        inventories/<your-codename>/group_vars/all/vars.yml
+
+      Or run the wizard:
+
+        python3 range42-init.py
+
+      #### #### #### #### #### #### #### #### #### #### ####
+    quiet: true
+  loop:
+    - { name: "INFRASTRUCTURE_CODENAME",        value: "{{ INFRASTRUCTURE_CODENAME | default('to_define') }}" }
+    - { name: "INFRASTRUCTURE_SCENARIO",         value: "{{ INFRASTRUCTURE_SCENARIO | default('to_define') }}" }
+    - { name: "INFRASTRUCTURE_PROXMOX_ADDRESS",  value: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS | default('to_define') }}" }
+    - { name: "proxmox_node",                    value: "{{ proxmox_node | default('to_define') }}" }
+    - { name: "DEPLOYER_CLI_USER",               value: "{{ DEPLOYER_CLI_USER | default('your_deployer_cli_username') }}" }
+  loop_control:
+    label: "{{ item.name }}"
