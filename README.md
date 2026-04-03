@@ -6,6 +6,13 @@ New to range42? See the [GLOSSARY](GLOSSARY.md) for terminology (codename, scena
 
 # QUICK START
 
+## Supported platforms
+
+The wizard has been tested on:
+- Ubuntu Desktop LTS (24.04)
+- Ubuntu Server LTS (24.04)
+- Debian 13.x LTS (netinstall)
+
 ## Option A — Setup wizard (recommended)
 
 The wizard guides you through the configuration and can deploy automatically:

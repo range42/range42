@@ -16,6 +16,8 @@
   become: true
   become_user: "{{ DEPLOYER_CLI_USER }}"
   loop:
+    - { name: range42,
+        repo: "https://github.com/range42/range42.git" }
     - { name: range42-ansible_roles-proxmox_controller,
         repo: "https://github.com/range42/range42-ansible_roles-proxmox_controller.git" }
     - { name: range42-catalog,

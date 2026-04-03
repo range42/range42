@@ -24,11 +24,11 @@
 RANGE42_SSH_CONFIG_FILE="$HOME/.ssh/config"
 RANGE42_SSH_BEGIN_MARK='^#### BEGIN RANGE42 INCLUDE'
 RANGE42_SSH_END_MARK='^#### END RANGE42 INCLUDE'
-RANGE42_CONFIG_BASE_DIR="$HOME/range42.config"
+RANGE42_CONFIG_BASE_DIR="${RANGE42_CONFIG_BASE_DIR:-$HOME/range42.config}"
 
 # banner on load
 _r42_last_workspace="$(sed -n "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/{/^[[:space:]]*Include /{s@.*config_range42-@@;s@[[:space:]].*@@;p;}}" "$RANGE42_SSH_CONFIG_FILE" 2>/dev/null | head -1)"
-printf "\033[0;90m  range42 context loaded — type \033[0;37mrange42-context help\033[0;90m for commands\033[0m\n"
+printf "\n\033[1;32m  deployer-cli ready\033[0m\n"
 if [[ -n "$_r42_last_workspace" ]]; then
     # split CODENAME-SCENARIO: scenario is after the last known separator
     local _last_scenario _last_codename
@@ -45,10 +45,13 @@ if [[ -n "$_r42_last_workspace" ]]; then
         fi
     done
     if [[ -n "$_last_codename" && -n "$_last_scenario" ]]; then
-        printf "\033[0;90m  last workspace: \033[0;37mrange42-context use %s %s\033[0m\n" "$_last_codename" "$_last_scenario"
+        printf "\n\033[0;90m  INFO  load previous workspace:\033[0m\n"
+        printf "\033[0;37m        range42-context use %s %s\033[0m\n" "$_last_codename" "$_last_scenario"
     fi
 fi
 unset _r42_last_workspace _last_scenario _last_codename
+printf "\n\033[0;90m  INFO  all commands:\033[0m\n"
+printf "\033[0;37m        range42-context help\033[0m\n\n"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # display helpers
@@ -140,11 +143,30 @@ _r42_list() {
     current="$(_r42_current 2>/dev/null)"
 
     local target
+    local _idx=0
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+
+    echo "  ──────────────────────────────────────────────────────────────"
+
     for target in ${(f)all_targets}; do
+        _idx=$((_idx + 1))
+
+        # split workspace name into codename + scenario
+        local _scenario _codename _use_cmd=""
+        for _pd in "${git_dir%/}/range42-playbooks/scenarios"/*/; do
+            _scenario="$(basename "$_pd")"
+            if [[ "$target" == *"-${_scenario}" ]]; then
+                _codename="${target%-${_scenario}}"
+                _use_cmd="range42-context use ${_codename} ${_scenario}"
+                break
+            fi
+        done
+
         if [[ "$target" == "$current" ]]; then
-            _r42_print_check "$target  (active)"
+            printf "  \033[1;32m● [%d]  %-28s  %s\033[0m\n" "$_idx" "$target" "$_use_cmd"
+            echo ""
         else
-            _r42_print_step "$target"
+            printf "  \033[0;90m○ [%d]  %-28s  %s\033[0m\n" "$_idx" "$target" "$_use_cmd"
         fi
     done
 
@@ -257,6 +279,21 @@ _r42_use() {
         _r42_print_step "sourced $sourced_file"
     else
         _r42_print_warning "sourced_range42.sh not found in $config_dir"
+    fi
+
+    #### update secrets symlinks in git repos to point to the active workspace
+
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+    local devkit_secrets="${git_dir%/}/range42-ansible_roles-debug-devkit/secrets"
+    local playbooks_secrets="${git_dir%/}/range42-playbooks/scenarios/${scenario}/secrets"
+
+    if [[ -d "${git_dir%/}/range42-ansible_roles-debug-devkit" ]]; then
+        ln -sfn "$config_dir/secrets" "$devkit_secrets"
+        _r42_print_step "updated secrets symlink in devkit → $target"
+    fi
+    if [[ -d "${git_dir%/}/range42-playbooks/scenarios/${scenario}" ]]; then
+        ln -sfn "$config_dir/secrets" "$playbooks_secrets"
+        _r42_print_step "updated secrets symlink in playbooks → $target"
     fi
 
     #### export vault password file path (T46b)
@@ -528,11 +565,12 @@ _r42_deploy() {
         return 1
     fi
 
-    local setup_script
-    setup_script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.setup.sh" | head -1)
+    local scenario_name
+    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
+    local setup_script="$(readlink -f "$scenario_dir")/${scenario_name}.setup.sh"
 
-    if [[ -z "$setup_script" ]]; then
-        _r42_print_fail "no setup script found in scenario directory"
+    if [[ ! -f "$setup_script" ]]; then
+        _r42_print_fail "setup script not found: $setup_script"
         return 1
     fi
 
@@ -560,11 +598,12 @@ _r42_deploy_vms() {
         return 1
     fi
 
-    local script
-    script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.setup_vms_only.sh" | head -1)
+    local scenario_name
+    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
+    local script="$(readlink -f "$scenario_dir")/${scenario_name}.setup_vms_only.sh"
 
-    if [[ -z "$script" ]]; then
-        _r42_print_fail "no setup_vms_only.sh script found in scenario directory"
+    if [[ ! -f "$script" ]]; then
+        _r42_print_fail "script not found: $script"
         return 1
     fi
 
@@ -592,11 +631,12 @@ _r42_delete() {
         return 1
     fi
 
-    local delete_script
-    delete_script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.delete_all.sh" | head -1)
+    local scenario_name
+    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
+    local delete_script="$(readlink -f "$scenario_dir")/${scenario_name}.delete_all.sh"
 
-    if [[ -z "$delete_script" ]]; then
-        _r42_print_fail "no delete script found in scenario directory"
+    if [[ ! -f "$delete_script" ]]; then
+        _r42_print_fail "script not found: $delete_script"
         return 1
     fi
 
@@ -625,11 +665,12 @@ _r42_reset() {
         return 1
     fi
 
-    local reset_script
-    reset_script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.reset.setup.sh" | head -1)
+    local scenario_name
+    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
+    local reset_script="$(readlink -f "$scenario_dir")/${scenario_name}.reset.setup.sh"
 
-    if [[ -z "$reset_script" ]]; then
-        _r42_print_fail "no reset script found in scenario directory"
+    if [[ ! -f "$reset_script" ]]; then
+        _r42_print_fail "script not found: $reset_script"
         return 1
     fi
 
@@ -658,11 +699,12 @@ _r42_delete_vms() {
         return 1
     fi
 
-    local script
-    script=$(find "$(readlink -f "$scenario_dir")" -maxdepth 1 -name "*.delete_vms_only.sh" | head -1)
+    local scenario_name
+    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
+    local script="$(readlink -f "$scenario_dir")/${scenario_name}.delete_vms_only.sh"
 
-    if [[ -z "$script" ]]; then
-        _r42_print_fail "no delete_vms_only.sh script found in scenario directory"
+    if [[ ! -f "$script" ]]; then
+        _r42_print_fail "script not found: $script"
         return 1
     fi
 
@@ -678,10 +720,25 @@ _r42_delete_vms() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_init() {
-    local init_script="$HOME/range42/range42/range42-init.py"
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+    local init_script=""
+    local search_paths=(
+        "${git_dir%/}/range42/range42-init.py"
+        "${git_dir%/}/range42-init.py"
+    )
+    for p in "${search_paths[@]}"; do
+        if [[ -f "$p" ]]; then
+            init_script="$p"
+            break
+        fi
+    done
 
-    if [[ ! -f "$init_script" ]]; then
-        _r42_print_fail "init script not found: $init_script"
+    if [[ -z "$init_script" ]]; then
+        _r42_print_fail "range42-init.py not found"
+        _r42_print_warning "searched:"
+        for p in "${search_paths[@]}"; do
+            _r42_print_warning "  $p"
+        done
         return 1
     fi
 

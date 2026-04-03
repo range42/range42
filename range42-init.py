@@ -6,12 +6,15 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import os, re, shutil, subprocess, ssl, sys, urllib.request
+import os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+from pathlib import Path
+
+# make wizard/ importable
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
 # force truecolor — SSH doesn't forward COLORTERM, causing Textual
 # to fall back to 16-color ANSI palette (ugly DOS blue)
 os.environ.setdefault("COLORTERM", "truecolor")
-from pathlib import Path
 
 # check textual dependency before importing
 try:
@@ -50,13 +53,65 @@ except ImportError:
     _pip = _venv / "bin" / "pip"
     _python = _venv / "bin" / "python3"
 
+    # check if existing venv is healthy (python can import sys)
+    if _venv.exists() and _python.exists():
+        _test = subprocess.run(
+            [str(_python), "-c", "import sys; print(sys.executable)"],
+            capture_output=True, text=True,
+        )
+        if _test.returncode != 0:
+            # venv is broken (missing ensurepip / python3-venv) — remove and retry
+            import shutil as _sh
+            _sh.rmtree(str(_venv), ignore_errors=True)
+
     if not _venv.exists():
         print()
         print("  \033[1;33mINFO\033[0m  textual library not found — creating local venv...")
         print()
-        import venv
-        venv.create(str(_venv), with_pip=True)
-        subprocess.run([str(_pip), "install", "--quiet", "textual"], check=False)
+        try:
+            import ensurepip  # noqa: F401 — test availability before venv creation
+        except ImportError:
+            print("  \033[1;31mFAIL\033[0m  python3-venv is not installed")
+            print()
+            print("  fix:  sudo apt-get install python3-venv")
+            print("  then: python3 range42-init.py")
+            print()
+            sys.exit(1)
+        try:
+            import venv
+            venv.create(str(_venv), with_pip=True)
+        except Exception:
+            import shutil as _sh
+            _sh.rmtree(str(_venv), ignore_errors=True)
+            print("  \033[1;31mFAIL\033[0m  could not create python venv")
+            print()
+            print("  fix:  sudo apt-get install python3-venv")
+            print("  then: python3 range42-init.py")
+            print()
+            sys.exit(1)
+        # verify venv is healthy after creation
+        _test = subprocess.run(
+            [str(_pip), "--version"], capture_output=True, text=True,
+        )
+        if _test.returncode != 0:
+            import shutil as _sh
+            _sh.rmtree(str(_venv), ignore_errors=True)
+            print("  \033[1;31mFAIL\033[0m  venv created but pip is broken (missing python3-venv?)")
+            print()
+            print("  fix:  sudo apt install python3-venv")
+            print("  then: python3 range42-init.py")
+            print()
+            sys.exit(1)
+        print("  \033[1;33mINFO\033[0m  installing textual (pip install textual)...")
+        print("        do NOT use: apt install python3-textual (version too old)")
+        print()
+        r = subprocess.run([str(_pip), "install", "--quiet", "textual"], check=False)
+        if r.returncode != 0:
+            print("  \033[1;31mFAIL\033[0m  pip install textual failed")
+            print()
+            print("  fix:  " + str(_pip) + " install textual")
+            print()
+            sys.exit(1)
 
     if _python.exists():
         # re-exec with the venv python
@@ -69,8 +124,7 @@ except ImportError:
         print("    \033[36mpython3 -m venv .venv-wizard && .venv-wizard/bin/pip install textual\033[0m")
         print("    \033[36m.venv-wizard/bin/python3 range42-init.py\033[0m")
         sys.exit(1)
-    print()
-    sys.exit(1)
+
 from textual import work, on
 from rich.text import Text
 
@@ -94,7 +148,11 @@ class _S:
     setup_mode      = "new"
     preflight_ok    = False
     deploy_now      = False
+    install_dir     = os.path.expanduser("~/range42")
 S = _S()
+
+# ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
+from wizard.preflight import run_all_checks, get_apt_install_command
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def cmd_ok(c): return bool(shutil.which(c))
@@ -278,44 +336,12 @@ class StepPreflight(Step):
     @work(thread=True)
     def check(self):
         import time
-        checks = [
-            ("ansible",          "ansible",          "sudo apt install ansible",        True),
-            ("ansible-playbook", "ansible-playbook", None,                              True),
-            ("ansible-vault",    "ansible-vault",    None,                              True),
-            ("ssh-keygen",       "ssh-keygen",       "sudo apt install openssh-client", True),
-            ("sshpass",          "sshpass",          "sudo apt install sshpass",        False),
-            ("git",              "git",              "sudo apt install git",            True),
-        ]
-        fail = False
-        for label, cmd, fix, required in checks:
-            ok  = cmd_ok(cmd)
-            ver = ""
-            if ok and cmd == "ansible":
-                _, o, _ = run("ansible", "--version"); ver = o.splitlines()[0] if o else ""
-            elif ok and cmd == "git":
-                _, o, _ = run("git", "--version"); ver = o.strip().split()[-1] if o else ""
-            if ok:
-                badge, kv = "PASS", f"  {ver}" if ver else ""
-            elif required:
-                badge, kv = "FAIL", f"  fix: {fix}" if fix else ""; fail = True
-            else:
-                badge, kv = "WARN", f"  fix: {fix}" if fix else ""
-            self.app.call_from_thread(self._row, badge, label, kv)
+        results, fail = run_all_checks(EXAMPLE_DIR)
+        for r in results:
+            self.app.call_from_thread(self._row, r["badge"], r["label"], r["detail"])
             time.sleep(0.12)
 
-        for name in ("community.crypto", "community.general"):
-            ok    = col_ok(name)
-            badge = "PASS" if ok else "WARN"
-            kv    = f"  fix: ansible-galaxy collection install {name}" if not ok else ""
-            self.app.call_from_thread(self._row, badge, f"collection {name}", kv)
-            time.sleep(0.12)
-
-        ok = EXAMPLE_DIR.exists()
-        self.app.call_from_thread(
-            self._row, "PASS" if ok else "FAIL", "example inventory",
-            "" if ok else f"  path: {EXAMPLE_DIR}")
-        if not ok: fail = True
-
+        self._apt_cmd = get_apt_install_command(results)
         S.preflight_ok = not fail
         self.app.call_from_thread(self._done, fail)
 
@@ -350,10 +376,102 @@ class StepPreflight(Step):
         if fail:
             btn.label = "Exit"
             btn.remove_class("-ok"); btn.add_class("-danger")
+            # show "Install prerequisites" button only if sudo is available and there are packages to install
+            if self._apt_cmd and shutil.which("sudo"):
+                btn_row = self.app.query_one("#btn-row", Horizontal)
+                btn_row.mount(Button("Install prerequisites", id="btn-install", classes="-ok"))
 
     def handle_next(self, app):
         if not S.preflight_ok: app.exit(); return
+        app._go(StepInstallPaths())
+
+
+# ── step 0a — install paths ──────────────────────────────────────────────────
+class StepInstallPaths(Step):
+    STEP_NUM  = 0
+    SHOW_BACK = True
+
+    def _tree_text(self, git_dir):
+        """Build a preview of the directory structure."""
+        cfg_dir = os.path.expanduser("~/range42.config")
+        return (
+            f"  {git_dir}/\n"
+            f"  ├── range42/                      main repo (this wizard)\n"
+            f"  ├── range42-playbooks/             scenarios + bundles\n"
+            f"  ├── range42-catalog/               ansible roles + docker stacks\n"
+            f"  ├── range42-ansible_roles-proxmox_controller/\n"
+            f"  ├── range42-ansible_roles-debug-devkit/\n"
+            f"  ├── range42-backend-api/\n"
+            f"  └── range42-deployer-ui/\n"
+            f"\n"
+            f"  {cfg_dir}/\n"
+            f"  └── <codename>-<scenario>/         workspace (secrets, keys, inventory)\n"
+        )
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  install paths", classes="title")
+        yield Rule()
+        yield Static(
+            "  Where should range42 repos be cloned on the deployer-cli?\n\n"
+            "  Note: workspace config (secrets, keys, inventory) is always\n"
+            "  stored in ~/range42.config/ — this path cannot be changed.\n",
+            classes="muted")
+        yield Container(id="path-choices")
+        yield Static("")
+        yield Static(self._tree_text(S.install_dir), id="path-preview")
+        yield Container(id="custom-inputs")
+
+    def on_mount(self):
+        lst = self.query_one("#path-choices")
+        lst.mount(Button(
+            "  ◆  recommended  —  ~/range42",
+            id="p-recommended", classes="-ok"))
+        lst.mount(Button(
+            "  ↺  custom path",
+            id="p-custom", classes="-danger"))
+        # hide custom input initially
+        self.query_one("#custom-inputs").display = False
+
+    @on(Button.Pressed, "#p-recommended")
+    def pick_recommended(self):
+        S.install_dir = os.path.expanduser("~/range42")
+        self.query_one("#custom-inputs").display = False
+        self.query_one("#path-preview", Static).update(
+            self._tree_text(S.install_dir))
+
+    @on(Button.Pressed, "#p-custom")
+    def pick_custom(self):
+        box = self.query_one("#custom-inputs")
+        if box.display:
+            return  # already visible
+        box.display = True
+        current_dir = str(SCRIPT_DIR)
+        box.mount(Label("  repos directory:", classes="muted"))
+        box.mount(Input(value=current_dir, id="input-install-dir"))
+        S.install_dir = current_dir
+        self.query_one("#path-preview", Static).update(
+            self._tree_text(S.install_dir))
+
+    @on(Input.Changed)
+    def on_input_change(self, event: Input.Changed):
+        """Update preview tree in real time when user types."""
+        try:
+            git_dir = self.query_one("#input-install-dir", Input).value.strip().rstrip("/")
+        except Exception:
+            return
+        S.install_dir = git_dir
+        self.query_one("#path-preview", Static).update(
+            self._tree_text(git_dir))
+
+    def handle_next(self, app):
+        try:
+            S.install_dir = self.query_one("#input-install-dir", Input).value.strip().rstrip("/")
+        except Exception:
+            pass  # recommended mode — input not mounted, use S value as-is
         app._go(StepExisting() if existing() else StepWelcome())
+
+    def handle_back(self, app):
+        app._go(StepPreflight())
 
 
 # ── step 0b — existing configs ────────────────────────────────────────────────
@@ -915,11 +1033,11 @@ class StepDeploy(Step):
         vars_ = dest / "group_vars" / "all" / "vars.yml"
         scen  = dest / "group_vars" / S.scenario
 
-        sed_f(hosts, "ds-px-off-black-pxtesting", S.codename)
-        sed_f(hosts, "ds-px-off-black-pxtesting.skate-eagle.ts.net:8006",
+        sed_f(hosts, "my-proxmox", S.codename)
+        sed_f(hosts, "proxmox.example.com:8006",
               f"{S.proxmox_address}:8006")
         sed_f(hosts, 'ansible_host: "127.0.0.1"', f'ansible_host: "{S.deployer_ip}"')
-        sed_f(hosts, 'ansible_user: "grml"',       f'ansible_user: "{S.deployer_user}"')
+        sed_f(hosts, 'ansible_user: "your_deployer_cli_username"', f'ansible_user: "{S.deployer_user}"')
         if S.deployer_ip not in ("127.0.0.1","localhost"):
             hosts.write_text("\n".join(
                 l for l in hosts.read_text().splitlines()
@@ -935,9 +1053,13 @@ class StepDeploy(Step):
             ('proxmox_api_host: "to_define"',               f'proxmox_api_host: "{S.proxmox_address}:8006"'),
             ('infrastructure_proxmox_default_network_card_interface: "enp3s0"',
              f'infrastructure_proxmox_default_network_card_interface: "{S.network_iface}"'),
-            ('DEPLOYER_CLI_USER: "grml"',      f'DEPLOYER_CLI_USER: "{S.deployer_user}"'),
+            ('DEPLOYER_CLI_USER: "your_deployer_cli_username"', f'DEPLOYER_CLI_USER: "{S.deployer_user}"'),
             ('deployer_cli_ip: "127.0.0.1"',   f'deployer_cli_ip: "{S.deployer_ip}"'),
-            ('ssh_client__dst_config_dir: "/home/grml/.ssh"',
+            ('DEPLOYER_CLI__DST_GIT_DIR: "/home/your_deployer_cli_username/range42/"',
+             f'DEPLOYER_CLI__DST_GIT_DIR: "{S.install_dir}/"'),
+            ('DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/your_deployer_cli_username/range42.config"',
+             f'DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/{S.deployer_user}/range42.config"'),
+            ('ssh_client__dst_config_dir: "/home/your_deployer_cli_username/.ssh"',
              f'ssh_client__dst_config_dir: "/home/{S.deployer_user}/.ssh"'),
         ]:
             sed_f(vars_, old, new)
@@ -1063,6 +1185,14 @@ class Range42(App):
         steps = list(self.query_one("#content").children)
         if steps: steps[0].handle_back(self)
 
+    @on(Button.Pressed, "#btn-install")
+    def on_install(self):
+        """Exit TUI, run apt install, then re-launch the wizard."""
+        steps = list(self.query_one("#content").children)
+        if steps and hasattr(steps[0], "_apt_cmd"):
+            self._install_cmd = steps[0]._apt_cmd
+        self.exit()
+
 
 def _print_ok(msg):   print(f"  \033[1;32m   OK  \033[0m {msg}")
 def _print_fail(msg): print(f"  \033[1;31m  FAIL \033[0m {msg}")
@@ -1139,6 +1269,9 @@ def post_wizard():
         _print_ok("proxmox configured")
         _print_ok("deployer-cli deployed")
         print()
+        _print_info(f"repos cloned to:     {S.install_dir}/")
+        _print_info(f"workspace config in: ~/range42.config/")
+        print()
         print("  ---- first time setup ----")
         print()
         _print_info("activate your workspace:")
@@ -1169,6 +1302,16 @@ def post_wizard():
         print()
         _print_cmd("range42-context init")
         print()
+
+        # if current shell is bash and zsh is available, switch to zsh
+        # so range42-context works immediately
+        current_shell = os.environ.get("SHELL", "")
+        zsh_path = shutil.which("zsh")
+        if "/bash" in current_shell and zsh_path:
+            _print_info("switching to zsh (required for range42-context)...")
+            print()
+            os.execv(zsh_path, [zsh_path, "-l"])
+
     else:
         _print_bold("deployment failed")
         _print_fail("check the error above and re-run:")
@@ -1180,5 +1323,49 @@ def post_wizard():
 
 
 if __name__ == "__main__":
-    Range42().run()
+    app = Range42()
+    app._install_cmd = None
+    app.run()
+
+    # post-TUI: if preflight failed and no install command, show help
+    if not S.preflight_ok and not app._install_cmd:
+        print()
+        if not shutil.which("sudo"):
+            _print_fail("sudo is not installed (required)")
+            print()
+            _print_info("as root, run:")
+            _print_cmd("apt-get install sudo")
+            _print_cmd("usermod -aG sudo <your-user>")
+            print()
+            _print_info("then log out and log back in, and re-run:")
+            _print_cmd("python3 range42-init.py")
+            print()
+        sys.exit(1)
+
+    # post-TUI: if user clicked "Install prerequisites", run apt then re-launch
+    if app._install_cmd:
+        print()
+        print(f"  \033[1;33mINFO\033[0m  running: {app._install_cmd}")
+        print()
+        rc = subprocess.call(app._install_cmd, shell=True)
+        if rc == 0:
+            print()
+            print("  \033[1;32m   OK\033[0m  packages installed — restarting wizard...")
+            print()
+            # if zsh was just installed and we're in bash, restart wizard in zsh
+            current_shell = os.environ.get("SHELL", "")
+            zsh_path = shutil.which("zsh")
+            if "/bash" in current_shell and zsh_path:
+                print("  \033[1;33mINFO\033[0m  switching to zsh...")
+                print()
+                script_path = str(Path(__file__).resolve())
+                os.execv(zsh_path, [zsh_path, "-c", "exec python3 " + shlex.quote(script_path)])
+            else:
+                os.execv(sys.executable, [sys.executable, __file__] + sys.argv[1:])
+        else:
+            print()
+            print("  \033[1;31m FAIL\033[0m  install failed — run manually:")
+            print(f"         {app._install_cmd}")
+            print(f"         then: python3 {__file__}")
+            sys.exit(1)
     post_wizard()

@@ -1,0 +1,15 @@
+
+{% for bridge in range42_lab_bridges %}
+auto {{ bridge.name }}
+iface {{ bridge.name }} inet static
+        address {{ bridge.ip }}/24
+        bridge-ports none
+        bridge-stp off
+        bridge-fd 0
+{% if bridge.nat | default(false) %}
+        post-up   iptables -t nat -A POSTROUTING -s {{ bridge.ip }}/24 -o {{ infrastructure_proxmox_default_network_card_interface }} -j MASQUERADE
+        post-down iptables -t nat -D POSTROUTING -s {{ bridge.ip }}/24 -o {{ infrastructure_proxmox_default_network_card_interface }} -j MASQUERADE
+{% endif %}
+#range42 lab network — {{ bridge.name }}
+
+{% endfor %}
