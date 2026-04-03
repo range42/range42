@@ -31,3 +31,4 @@
 - import_tasks: ./00_load_root_ssh_key.yml
 - import_tasks: ./01_install_root_pubkey_on_proxmox.yml
 - import_tasks: ./02_fix_remote_locale.yml
+- import_tasks: ./03_create_network_bridge.yml

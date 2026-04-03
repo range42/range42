@@ -12,3 +12,25 @@ proxmox_root_ssh_key_path: "to_define"
 
 # locale to set on proxmox
 proxmox_locale: "C.UTF-8"
+
+# network bridge for lab VMs
+vm_net_virtio_bridge: "vmbr142"
+
+# outbound interface for NAT (check with: ip route | grep default)
+# on most Proxmox setups this is "vmbr0"
+infrastructure_proxmox_default_network_card_interface: "vmbr0"
+
+# lab bridges to create on proxmox (vmbr140-vmbr150)
+# nat: true/false — enable outbound NAT via the physical interface
+range42_lab_bridges:
+  - { name: "vmbr140", ip: "192.168.140.1", nat: true }
+  - { name: "vmbr141", ip: "192.168.141.1", nat: true }
+  - { name: "vmbr142", ip: "192.168.142.1", nat: true }
+  - { name: "vmbr143", ip: "192.168.143.1", nat: true }
+  - { name: "vmbr144", ip: "192.168.144.1", nat: true }
+  - { name: "vmbr145", ip: "192.168.145.1", nat: true }
+  - { name: "vmbr146", ip: "192.168.146.1", nat: true }
+  - { name: "vmbr147", ip: "192.168.147.1", nat: true }
+  - { name: "vmbr148", ip: "192.168.148.1", nat: true }
+  - { name: "vmbr149", ip: "192.168.149.1", nat: true }
+  - { name: "vmbr150", ip: "192.168.150.1", nat: true }

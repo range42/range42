@@ -53,12 +53,19 @@ proxmox_node: "to_define"
 infrastructure_proxmox_dest_iso_storage_name: "local"
 infrastructure_proxmox_dest_vm_storage_name: "local-lvm"
 
-# The physical network interface on your Proxmox server.
-# Used for NAT networks. Check with: ip link show
+# The outbound network interface on your Proxmox server (for NAT).
+# On most Proxmox setups this is "vmbr0" (the default bridge with internet).
+# Check with: ip route | grep default
 #
-# common values: "enp3s0", "eno1", "eth0", "vmbr0"
+# common values: "vmbr0" (most Proxmox), "enp3s0" (bare metal without bridge)
 #
-infrastructure_proxmox_default_network_card_interface: "enp3s0"
+infrastructure_proxmox_default_network_card_interface: "vmbr0"
+
+# The Proxmox bridge that VMs will be connected to.
+# demo_lab uses 192.168.142.0/24 on this bridge.
+# This bridge must exist on the Proxmox server before deploying VMs.
+#
+vm_net_virtio_bridge: "vmbr142"
 
 
 #### PROXMOX API ACCESS ####
@@ -85,7 +92,7 @@ proxmox_api_token_id: "range42_api_token"
 
 #### JUMP HOST ####
 
-# The lab VMs run on a private network (192.168.42.x by default).
+# The lab VMs run on a private network (192.168.142.x on vmbr142 by default).
 # They are NOT directly reachable from your machine.
 # SSH uses a "jump host" to reach them — it connects to the Proxmox
 # server first, then bounces to the target VM:

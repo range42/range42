@@ -1,0 +1,2 @@
+        post-up   iptables -t nat -A POSTROUTING -s {{ bridge_ip }}/24 -o {{ infrastructure_proxmox_default_network_card_interface }} -j MASQUERADE
+        post-down iptables -t nat -D POSTROUTING -s {{ bridge_ip }}/24 -o {{ infrastructure_proxmox_default_network_card_interface }} -j MASQUERADE

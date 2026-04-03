@@ -22,7 +22,8 @@ export RANGE42_INVENTORY__DOCKER__CTF="${RANGE42_INVENTORY%/}/03_container_layer
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # :: ROLES PATH
 
-TMP_ANSIBLE_ROLES_PATHS="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42-ansible_roles-proxmox_controller/roles/:"
+TMP_ANSIBLE_ROLES_PATHS="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42/roles/:"
+TMP_ANSIBLE_ROLES_PATHS+="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42-ansible_roles-proxmox_controller/roles/:"
 TMP_ANSIBLE_ROLES_PATHS+="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42-catalog/02_ansible_layer/admin/roles/:"
 TMP_ANSIBLE_ROLES_PATHS+="${RANGE42_ANSIBLE_ROLES__ROOT_DIR%/}/range42-catalog/02_ansible_layer/trainee/roles/"
 
