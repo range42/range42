@@ -746,6 +746,37 @@ _r42_init() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context debug — toggle verbose/skip output in ansible.cfg
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_debug() {
+    # resolve ansible.cfg path:
+    #   1. ANSIBLE_CONFIG (exported by range42-context use)
+    #   2. RANGE42_GITDIR__ROOT_DIR/range42/ansible.cfg (custom install path from wizard)
+    #   3. $HOME/range42/range42/ansible.cfg (default fallback)
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+    local cfg="${ANSIBLE_CONFIG:-${git_dir%/}/range42/ansible.cfg}"
+
+    if [[ ! -f "$cfg" ]]; then
+        _r42_print_fail "ansible.cfg not found: $cfg"
+        return 1
+    fi
+
+    # check current state — if stdout_callback is active (not commented), we're in clean mode
+    if grep -q '^stdout_callback = no_skipped' "$cfg"; then
+        # switch to debug mode — comment out the no_skipped lines
+        sed -i 's/^stdout_callback = no_skipped/# stdout_callback = no_skipped/' "$cfg"
+        sed -i 's/^callback_plugins = callback_plugins/# callback_plugins = callback_plugins/' "$cfg"
+        _r42_print_check "debug mode ON — skipped tasks will be visible"
+    else
+        # switch to clean mode — uncomment the no_skipped lines
+        sed -i 's/^# stdout_callback = no_skipped/stdout_callback = no_skipped/' "$cfg"
+        sed -i 's/^# callback_plugins = callback_plugins/callback_plugins = callback_plugins/' "$cfg"
+        _r42_print_check "debug mode OFF — skipped tasks hidden"
+    fi
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context help
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -782,6 +813,7 @@ _r42_help() {
     printf "    ${N}inventory${R}                      ${D}show ansible inventory tree${R}\n"
     printf "    ${N}passwords${R}                      ${D}show generated credentials${R}\n"
     printf "    ${N}ssh${R} <pattern>                  ${D}quick ssh to a VM by name${R}\n"
+    printf "    ${N}debug${R}                          ${D}toggle verbose output (show/hide skipped tasks)${R}\n"
     printf "    ${N}help${R}                           ${D}show this help${R}\n"
     echo ""
 }
@@ -811,6 +843,7 @@ range42-context() {
         passwords|pw)   _r42_passwords ;;
         ssh)            _r42_ssh "$@" ;;
         cd)             _r42_cd "$@" ;;
+        debug)          _r42_debug ;;
         help|--help|-h) _r42_help ;;
         *)
             _r42_print_fail "unknown command: $cmd"
