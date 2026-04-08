@@ -261,6 +261,7 @@ RichLog         { background: $background; border: tall $panel; height: 1fr; min
 LoadingIndicator { color: $primary; }
 
 #choice-list Button { margin-bottom: 1; width: 100%; }
+#path-choices Button { min-width: 60; margin-bottom: 1; }
 #overwrite-confirm  { height: auto; margin-bottom: 1; align: center middle; content-align: center middle; }
 .warn               { color: $accent; }
 """
@@ -426,7 +427,7 @@ class StepInstallPaths(Step):
     def on_mount(self):
         lst = self.query_one("#path-choices")
         lst.mount(Button(
-            "  ◆  recommended  —  ~/range42",
+            "  ◆  recommended  —  ~/range42  +  ~/range42.config",
             id="p-recommended", classes="-ok"))
         lst.mount(Button(
             "  ↺  custom path",
