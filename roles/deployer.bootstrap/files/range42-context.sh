@@ -149,10 +149,13 @@ _r42_list() {
     echo "  ──────────────────────────────────────────────────────────────"
 
     for target in ${(f)all_targets}; do
+        # skip empty lines
+        [[ -z "$target" ]] && continue
+
         _idx=$((_idx + 1))
 
         # split workspace name into codename + scenario
-        local _scenario _codename _use_cmd=""
+        local _scenario="" _codename="" _use_cmd=""
         for _pd in "${git_dir%/}/range42-playbooks/scenarios"/*/; do
             _scenario="$(basename "$_pd")"
             if [[ "$target" == *"-${_scenario}" ]]; then
@@ -160,13 +163,16 @@ _r42_list() {
                 _use_cmd="range42-context use ${_codename} ${_scenario}"
                 break
             fi
+            _scenario=""
         done
 
+        # skip entries where codename could not be resolved
+        [[ -z "$_codename" ]] && continue
+
         if [[ "$target" == "$current" ]]; then
-            printf "  \033[1;32m● [%d]  %-28s  %s\033[0m\n" "$_idx" "$target" "$_use_cmd"
-            echo ""
+            printf "  \033[1;32m● [%d]  %-35s  %s\033[0m\n" "$_idx" "$target" "$_use_cmd"
         else
-            printf "  \033[0;90m○ [%d]  %-28s  %s\033[0m\n" "$_idx" "$target" "$_use_cmd"
+            printf "  \033[0;90m○ [%d]  %-35s  %s\033[0m\n" "$_idx" "$target" "$_use_cmd"
         fi
     done
 
