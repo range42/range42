@@ -1,0 +1,134 @@
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+#       infrastructure code name : {{ INFRASTRUCTURE_CODENAME }}
+# infrastructure proxmox address : {{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+#                       scenario : {{ INFRASTRUCTURE_SCENARIO }}
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      PROXMOX WEB UI (port forward)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host px.{{ INFRASTRUCTURE_CODENAME }}.redirect_www.proxmox
+    RequestTTY no
+    RemoteCommand none
+    localforward localhost:18042 {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}:8006
+    localcommand sh -c '/usr/bin/chromium-browser --incognito --new-window --disable-translate  https://127.0.0.1:18042 &'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      PX ROOT USER SSH ACCESS
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# root SSH access to Proxmox — for disk extend, pveum, etc.
+# alias: CODENAME-cli matches the inventory group proxmox-cli
+Host px.{{ INFRASTRUCTURE_CODENAME }}-ssh_cli.root {{ INFRASTRUCTURE_CODENAME }}-cli
+    Hostname {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}
+    User root
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root
+    Port 22
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SSH JUMPER
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host px.{{ INFRASTRUCTURE_CODENAME }}.jumper
+    Hostname {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}
+    User jump_user
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user
+    Port 22
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      ADMIN VMs
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# Host r42.testing-wazuh-client
+#     Hostname 192.168.142.111
+
+# Host r42.admin-builder-api-devkit
+#     Hostname 192.168.142.102
+
+# Host r42.admin-builder-docker-registry
+#     Hostname 192.168.142.101
+
+Host r42.admin-wazuh
+    Hostname 192.168.142.100
+
+Host r42.admin-deployer-api-gateway
+    Hostname 192.168.142.120
+
+Host r42.admin-deployer-api-backend
+    Hostname 192.168.142.121
+
+Host r42.admin-deployer-ui
+    Hostname 192.168.142.123
+
+Host r42.admin* r42.testing*
+    User alice
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice
+    Port 22
+    ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      STUDENT VMs
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.student-box-01
+    Hostname 192.168.143.160
+
+Host r42.student*
+    User alice
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice
+    Port 22
+    ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      VULN VMs
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.vuln-box-00
+    Hostname 192.168.144.170
+
+Host r42.vuln-box-01
+    Hostname 192.168.144.171
+
+Host r42.vuln-box-02
+    Hostname 192.168.144.172
+
+Host r42.vuln-box-03
+    Hostname 192.168.144.173
+
+Host r42.vuln-box-04
+    Hostname 192.168.144.174
+
+Host r42.vuln-box-*
+    User alice
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice
+    Port 22
+    ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      INIT VMs
+# TODO T57: move to scenario-specific SSH config (these are demo_lab templating only)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.init-vm-00
+    Hostname 192.168.142.120
+
+Host r42.init-vm-01
+    Hostname 192.168.142.121
+
+Host r42.init-vm-02
+    Hostname 192.168.142.122
+
+Host r42.init-vm-03
+    Hostname 192.168.142.123
+
+Host r42.init-vm-04
+    Hostname 192.168.142.124
+
+Host r42.init-vm-*
+    User alice
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice
+    Port 22
+    ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
