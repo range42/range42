@@ -501,15 +501,25 @@ class StepExisting(Step):
             "  ◆  new  —  create a new infrastructure setup",
             id="c-new", classes="-ok"))
         for cfg in existing():
-            lst.mount(Button(
-                f"  ↺  {cfg}  —  overwrite existing configuration",
-                id=f"c-{cfg}"))
+            gv = INVENTORIES / cfg / "group_vars"
+            scenarios = []
+            if gv.exists():
+                scenarios = [d.name for d in sorted(gv.iterdir()) if d.is_dir() and d.name != "all"]
+            if scenarios:
+                for sc in scenarios:
+                    lst.mount(Button(
+                        f"  ↺  {cfg}  —  {sc}  —  overwrite existing configuration",
+                        id=f"c-{cfg}--{sc}"))
+            else:
+                lst.mount(Button(
+                    f"  ↺  {cfg}  —  overwrite existing configuration",
+                    id=f"c-{cfg}"))
 
     @on(Button.Pressed)
     def pick(self, e: Button.Pressed):
         bid = e.button.id or ""
         if not bid.startswith("c-"): return
-        mode = bid[2:]
+        mode = bid[2:].split("--")[0]
         S.setup_mode = mode
         if mode != "new": prefill(mode)
         self.app._go(StepWelcome())
@@ -844,7 +854,7 @@ class StepScenario(Step):
 
     def handle_next(self, app):
         S.scenario = self.query_one("#i-scenario", Input).value.strip() or "demo_lab"
-        app._go(StepDeployerUser())
+        app._go(StepDeployerIP())
 
     def handle_back(self, app): app._go(StepNATBridges())
 
@@ -1132,11 +1142,15 @@ class StepDeploy(Step):
 
         dest = INVENTORIES / S.codename
         try:
-            if dest.exists():
-                sh.rmtree(dest)
-                log_row("INFO", f"removed previous configuration", f"path={dest.name}")
-            sh.copytree(EXAMPLE_DIR, dest)
-            log_row("PASS", "created", f"path=inventories/{S.codename}/")
+            if not dest.exists():
+                sh.copytree(EXAMPLE_DIR, dest)
+                log_row("PASS", "created", f"path=inventories/{S.codename}/")
+            else:
+                # update hosts.yml and vars.yml from example without deleting existing scenarios
+                import shutil as _sh
+                _sh.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
+                _sh.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml", dest / "group_vars" / "all" / "vars.yml")
+                log_row("PASS", "updated", f"path=inventories/{S.codename}/ (preserved existing scenarios)")
         except PermissionError as e:
             log_row("FAIL", f"permission denied: {e}")
             return
@@ -1193,8 +1207,9 @@ class StepDeploy(Step):
                 f"codename={S.codename}  node={S.proxmox_node}  nat={S.nat_interface}")
         time.sleep(0.1)
 
-        if S.scenario != "demo_lab" and (dest/"group_vars"/"demo_lab").exists():
-            (dest/"group_vars"/"demo_lab").rename(scen)
+        if S.scenario != "demo_lab" and (dest/"group_vars"/"demo_lab").exists() and not scen.exists():
+            import shutil
+            shutil.copytree(dest/"group_vars"/"demo_lab", scen)
         sv = scen / "vars.yml"
         if sv.exists():
             sed_f(sv, 'INFRASTRUCTURE_SCENARIO: "demo_lab"',
