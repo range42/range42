@@ -7,7 +7,7 @@
 
 - name: WORKSPACE CREDENTIALS - GENERATE INVENTORY FROM TEMPLATE
   ansible.builtin.template:
-    src: inventory.demo_lab.j2
+    src: "inventory.{{ INFRASTRUCTURE_SCENARIO }}.j2"
     dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/inventory/inventory_default.yml"
     owner: "{{ DEPLOYER_CLI_USER }}"
     group: "{{ DEPLOYER_CLI_USER }}"

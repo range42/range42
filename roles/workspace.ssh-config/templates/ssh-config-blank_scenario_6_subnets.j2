@@ -1,0 +1,123 @@
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+#       infrastructure code name : {{ INFRASTRUCTURE_CODENAME }}
+# infrastructure proxmox address : {{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+#                       scenario : {{ INFRASTRUCTURE_SCENARIO }}
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      PROXMOX WEB UI (port forward)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host px.{{ INFRASTRUCTURE_CODENAME }}.redirect_www.proxmox
+    RequestTTY no
+    RemoteCommand none
+    localforward localhost:18042 {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}:8006
+    localcommand sh -c '/usr/bin/chromium-browser --incognito --new-window --disable-translate  https://127.0.0.1:18042 &'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      PX ROOT USER SSH ACCESS
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host px.{{ INFRASTRUCTURE_CODENAME }}-ssh_cli.root {{ INFRASTRUCTURE_CODENAME }}-cli
+    Hostname {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}
+    User root
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root
+    Port 22
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SSH JUMPER
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host px.{{ INFRASTRUCTURE_CODENAME }}.jumper
+    Hostname {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}
+    User jump_user
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user
+    Port 22
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SUBNET 143 (vmbr143)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.bs6-team-143-01
+    Hostname 192.168.143.220
+Host r42.bs6-team-143-02
+    Hostname 192.168.143.221
+Host r42.bs6-team-143-03
+    Hostname 192.168.143.222
+Host r42.bs6-team-143-04
+    Hostname 192.168.143.223
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SUBNET 144 (vmbr144)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.bs6-team-144-01
+    Hostname 192.168.144.220
+Host r42.bs6-team-144-02
+    Hostname 192.168.144.221
+Host r42.bs6-team-144-03
+    Hostname 192.168.144.222
+Host r42.bs6-team-144-04
+    Hostname 192.168.144.223
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SUBNET 145 (vmbr145)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.bs6-team-145-01
+    Hostname 192.168.145.220
+Host r42.bs6-team-145-02
+    Hostname 192.168.145.221
+Host r42.bs6-team-145-03
+    Hostname 192.168.145.222
+Host r42.bs6-team-145-04
+    Hostname 192.168.145.223
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SUBNET 146 (vmbr146)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.bs6-team-146-01
+    Hostname 192.168.146.220
+Host r42.bs6-team-146-02
+    Hostname 192.168.146.221
+Host r42.bs6-team-146-03
+    Hostname 192.168.146.222
+Host r42.bs6-team-146-04
+    Hostname 192.168.146.223
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SUBNET 147 (vmbr147)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.bs6-team-147-01
+    Hostname 192.168.147.220
+Host r42.bs6-team-147-02
+    Hostname 192.168.147.221
+Host r42.bs6-team-147-03
+    Hostname 192.168.147.222
+Host r42.bs6-team-147-04
+    Hostname 192.168.147.223
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SUBNET 148 (vmbr148)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.bs6-team-148-01
+    Hostname 192.168.148.220
+Host r42.bs6-team-148-02
+    Hostname 192.168.148.221
+Host r42.bs6-team-148-03
+    Hostname 192.168.148.222
+Host r42.bs6-team-148-04
+    Hostname 192.168.148.223
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.bs6-team-*
+    User alice
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice
+    Port 22
+    ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
