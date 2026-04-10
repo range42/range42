@@ -1,0 +1,44 @@
+all:
+  children:
+    range42_infrastructure:
+      children:
+        ####
+
+        # r42_admin:  # uncomment when DEPLOY_ADMIN_INFRASTRUCTURE: YES
+        #   hosts:
+        #     r42.admin-wazuh:
+        #     r42.admin-deployer-api-gateway:
+        #     r42.admin-deployer-api-backend:
+        #     r42.admin-deployer-ui:
+
+        r42_blank_group:
+          hosts:
+            r42.bs4-team-143-01:
+            r42.bs4-team-143-02:
+            r42.bs4-team-143-03:
+            r42.bs4-team-143-04:
+            r42.bs4-team-144-01:
+            r42.bs4-team-144-02:
+            r42.bs4-team-144-03:
+            r42.bs4-team-144-04:
+            r42.bs4-team-145-01:
+            r42.bs4-team-145-02:
+            r42.bs4-team-145-03:
+            r42.bs4-team-145-04:
+            r42.bs4-team-146-01:
+            r42.bs4-team-146-02:
+            r42.bs4-team-146-03:
+            r42.bs4-team-146-04:
+
+        ####
+
+        proxmox:
+          hosts:
+            {{ INFRASTRUCTURE_CODENAME }}:
+              ansible_host: {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}:8006
+              ansible_connection: local
+              ansible_python_interpreter: /usr/bin/python3
+
+        proxmox-cli:
+          hosts:
+            {{ INFRASTRUCTURE_CODENAME }}-cli:
