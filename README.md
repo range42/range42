@@ -1,155 +1,81 @@
 # RANGE42
 
-**RANGE42** is a modular cyber range platform for building and deploying realistic cyber training infrastructures on-premises.
+**range42** is a modular cyber range platform based on Proxmox + Ansible for deploying reproducible offensive, defensive and hybrid training environments.
+One operator workstation can manage multiple Proxmox infrastructures, each running multiple lab scenarios. Everything is infrastructure-as-code.
 
-New to range42? See the [GLOSSARY](GLOSSARY.md) for terminology (codename, scenario, workspace, jump host, etc.)
+Start with [GETTING_STARTED.md](GETTING_STARTED.md) for a hands-on walkthrough, or, browse the [GLOSSARY](GLOSSARY.md) for terminology (codename, scenario, workspace, jump host, etc.).
 
-# QUICK START
+## Table of contents
 
-## Supported platforms
+- [Start here](#start-here)
+  - [Quick start](#quick-start)
+  - [Supported platforms](#supported-platforms)
+  - [Daily operations](#daily-operations)
+- [About the project](#about-the-project)
+  - [Who it's for](#who-its-for)
+  - [Architecture overview](#architecture-overview)
+  - [The stack](#the-stack)
+  - [Project mid / long term goals](#project-mid--long-term-goals)
+  - [Extend the scenarios](#extend-the-scenarios)
+  - [Glossary](#glossary)
+  - [Authors](#authors)
 
-The wizard has been tested on:
-- Ubuntu Desktop LTS (24.04)
-- Ubuntu Server LTS (24.04)
-- Debian 13.x LTS (netinstall)
+---
 
-## Option A — Setup wizard (recommended)
+# Start here
 
-The wizard guides you through the configuration and can deploy automatically:
+## Quick start
+
+The recommended way to deploy range42 is the setup wizard:
 
 ```bash
 python3 range42-init.py
 ```
 
-![range42-init wizard](screenshots/0002.png)
+![range42 setup wizard](docs/img/old/0002.png)
 
-Requires: `pip install --user textual` (do NOT use `apt install python3-textual`, version too old).
+The wizard walks you through preflight checks, Proxmox connection, network configuration and the full deployment.
 
-It will:
-1. Check prerequisites (ansible, ssh-keygen, sshpass, collections)
-2. Ask for your Proxmox address, node name, and a codename
-3. Create an inventory with your settings
-4. Optionally run the full deployment (credentials, Proxmox setup, deployer-cli)
+For the complete walkthrough (prerequisites, every wizard step explained, SSH access, daily operations, troubleshooting), see [GETTING_STARTED.md](GETTING_STARTED.md).
 
-After the wizard, on the deployer-cli:
+If you'd rather drive the playbooks yourself, see [Manual setup (advanced)](GETTING_STARTED.md#manual-setup-advanced).
 
-```bash
-range42-context use <codename> <scenario>
-range42-context status
-range42-context deploy
-```
+## Supported platforms
 
-To add another infrastructure later: `range42-context init`
-(only available after the first deployment has set up the tools)
+range42 is developed and tested on Ubuntu LTS (Desktop / Server) and is also expected to work on Debian 13. Full details and prerequisites:
+[GETTING_STARTED.md - Prerequisites](GETTING_STARTED.md#prerequisites).
 
-## Option B — Manual setup
+## Daily operations
 
-### Prerequisites
+Once deployed, you manage your lab with the `range42-context` shell tool (switch workspaces, deploy / undeploy, SSH into VMs, view credentials, etc.). The full reference is in
+[GETTING_STARTED.md - What you can do after deploy](GETTING_STARTED.md#what-you-can-do-after-deploy).
 
-- A Proxmox hypervisor with SSH root access
-- Ansible installed on your local machine
-- `community.crypto` and `community.general` Ansible collections
-- `sshpass` (for automatic SSH key installation)
+---
 
-### 1. Configure your inventory
+# About the project
 
-```bash
-cp -r inventories/example inventories/my-infra
-```
+## Who it's for
 
-Edit the following files with your infrastructure settings:
-- `inventories/my-infra/hosts.yml` — Proxmox address and deployer-cli connection
-- `inventories/my-infra/group_vars/all/vars.yml` — infrastructure settings
-- `inventories/my-infra/group_vars/demo_lab/vars.yml` — scenario settings
+- **Sysadmins** - practice securing vulnerable stacks and test hardening procedures
+- **SOC analysts / blue teams** - validate detection rules, tune alerts, test incident response
+- **Red teamers / researchers** - build exploit chains, study CVEs in controlled environments
+- **Forensics teams** - reconstruct incidents, analyse compromised systems
 
-### 2. Generate credentials
+## Architecture overview
 
-```bash
-ansible-playbook playbooks/01_generate_credentials.yml \
-  -i inventories/my-infra/hosts.yml \
-  -e INFRASTRUCTURE_SCENARIO=demo_lab
-```
-
-### 3. Configure Proxmox
-
-```bash
-ansible-playbook playbooks/02_configure_proxmox.yml \
-  -i inventories/my-infra/hosts.yml \
-  -e INFRASTRUCTURE_SCENARIO=demo_lab
-```
-
-### 4. Deploy the deployer-cli
-
-```bash
-ansible-playbook playbooks/03_deploy_deployer_cli.yml \
-  -i inventories/my-infra/hosts.yml \
-  -e INFRASTRUCTURE_SCENARIO=demo_lab \
-  --vault-password-file ./config/my-infra-demo_lab/secrets/vault_pass.txt
-```
-
-### 5. Use the workspace
-
-On the deployer-cli:
-
-```bash
-range42-context use my-infra demo_lab
-range42-context status
-range42-context deploy
-```
-
-
-# DAILY OPERATIONS
-
-Once deployed, manage your lab with `range42-context`:
-
-```bash
-range42-context status              # check workspace health
-range42-context deploy              # full deploy (templates + VMs)
-range42-context deploy-vms          # fast redeploy (VMs only, skip templates)
-range42-context delete-vms          # delete VMs (keep templates)
-range42-context delete              # delete everything
-range42-context reset               # delete + recreate
-
-range42-context ssh wazuh           # quick SSH to a VM
-range42-context inventory           # show inventory tree
-range42-context passwords           # show credentials
-range42-context cd scenario         # navigate to playbooks
-range42-context help                # all commands
-```
-
-# PROJECT STRUCTURE
+A range42 deployment looks like this:
 
 ```
-range42/
-├── range42-init.py           — setup wizard (Python/Textual TUI)
-├── ansible.cfg
-├── site.yml                  — runs all 3 playbooks in sequence
-├── playbooks/
-│   ├── 01_generate_credentials.yml
-│   ├── 02_configure_proxmox.yml
-│   └── 03_deploy_deployer_cli.yml
-├── inventories/
-│   └── example/              — copy and customize for your infra
-├── roles/                    — 11 modular roles
-└── config/                   — generated credentials (not committed)
+   [ deployer-cli ]  ─── SSH / API ──▶  [ Proxmox + lab VMs ]
+      │
+      ├─ runs the wizard
+      ├─ holds inventory + credentials
+      └─ drives Ansible playbooks
 ```
 
-# WHAT IS RANGE42
+The **deployer-cli** is your local machine by default, or a dedicated pivot VM if you manage multiple Proxmox infrastructures from one place.
 
-RANGE42 provides two main capabilities:
-- Deploy vulnerable and misconfigured hosts
-- Include an extensible catalogue of ready-to-deploy CVEs, misconfigured services and product setup
-
-In its recommended configuration, RANGE42 relies on:
-
-- **Proxmox** — hypervisor for virtual machines (mandatory)
-- **Ansible** — provisioning and orchestration (mandatory)
-- **Docker / LXC** — containerized services and vulnerable stacks (recommended)
-- **Wazuh** — security monitoring and detection (optional)
-- **Firewalls / VPN** — network segmentation and access control (recommended)
-- **Vue.js / FastAPI / Kong** — web UI and API layer (optional)
-
-## Host groups
+Today, the **lab VMs on Proxmox** are generally organised into 3 host groups (this is the convention used by current scenarios and may evolve as new ones are added):
 
 | Group | Purpose | Required |
 |-------|---------|----------|
@@ -157,25 +83,58 @@ In its recommended configuration, RANGE42 relies on:
 | **Administration** | Monitoring, orchestration, supervision | No |
 | **Student / Training** | Workstations for learners | No |
 
-Only the vulnerable hosts group is required. Admin and student groups can be disabled to save resources.
+Only the vulnerable hosts group is required - admin and student groups are optional and can be disabled to save resources.
 
-## Deployer-cli
+## The stack
 
-The deployer-cli is the machine that runs the Ansible playbooks and manages the lab.
-We recommend a dedicated VM or laptop, not the Proxmox host itself.
+In its recommended configuration, range42 relies on:
 
-# FOR WHO
+- **Proxmox** - hypervisor for virtual machines (mandatory)
+- **Ansible** - provisioning and orchestration (mandatory)
+- **Docker / LXC** - containerized services and vulnerable stacks (recommended)
+- **Wazuh** - security monitoring and detection (optional)
+- **Firewalls / VPN** - network segmentation and access control (recommended)
+- **Vue.js / FastAPI / Kong** - web UI and API layer (optional)
 
-- **Sysadmins** — practice securing vulnerable stacks and test hardening procedures
-- **SOC analysts / blue teams** — validate detection rules, tune alerts, test incident response
-- **Red teamers / researchers** — build exploit chains, study CVEs in controlled environments
-- **Forensics teams** — reconstruct incidents, analyse compromised systems
+## Project mid / long term goals
 
-# GLOSSARY
+The goal is to cover the full spectrum of cyber training. Here's where the project stands today and where it's heading.
+
+**Status legend:** **shipping** = production-tested · **early** = working, content to grow · **partial** = code in place, currently disabled · **planned** = on the roadmap
+
+| Use case | Status | What range42 brings |
+|----------|--------|---------------------|
+| **Network labs** | shipping | Empty multi-subnet bases (`blank_scenario_2/4/6_subnets`) ready for you to install your own workloads on top |
+| **Defensive training** | shipping | Wazuh-instrumented infrastructure via `demo_lab`, ready for detection-engineering and rule-tuning exercises |
+| **Offensive training** | early | Vulnerable hosts and misconfigured services in `demo_lab`; an extensible catalogue of CVEs and product setups **will** grow over upcoming releases |
+| **Student workstations** | partial | Group structure in place; the `03_student_infrastructure` block is currently disabled and **will** be re-enabled once stabilised |
+| **Hybrid (red / blue)** | planned | One lab, both perspectives, scoreboard and full visibility on both sides |
+| **Forensics & IR** | planned | Reproducible compromised environments for rebuild-and-investigate exercises |
+
+## Extend the scenarios
+
+All deployable scenarios live in [range42-playbooks/scenarios](https://github.com/range42/range42-playbooks/tree/main/scenarios) - the list will grow over time.
+
+The reusable building blocks (CVEs, misconfigured services, product setups, Ansible roles) live in the [range42-catalog](https://github.com/range42/range42-catalog) repository.
+
+**Want a specific product, CVE or misconfiguration added?** Open an issue on the [range42-catalog](https://github.com/range42/range42-catalog/issues) repo - we centralise catalog requests there.
+
+**Found a bug or have a feature request for range42 itself?** Open an issue on the [range42](https://github.com/range42/range42/issues) repo (anything not related to the catalog goes here).
+
+We'll prioritise as fast as we can.
+
+## Glossary
 
 See [GLOSSARY.md](GLOSSARY.md) for all terminology: codename, scenario, workspace,
 deployer-cli, jump host, vault, context, range42-context, host groups, inventory.
 
-# AUTHORS
+## Authors
 
-See AUTHORS file.
+range42 is built and maintained by:
+
+| Name | Company / Affiliation | Website |
+|------|----------------------|---------|
+| Benjamin Collas | DIGISQUAD | [digisquad.com](https://www.digisquad.com) |
+| Philippe Parage | NC3 | [nc3.lu](https://nc3.lu/) |
+
+See AUTHORS file for the full list of contributors.
