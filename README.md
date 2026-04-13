@@ -33,7 +33,7 @@ The recommended way to deploy range42 is the setup wizard:
 python3 range42-init.py
 ```
 
-![range42 setup wizard](docs/img/step-01-launch.png)
+![range42 setup wizard](docs/img/old/0002.png)
 
 The wizard walks you through preflight checks, Proxmox connection, network configuration and the full deployment.
 
