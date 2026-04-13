@@ -3,7 +3,7 @@
 **range42** is a modular cyber range platform based on Proxmox + Ansible for deploying reproducible offensive, defensive and hybrid training environments.
 One operator workstation can manage multiple Proxmox infrastructures, each running multiple lab scenarios. Everything is infrastructure-as-code.
 
-Start with [GETTING_STARTED.md](GETTING_STARTED.md) for a hands-on walkthrough, or, browse the [GLOSSARY](GLOSSARY.md) for terminology (codename, scenario, workspace, jump host, etc.).
+Start with [GETTING_STARTED.md](GETTING_STARTED.md) for a hands-on walkthrough, or browse the [GLOSSARY](GLOSSARY.md) for terminology (codename, scenario, workspace, jump host, etc.).
 
 ## Table of contents
 
@@ -29,7 +29,12 @@ Start with [GETTING_STARTED.md](GETTING_STARTED.md) for a hands-on walkthrough, 
 The recommended way to deploy range42 is the setup wizard:
 
 ```bash
-python3 range42-init.py
+sudo apt-get update ; apt-get upgrade -y
+sudo apt-get install python3-venv
+mkdir -p $HOME/range42 && cd $HOME/range42
+git clone https://github.com/range42/range42.git
+cd range42
+./range42-init.py
 ```
 
 ![range42 setup wizard](docs/img/old/0002.png)

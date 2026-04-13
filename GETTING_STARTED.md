@@ -13,13 +13,25 @@
 - [Walkthrough - wizard steps](#walkthrough---wizard-steps)
   - [Step 0 - Clone the main repo](#step-0---clone-the-main-repo)
   - [Step 1 - Launch the wizard (preflight)](#step-1---launch-the-wizard-preflight)
+  - [Step 1b - Confirm install paths](#step-1b---confirm-install-paths)
   - [Step 2 - Choose new or existing](#step-2---choose-new-or-existing)
   - [Step 3 - Enter your infrastructure codename](#step-3---enter-your-infrastructure-codename)
   - [Step 4 - Proxmox connection details](#step-4---proxmox-connection-details)
+    - [The PVE node name must be exact](#the-pve-node-name-must-be-exact)
+    - [Proxmox root password](#proxmox-root-password)
+    - [Deployer-cli sudo password](#deployer-cli-sudo-password)
   - [Step 5 - Network (NAT auto-detect + bridge toggles)](#step-5---network-nat-auto-detect--bridge-toggles)
+    - [Disable outgoing NAT on a specific bridge](#disable-outgoing-nat-on-a-specific-bridge)
+    - [Why bridges are pre-created](#why-bridges-are-pre-created)
   - [Step 6 - Pick scenario](#step-6---pick-scenario)
-  - [Step 7 - Deployer + passwords + auto-deploy](#step-7---deployer--passwords--auto-deploy)
+  - [Step 7 - Deployer + auto-deploy](#step-7---deployer--auto-deploy)
+    - [Deployer-cli location (IP)](#deployer-cli-location-ip)
+    - [Deployer-cli user](#deployer-cli-user)
+    - [Confirm and trigger the deployer-cli install](#confirm-and-trigger-the-deployer-cli-install)
+    - [Auto-deploy starts](#auto-deploy-starts)
   - [Step 8 - Deploy the scenario itself](#step-8---deploy-the-scenario-itself)
+    - [8a. Load your context](#8a-load-your-context)
+    - [8b. Deploy the scenario VMs](#8b-deploy-the-scenario-vms)
 - [What you can do after deploy](#what-you-can-do-after-deploy)
   - [Using range42-context](#using-range42-context)
     - [List configured contexts](#list-configured-contexts)
@@ -136,11 +148,10 @@ The wizard and `range42-context` need these open from your operator machine to t
 |------|----------|----------|
 | 22 | TCP | SSH (root for bootstrap, jump_user for ProxyJump after) |
 | 8006 | HTTPS | Proxmox API (VM lifecycle, network config, etc.) |
-| 9200 | HTTPS | Wazuh indexer API (only if you deploy a wazuh-enabled scenario) |
 
-If you're behind a firewall, allow at least 22 + 8006. Port 9200 is only needed
-if you deploy `demo_lab` (or enable the optional admin infrastructure in a blank
-scenario) - not for this guide.
+
+If you're behind a firewall, allow at least 22 + 8006. 
+
 
 ---
 
@@ -172,8 +183,8 @@ git clone https://github.com/range42/range42.git
 ### Step 1 - Launch the wizard (preflight)
 
 ```bash
-cd range42
-python3 range42-init.py
+cd ~/range42/range42
+./range42-init.py
 ```
 
 ![Step 1 - wizard launch](docs/img/step-01-launch.png)
@@ -190,20 +201,47 @@ the wizard offers to install it (textual, ansible, sshpass, keychain).
 If anything is missing, the wizard either auto-installs (apt) or shows the
 fix command for you to run manually.
 
+### Step 1b - Confirm install paths
+
+![Step 1b - install paths](docs/img/step-01b-install-path.png)
+
+**What you do:** review the install paths and confirm.
+
+The wizard asks where to put two things:
+- **range42 git repos** → default: `$HOME/range42/`
+- **range42 workspaces** (per-codename configs, secrets, SSH keys) → default: `$HOME/range42.config/`
+
+**Recommended: keep the defaults.** Changing them is possible but it is one of
+the **rare elements we recommend not to modify** — many internal scripts,
+templates and helper functions reference these paths, and a non-default layout
+can make troubleshooting harder.
+
+**Behind the scenes:**
+- The chosen paths are stored in the wizard config and propagated to:
+  - `inventories/<codename>/group_vars/all/vars.yml`
+  - `~/range42.config/<codename>-<scenario>/sourced_range42.sh`
+  - SSH config templates, vault paths, devkit scripts
+
 ### Step 2 - Choose new or existing
 
-![Step 2 - existing or new](docs/img/step-02-new.png)
+What you see at this step depends on whether you've already deployed range42 on this machine.
 
-**What you do:** first-time setup → pick `◆ new`. If you already deployed a
-config, you'll see it listed and can overwrite it.
+**First-time setup** — no previous configuration is detected, the wizard goes straight to "new":
+
+![Step 2 - first-time setup](docs/img/step-02-new-01.png)
+
+**Subsequent runs** — at least one previous configuration exists, the wizard offers a choice:
+
+![Step 2 - new or existing](docs/img/step-02-new-or-existing-01.png)
+
+**What you do:** first-time setup → nothing to pick, just continue. If you already deployed a config, you'll see it listed and can either start a new one or overwrite an existing one.
 
 **Behind the scenes:**
 - Scans `inventories/` for existing setups (folders with `hosts.yml`)
 - For each, parses `group_vars/` to detect deployed scenarios
-- Shows one button per `codename + scenario` combination
+- Shows one button per `codename + scenario` combination, plus `◆ new`
 
-If you pick "new", an empty inventory will be created. If you pick an existing
-one, the wizard pre-fills all fields from `group_vars/all/vars.yml`.
+If you pick "new", an empty inventory will be created. If you pick an existing one, the wizard pre-fills all fields from `group_vars/all/vars.yml`.
 
 ### Step 3 - Enter your infrastructure codename
 
@@ -222,13 +260,52 @@ This becomes the namespace for everything related to this Proxmox.
 
 **What you do:**
 - **Address**: IP or hostname of your Proxmox (e.g., `192.168.1.10`)
-- **Node**: Proxmox node name, usually `pve`
+- **Node**: Proxmox node name (see below)
+
+#### The PVE node name must be exact
+
+The wizard asks for the **Proxmox node name**. This is **not** a label you choose - it must match exactly the node name as it appears in the Proxmox web UI / API. Often it's `pve` on a single-node setup, but it can also be `pve01`, the hostname, or anything the cluster admin set.
+
+![Step 4 - PVE strict node name](docs/img/step-04-pve-strict-name.png)
+
+You can find the exact name in the Proxmox web console (left sidebar tree, the entry under "Datacenter") or via SSH on the Proxmox host: `pvesh get /nodes --output-format json | jq -r '.[].node'`.
+
+If the name doesn't match exactly, the wizard's API calls will fail at Step 4 validation (or later at deploy time on `vm_create`).
 
 **Behind the scenes:**
 - Tests HTTPS reachability to `https://<address>:8006`
-- Validates the node name exists in Proxmox API
+- Validates the node name exists in Proxmox API (`GET /nodes`)
 
 No changes are made yet - this is read-only verification.
+
+#### Proxmox root password
+
+The wizard then prompts for the Proxmox **root password**.
+
+![Step 4 - Proxmox root password](docs/img/step-04-root-password-proxmox.png)
+
+**What it's used for:**
+- Install the range42 root SSH key in `/root/.ssh/authorized_keys` (one-shot, via `sshpass`)
+- Create the `jump_user` Linux account on Proxmox
+- Create the `range42_api` PAM user + API token via `pveum`
+- Configure Proxmox locale, NTP, IP forwarding, network bridges (`vmbr140-148`), NAT rules
+
+After this bootstrap, root SSH is no longer used — daily operations go through the `jump_user` and the API token (see [Why a `jump_user` and not just root?](#why-a-jump_user-and-not-just-root) below).
+
+**Privacy note:** the password is held in memory by the wizard for the duration of the run and never written to disk.
+
+#### Deployer-cli sudo password
+
+The wizard also prompts for the **sudo password on the deployer-cli** (your local machine in the default setup).
+
+![Step 4 - deployer-cli sudo password](docs/img/step-04-deployer-cli-sudo-password.png)
+
+**What it's used for:**
+- `apt install` packages required by the deployer-cli role (ansible, git, keychain, zsh, sshpass, etc.)
+- Install dotfiles and configure system services (locale, NTP)
+- Write SSH config under `~/.ssh/` (no sudo strictly needed for `~/.ssh`, but other steps in the role need it)
+
+If the deployer-cli is your local machine (the default), this is your own sudo password. If you target a remote deployer-cli VM, this is the sudo password of the user on that VM.
 
 ### Step 5 - Network (NAT auto-detect + bridge toggles)
 
@@ -236,12 +313,29 @@ No changes are made yet - this is read-only verification.
 
 **What you do:**
 - The wizard auto-detects your outbound NAT interface (typically `vmbr0`)
-- Bridges `vmbr140` to `vmbr148` are listed with NAT toggle each
+- Bridges `vmbr140` to `vmbr148` are listed with a NAT toggle each
 - Defaults are fine - accept
+
+#### Disable outgoing NAT on a specific bridge
+
+If you want to **isolate one or several subnets from internet access**, just click on the corresponding bridge in the list to toggle off its outgoing NAT.
+
+![Step 5 - outgoing NAT toggle](docs/img/step-05-outgoing-nat.png)
+
+This is useful for fully air-gapped subnets (e.g., a sensitive forensic VM, an offline analysis lab) — VMs on a NAT-disabled bridge can still talk to other VMs on the same subnet, but cannot reach the internet through the Proxmox host.
+
+#### Why bridges are pre-created
+
+By default, range42 **pre-creates all the bridges listed in the wizard** (`vmbr140` to `vmbr148`) on the Proxmox host as part of this step, even if your scenario only uses a few of them.
+
+**Why:** it saves time on later deployments. Once the bridges exist, deploying any scenario (or adding a new one with more subnets) requires no Proxmox network reconfiguration — the wizard just clones VMs onto the already-existing bridges. The cost is minimal: an unused bridge is just a Linux interface with no traffic.
 
 **Behind the scenes:**
 - SSH to Proxmox as root, runs `ip route get 1.1.1.1 | awk '{print $5}'`
 - Identifies outbound interface (typically `vmbr0`)
+- Creates the `vmbr140-148` bridges via `pvesh create /nodes/<node>/network` (idempotent — skipped if already present)
+- Injects per-bridge NAT rules (post-up/post-down iptables MASQUERADE) for bridges with NAT enabled
+- Reloads Proxmox network config (`ifreload -a`)
 - Stores in inventory:
   - `infrastructure_proxmox_default_network_card_interface: vmbr0`
   - Per-bridge `nat: true/false` toggle
@@ -256,20 +350,50 @@ No changes are made yet - this is read-only verification.
 - Stored as `INFRASTRUCTURE_SCENARIO` in `group_vars/all/vars.yml`
 - Determines which J2 templates the deploy will use
 
-### Step 7 - Deployer + passwords + auto-deploy
+### Step 7 - Deployer + auto-deploy
 
-![Step 7 - deployer + passwords](docs/img/step-07-passwords.png)
+This step asks **where** the deployer-cli will run (location + user) and then launches the full deployment. The two passwords (Proxmox root + deployer-cli sudo) were already collected at [Step 4](#step-4---proxmox-connection-details).
 
-**What you do:**
-- **Deployer-cli IP**: `127.0.0.1` (we run from this machine)
-- **Deployer-cli user**: your username
-- **Sudo password**: for local apt installs
-- **Proxmox root password**: used once to install the SSH root key
+#### Deployer-cli location (IP)
 
-The wizard then runs the full deployment automatically (~10-15 min).
+![Step 7 - deployer-cli location](docs/img/step-07-location.png)
 
-**Behind the scenes:** the wizard runs `ansible-playbook site.yml` which
-executes 3 playbooks in sequence.
+**What you do:** enter the IP / hostname where the deployer-cli will be configured.
+
+**By default, range42 deploys the deployer-cli on the same machine where you run the wizard** — so the default value is `127.0.0.1`. Most users keep this.
+
+If you want a dedicated deployer-cli VM (e.g., to manage multiple Proxmox infrastructures from one place, or to keep credentials off your laptop), enter that VM's IP instead. The VM must already exist and be reachable over SSH.
+
+#### Deployer-cli user
+
+![Step 7 - deployer-cli user](docs/img/step-07-deployer-user.png)
+
+**What you do:** enter the Linux user that will own the workspace on the deployer-cli.
+
+If you kept `127.0.0.1` above, this is your current local user (typically what `whoami` returns). On a dedicated deployer-cli VM, this is the user that will hold `~/range42/`, `~/range42.config/`, `~/.ssh/range42/`, etc.
+
+The user must:
+- Already exist on the deployer-cli machine
+- Have sudo rights (for the apt installs in Playbook 03)
+- Be reachable over SSH from the wizard machine (only if you target a remote deployer-cli)
+
+#### Confirm and trigger the deployer-cli install
+
+This is the **last interactive prompt** — the wizard shows a recap of everything it's about to do (Proxmox address, codename, scenario, deployer-cli location/user, network bridges) and asks you to confirm before any change is made on Proxmox or on the deployer-cli.
+
+![Step 8 - confirm deployer-cli install](docs/img/step-08-deployer-cli-install.png)
+
+**What you do:** review the recap, then confirm to launch the install.
+
+**Why a confirmation step:** up to here the wizard has only been **collecting input and doing read-only checks** (HTTPS reachability, node name validation). The moment you confirm, the wizard starts making real changes — installing SSH keys on Proxmox, creating the jump_user, generating the API token, writing the vault, configuring the deployer-cli. This is your last opportunity to abort cleanly.
+
+If you abort here (Ctrl-C or "Cancel"), nothing has been touched on Proxmox or on the deployer-cli yet — your input is just discarded.
+
+#### Auto-deploy starts
+
+After confirming, the wizard runs the full deployment automatically (~10-15 min).
+
+**Behind the scenes:** the wizard runs `ansible-playbook site.yml` which executes 3 playbooks in sequence.
 
 #### Playbook 01 - credentials.generate
 
@@ -349,19 +473,49 @@ After this, `range42-context use <codename> <scenario>` works.
 
 ### Step 8 - Deploy the scenario itself
 
-This isn't a wizard step - you run it manually.
+This isn't a wizard step - you run it manually after the wizard finishes.
+
+#### 8a. Load your context
+
+Open a new terminal (or `source ~/.zshrc` in the current one), then load the workspace you just created:
 
 ```bash
-source ~/.zshrc           # or open a new terminal
-range42-context use mylab blank_scenario_2_subnets
-range42-context deploy    # ~15-20 min for first deploy
+range42-context use YOUR_CODENAME_INFRASTRUCTURE blank_scenario_2_subnets
 ```
 
-Equivalent to running directly:
+You should see `range42-context` switch into the workspace, with output like this:
+
+```
+----[ switching to px-testing-blank_scenario_2_subnets ]----
+
+    ➜ commented all active Include lines
+    ➜ uncommented Include for px-testing-blank_scenario_2_subnets
+    ➜ commented all sourced_range42.sh in .zshrc
+    ➜ uncommented sourced_range42.sh for px-testing-blank_scenario_2_subnets in .zshrc
+    ➜ sourced /home/grml/range42.config/px-testing-blank_scenario_2_subnets/sourced_range42.sh
+    ➜ updated secrets symlink in devkit → px-testing-blank_scenario_2_subnets
+    ➜ updated secrets symlink in playbooks → px-testing-blank_scenario_2_subnets
+    ➜ exported RANGE42_VAULT_PASSWORD_FILE=/home/grml/range42.config/px-testing-blank_scenario_2_subnets/secrets/vault_pass.txt
+    ➜ exported ANSIBLE_CONFIG=/home/grml/range42/range42/ansible.cfg
+    ✓ ssh keys reloaded (3 key(s) loaded)
+
+    --- status : px-testing-blank_scenario_2_subnets ---
+
+    workspace        px-testing-blank_scenario_2_subnets  ok
+    vault pass       vault_pass.txt                       ok
+    vault            encrypted                            ok
+    vault decrypt    password valid                       ok
+    ssh-agent        3 key(s) loaded                      ok
+    inventory        inventory_default.yml                ok
+    scenario         blank_scenario_2_subnets             ok
+```
+
+If every line of the status block ends with `ok`, the workspace is loaded correctly and you're ready to deploy. If anything is `ko`, see [Troubleshooting](#troubleshooting).
+
+#### 8b. Deploy the scenario VMs
 
 ```bash
-cd ~/range42/range42-playbooks/scenarios/blank_scenario_2_subnets
-./blank_scenario_2_subnets.setup.sh
+range42-context deploy    # ~15-20 min for first deploy
 ```
 
 **Behind the scenes:**
