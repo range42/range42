@@ -148,11 +148,10 @@ The wizard and `range42-context` need these open from your operator machine to t
 |------|----------|----------|
 | 22 | TCP | SSH (root for bootstrap, jump_user for ProxyJump after) |
 | 8006 | HTTPS | Proxmox API (VM lifecycle, network config, etc.) |
-| 9200 | HTTPS | Wazuh indexer API (only if you deploy a wazuh-enabled scenario) |
 
-If you're behind a firewall, allow at least 22 + 8006. Port 9200 is only needed
-if you deploy `demo_lab` (or enable the optional admin infrastructure in a blank
-scenario) - not for this guide.
+
+If you're behind a firewall, allow at least 22 + 8006. 
+
 
 ---
 
