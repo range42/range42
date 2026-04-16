@@ -1,0 +1,52 @@
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+#       infrastructure code name : {{ INFRASTRUCTURE_CODENAME }}
+# infrastructure proxmox address : {{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+#                       scenario : {{ INFRASTRUCTURE_SCENARIO }}
+#
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      PROXMOX WEB UI (port forward)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host px.{{ INFRASTRUCTURE_CODENAME }}.redirect_www.proxmox
+    RequestTTY no
+    RemoteCommand none
+    localforward localhost:18042 {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}:8006
+    localcommand sh -c '/usr/bin/chromium-browser --incognito --new-window --disable-translate  https://127.0.0.1:18042 &'
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      PX ROOT USER SSH ACCESS
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host px.{{ INFRASTRUCTURE_CODENAME }}-ssh_cli.root {{ INFRASTRUCTURE_CODENAME }}-cli
+    Hostname {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}
+    User root
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root
+    Port 22
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SSH JUMPER
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host px.{{ INFRASTRUCTURE_CODENAME }}.jumper
+    Hostname {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}
+    User jump_user
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR }}/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user
+    Port 22
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#                                      SUBNET 147 (vmbr147)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.dsa-vm-01
+    Hostname 192.168.147.250
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+Host r42.dsa-vm-*
+    User alice
+    IdentityFile {{ DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR }}/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice
+    Port 22
+    ProxyJump px.{{ INFRASTRUCTURE_CODENAME }}.jumper
