@@ -30,7 +30,7 @@ The recommended way to deploy range42 is the setup wizard:
 
 ```bash
 sudo apt-get update ; apt-get upgrade -y
-sudo apt-get install python3-venv
+sudo apt-get install python3-venv git
 mkdir -p $HOME/range42 && cd $HOME/range42
 git clone https://github.com/range42/range42.git
 cd range42

@@ -169,8 +169,9 @@ itself will clone the rest (playbooks, catalog, controller, devkit) on the
 deployer-cli during deploy.
 
 ```bash
-mkdir -p ~/range42
-cd ~/range42
+sudo apt-get update ; apt-get upgrade -y
+sudo apt-get install python3-venv git
+mkdir -p $HOME/range42 && cd $HOME/range42
 git clone https://github.com/range42/range42.git
 ```
 

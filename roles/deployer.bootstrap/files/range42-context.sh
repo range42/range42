@@ -180,6 +180,37 @@ _r42_list() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context flush known_hosts — remove stale host keys for a workspace
+#
+# Extracts all Hostname IPs from the workspace's SSH config file and removes
+# them from known_hosts. This prevents "REMOTE HOST IDENTIFICATION HAS CHANGED"
+# errors when switching between infrastructures that share the same VM IPs.
+#
+# Called by: _r42_use, _r42_deploy, _r42_deploy_vms
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_flush_known_hosts() {
+    local target="${1:-}"
+    local ssh_config_file="$HOME/.ssh/config_range42-${target}"
+
+    if [[ ! -f "$ssh_config_file" ]]; then
+        return 0
+    fi
+
+    local flushed=0
+    grep -i '^\s*Hostname ' "$ssh_config_file" 2>/dev/null |
+        awk '{print $2}' |
+        grep -E '^[0-9]+\.' |
+        sort -u |
+        while read -r ip; do
+            ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$ip" >/dev/null 2>&1
+            flushed=$((flushed + 1))
+        done
+
+    _r42_print_step "flushed known_hosts for $target"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context ssh-reload — reload SSH keys for active workspace (T45)
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -301,6 +332,10 @@ _r42_use() {
         ln -sfn "$config_dir/secrets" "$playbooks_secrets"
         _r42_print_step "updated secrets symlink in playbooks → $target"
     fi
+
+    #### flush known_hosts for the target workspace (avoid stale host keys on multi-infra)
+
+    _r42_flush_known_hosts "$target"
 
     #### export vault password file path (T46b)
 
@@ -581,6 +616,7 @@ _r42_deploy() {
     fi
 
     _r42_print_section "deploying scenario"
+    _r42_flush_known_hosts "${RANGE42_ACTIVE_WORKSPACE:-}"
     _r42_print_step "running: $setup_script"
     echo ""
 
@@ -614,6 +650,7 @@ _r42_deploy_vms() {
     fi
 
     _r42_print_section "deploying VMs only (skip templates)"
+    _r42_flush_known_hosts "${RANGE42_ACTIVE_WORKSPACE:-}"
     _r42_print_step "running: $script"
     echo ""
 

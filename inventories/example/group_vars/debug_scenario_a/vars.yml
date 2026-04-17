@@ -1,0 +1,35 @@
+---
+################################################################################
+# range42 — scenario-specific variables (debug_scenario_a)
+#
+# Minimal debug/dev scenario — 1 VM on vmbr147
+# Designed for fast iteration and multi-scenario testing.
+#
+# For shared variables → group_vars/all/vars.yml
+# For secrets → vault.yml (see vault.yml.example)
+#
+################################################################################
+
+
+#### SCENARIO IDENTIFICATION ####
+
+INFRASTRUCTURE_SCENARIO: "debug_scenario_a"
+
+
+#### CREDENTIAL GENERATION ####
+
+# auto-generate ssh keys and passwords (YES/NO)
+context_auto_generate_ssh_keys: "YES"
+context_auto_generate_vm_passwords: "YES"
+
+# number of additional student ssh keys (bob_1 .. bob_N)
+student_additionnal_keys_count: 1
+
+
+#### CLOUD-INIT USERNAMES ####
+
+# admin vm user (not secret — password and ssh key are in vault)
+default_admin_vm_ci_user: "alice"
+
+# student vm user
+default_trainee_vm_ci_user: "bob"

@@ -1,0 +1,22 @@
+all:
+  children:
+    range42_infrastructure:
+      children:
+        ####
+
+        r42_debug_group:
+          hosts:
+            r42.dsb-vm-01:
+
+        ####
+
+        proxmox:
+          hosts:
+            {{ INFRASTRUCTURE_CODENAME }}:
+              ansible_host: {{ INFRASTRUCTURE_PROXMOX_ADDRESS | mandatory }}:8006
+              ansible_connection: local
+              ansible_python_interpreter: /usr/bin/python3
+
+        proxmox-cli:
+          hosts:
+            {{ INFRASTRUCTURE_CODENAME }}-cli:
