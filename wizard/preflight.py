@@ -7,6 +7,7 @@ Pure stdlib — no textual dependency. Used by range42-init.py before TUI starts
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 # ── check definitions ────────────────────────────────────────────────────────
 
@@ -155,6 +156,19 @@ def run_all_checks(example_dir):
         "required": True,
     })
 
+    # range42-playbooks repo check (auto-clone if missing)
+    # script_dir = range42/ repo root — from example_dir (inventories/example) go up 2 levels
+    script_dir = Path(example_dir).parent.parent
+    badge, detail = ensure_playbooks_repo(script_dir)
+    if badge == "FAIL":
+        fail = True
+    results.append({
+        "badge": badge,
+        "label": "range42-playbooks",
+        "detail": detail,
+        "required": True,
+    })
+
     # ssh-agent running check
     agent_running = check_ssh_agent_running()
     results.append({
@@ -183,3 +197,81 @@ def get_apt_install_command(results):
     if not packages:
         return None
     return "sudo apt-get update && sudo apt-get install -y " + " ".join(sorted(packages))
+
+
+# files required in each scenario's templates/ dir for it to be deployable
+# (duplicated in range42-init.py to avoid circular imports; keep in sync)
+_SCENARIO_REQUIRED_FILES = (
+    "ansible-inventory.j2",
+    "ansible-vars.yml",
+    "ssh-config.j2",
+    "vault-example.yml",
+)
+
+
+def _has_deployable_scenario(scenarios_dir):
+    """Return True if scenarios_dir contains at least one scenario with a complete templates/ dir."""
+    if not scenarios_dir.exists():
+        return False
+    for d in scenarios_dir.iterdir():
+        if not d.is_dir() or d.name.startswith("_"):
+            continue
+        tmpl = d / "templates"
+        if tmpl.is_dir() and all((tmpl / f).exists() for f in _SCENARIO_REQUIRED_FILES):
+            return True
+    return False
+
+
+def ensure_playbooks_repo(script_dir):
+    """
+    Ensure range42-playbooks is cloned as a sibling of the range42 repo AND
+    that at least one scenario is deployable (has a complete templates/ dir).
+
+    After the scenario-templates migration refactor, scenario templates + group_vars
+    live in range42-playbooks. The wizard (and the Ansible roles) need a local
+    clone on the operator to find them (the template module reads src on the
+    controller, not on the target).
+
+    Behavior:
+      - if sibling dir exists with at least 1 deployable scenario → PASS
+      - if sibling dir exists but no deployable scenario → FAIL (outdated clone)
+      - if sibling dir is missing → attempt silent git clone → PASS if clone OK
+      - any failure (no network, git missing, clone timeout, etc.) → FAIL
+
+    Returns: (badge, detail)
+    """
+    playbooks_dir = Path(script_dir).parent / "range42-playbooks"
+    scenarios_dir = playbooks_dir / "scenarios"
+
+    # Case 1: dir exists and has at least one deployable scenario
+    if playbooks_dir.exists() and _has_deployable_scenario(scenarios_dir):
+        return "PASS", f"  {playbooks_dir}"
+
+    # Case 2: dir exists but is outdated (no deployable scenario)
+    # can't auto-update (would need git pull, risky for user local changes)
+    if playbooks_dir.exists():
+        return "FAIL", (
+            f"  {playbooks_dir} exists but has no deployable scenario "
+            f"(missing templates/ in scenarios/*/). "
+            f"Update with: cd {playbooks_dir} && git pull"
+        )
+
+    # Case 3: dir missing → try clone
+    try:
+        subprocess.run(
+            ["git", "clone", "--quiet",
+             "https://github.com/range42/range42-playbooks.git",
+             str(playbooks_dir)],
+            check=True, capture_output=True, text=True, timeout=60,
+        )
+        # verify the clone yielded at least one deployable scenario
+        if not _has_deployable_scenario(scenarios_dir):
+            return "FAIL", f"  cloned but no deployable scenario found in {scenarios_dir}"
+        return "PASS", f"  cloned → {playbooks_dir}"
+    except subprocess.CalledProcessError as e:
+        err = e.stderr.strip().splitlines()[-1] if e.stderr else "unknown error"
+        return "FAIL", f"  clone failed: {err}"
+    except subprocess.TimeoutExpired:
+        return "FAIL", "  clone timed out (check network)"
+    except FileNotFoundError:
+        return "FAIL", "  git not found (install git first)"
