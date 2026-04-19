@@ -8,9 +8,8 @@
 # Idempotent: yes (force: yes overwrites existing symlinks)
 #
 # Extracted from: configure.deployer-cli tasks:
-#   - 06_symlinks.yml           → 00_symlink_secrets.yml
-#   - 10_context_tools.yml      → 01_symlink_scenario.yml
-#                               → 02_deploy_context_tools.yml
+#   - 06_symlinks.yml      → 00_symlink_secrets.yml
+#   - 10_context_tools.yml → 01_symlink_scenario.yml
 #
 # Requires: deployer.repos (git repos cloned), workspace.init (directories exist)
 #
@@ -18,7 +17,10 @@
 #   - range42-ansible_roles-debug-devkit/secrets → config_dir/secrets
 #   - range42-playbooks/scenarios/SCENARIO/secrets → config_dir/secrets
 #   - config_dir/scenario → range42-playbooks/scenarios/SCENARIO
-#   - config_dir/bin/workspace_utils.sh → config_dir/workspace_utils.sh
+#
+# Context switching + SSH key management are handled by range42-context
+# (shell function sourced from .zshrc, deployed by deployer.bootstrap).
+# workspace_utils.sh and unlock-sshkeys.sh have been decommissioned.
 #
 # Variables consumed:
 #   - DEPLOYER_CLI_USER
@@ -30,4 +32,3 @@
 
 - import_tasks: ./00_symlink_secrets.yml
 - import_tasks: ./01_symlink_scenario.yml
-- import_tasks: ./02_deploy_context_tools.yml

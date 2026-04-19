@@ -26,7 +26,7 @@ try:
     from textual.widget import Widget
     from textual.widgets import (
         Button, DataTable, Footer, Header,
-        Input, Label, LoadingIndicator, RichLog, Static, Rule, Switch,
+        Input, Label, LoadingIndicator, RichLog, Select, Static, Rule, Switch,
     )
 
     # themes — hex-only, independent of terminal palette
@@ -132,13 +132,43 @@ from rich.text import Text
 SCRIPT_DIR  = Path(__file__).parent.resolve()
 INVENTORIES = SCRIPT_DIR / "inventories"
 EXAMPLE_DIR = INVENTORIES / "example"
+# range42-playbooks lives as a sibling of the range42 repo on the operator machine.
+# preflight auto-clones it if missing (see wizard/preflight.py:ensure_playbooks_repo).
+PLAYBOOKS_DIR = SCRIPT_DIR.parent / "range42-playbooks"
+
+# files required in each scenario's templates/ dir for it to be deployable
+SCENARIO_REQUIRED_FILES = (
+    "ansible-inventory.j2",
+    "ansible-vars.yml",
+    "ssh-config.j2",
+    "vault-example.yml",
+)
+
+
+def list_deployable_scenarios():
+    """
+    Return sorted list of scenario names in range42-playbooks/scenarios/ that
+    have a complete templates/ dir (all 4 required template files present).
+    Scenarios starting with '_' are treated as non-deployable placeholders.
+    """
+    scenarios_dir = PLAYBOOKS_DIR / "scenarios"
+    if not scenarios_dir.exists():
+        return []
+    out = []
+    for d in sorted(scenarios_dir.iterdir()):
+        if not d.is_dir() or d.name.startswith("_"):
+            continue
+        tmpl = d / "templates"
+        if tmpl.is_dir() and all((tmpl / f).exists() for f in SCENARIO_REQUIRED_FILES):
+            out.append(d.name)
+    return out
 
 # ── state ──────────────────────────────────────────────────────────────────────
 class _S:
     codename        = ""
     proxmox_address = ""
     proxmox_node    = "pve"
-    scenario        = "demo_lab"
+    scenario        = "blank_scenario_2_subnets"
     deployer_user   = os.environ.get("USER", "")
     deployer_ip     = "127.0.0.1"
     network_iface   = "enp3s0"
@@ -244,6 +274,10 @@ Rule    { color: $panel; margin: 1 0; }
 .field        { margin-bottom: 3; }
 Input         { background: $surface; border: tall $panel; color: $foreground; }
 Input:focus   { border: tall $primary; }
+
+/* Select dropdown — keep narrow so the ▼ arrow indicator stays visible */
+Select        { background: $surface; border: tall $panel; color: $foreground; width: 40; }
+Select:focus  { border: tall $primary; }
 
 .pf-badge-pass  { color: $success; width: 7; text-style: bold; }
 .pf-badge-warn  { color: $accent; width: 7; text-style: bold; }
@@ -845,15 +879,41 @@ class StepScenario(Step):
         yield Rule()
         yield Static(
             "  Which lab scenario to deploy on this infrastructure.\n\n"
-            "  demo_lab is the standard cyber range with admin VMs,\n"
-            "  student boxes, and vulnerable targets.\n\n"
-            "  If you're unsure, keep the default.",
+            "  blank_scenario_2_subnets is the minimal lab (4 VMs on 2 subnets) — default.\n"
+            "  demo_lab is the full cyber range with admin + student + vulnerable hosts.\n\n"
+            "  Pick from the list of deployable scenarios in range42-playbooks.",
             classes="muted")
         yield Static("")
-        yield Input(value=S.scenario, placeholder="demo_lab", id="i-scenario")
+
+        scenarios = list_deployable_scenarios()
+        if scenarios:
+            # pre-select current S.scenario if valid, else blank_scenario_2_subnets, else first available
+            if S.scenario in scenarios:
+                initial = S.scenario
+            elif "blank_scenario_2_subnets" in scenarios:
+                initial = "blank_scenario_2_subnets"
+            else:
+                initial = scenarios[0]
+            yield Select(
+                [(s, s) for s in scenarios],
+                value=initial,
+                allow_blank=False,
+                id="i-scenario",
+            )
+        else:
+            # defensive fallback — preflight should have caught this
+            yield Static(
+                "  [FAIL] no deployable scenarios found in range42-playbooks.\n"
+                "  Re-run preflight to auto-clone the repo.",
+                classes="muted")
+            yield Input(value=S.scenario, placeholder="blank_scenario_2_subnets", id="i-scenario")
 
     def handle_next(self, app):
-        S.scenario = self.query_one("#i-scenario", Input).value.strip() or "demo_lab"
+        w = self.query_one("#i-scenario")
+        if isinstance(w, Select):
+            S.scenario = w.value if w.value is not Select.BLANK else "blank_scenario_2_subnets"
+        else:
+            S.scenario = w.value.strip() or "blank_scenario_2_subnets"
         app._go(StepDeployerIP())
 
     def handle_back(self, app): app._go(StepNATBridges())
@@ -1098,8 +1158,8 @@ class StepDeploy(Step):
             yield Label("", id="ow-msg", classes="warn")
             yield Static("")
             with Horizontal():
-                yield Button("  Yes, overwrite  ", id="b-overwrite", classes="-ok")
-                yield Button("  Cancel  ",         id="b-cancel-ow", classes="-danger")
+                yield Button("  Yes, update  ", id="b-overwrite", classes="-ok")
+                yield Button("  Cancel  ",      id="b-cancel-ow", classes="-danger")
         yield RichLog(id="log", highlight=True, markup=True)
         # deploy choice shown after inventory creation
         with Horizontal(id="deploy-btns"):
@@ -1114,7 +1174,8 @@ class StepDeploy(Step):
         if dest.exists():
             self.query_one("#ow-msg", Label).update(
                 f"  ⚠  inventories/{S.codename}/  already exists.\n\n"
-                f"  This will overwrite the existing configuration.")
+                f"  This will refresh hosts.yml + group_vars/all/vars.yml with current values.\n"
+                f"  Existing scenario configs (group_vars/<scenario>/) are preserved.")
             self.query_one("#overwrite-confirm").display = True
         else:
             self.create_inventory()
@@ -1141,16 +1202,30 @@ class StepDeploy(Step):
                         f"[bold {col}]{b:6}[/bold {col}]  {m}  [dim]{k}[/dim]"))
 
         dest = INVENTORIES / S.codename
+        scenario_tmpl = PLAYBOOKS_DIR / "scenarios" / S.scenario / "templates"
+
+        # validate the scenario: dir must exist AND contain all 4 required template files
+        # (replaces the old copytree(demo_lab) fallback — each scenario is now authoritative)
+        if not scenario_tmpl.exists():
+            log_row("FAIL", f"scenario '{S.scenario}' not found in range42-playbooks",
+                    f"expected dir: {scenario_tmpl}")
+            return
+        missing = [f for f in SCENARIO_REQUIRED_FILES if not (scenario_tmpl / f).exists()]
+        if missing:
+            log_row("FAIL", f"scenario '{S.scenario}' is incomplete",
+                    f"missing in templates/: {', '.join(missing)}")
+            return
+
+        was_new = not dest.exists()
         try:
-            if not dest.exists():
-                sh.copytree(EXAMPLE_DIR, dest)
-                log_row("PASS", "created", f"path=inventories/{S.codename}/")
-            else:
-                # update hosts.yml and vars.yml from example without deleting existing scenarios
-                import shutil as _sh
-                _sh.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
-                _sh.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml", dest / "group_vars" / "all" / "vars.yml")
-                log_row("PASS", "updated", f"path=inventories/{S.codename}/ (preserved existing scenarios)")
+            # create skeleton: hosts.yml + group_vars/all/ only
+            # scenario group_vars are populated further down from playbooks templates
+            (dest / "group_vars" / "all").mkdir(parents=True, exist_ok=True)
+            sh.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
+            sh.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml",
+                     dest / "group_vars" / "all" / "vars.yml")
+            log_row("PASS", "created" if was_new else "updated",
+                    f"path=inventories/{S.codename}/")
         except PermissionError as e:
             log_row("FAIL", f"permission denied: {e}")
             return
@@ -1207,14 +1282,18 @@ class StepDeploy(Step):
                 f"codename={S.codename}  node={S.proxmox_node}  nat={S.nat_interface}")
         time.sleep(0.1)
 
-        if S.scenario != "demo_lab" and (dest/"group_vars"/"demo_lab").exists() and not scen.exists():
-            import shutil
-            shutil.copytree(dest/"group_vars"/"demo_lab", scen)
-        sv = scen / "vars.yml"
-        if sv.exists():
-            sed_f(sv, 'INFRASTRUCTURE_SCENARIO: "demo_lab"',
-                  f'INFRASTRUCTURE_SCENARIO: "{S.scenario}"')
-        log_row("PASS", "configured scenario", f"name={S.scenario}")
+        # populate scenario group_vars from range42-playbooks/scenarios/<s>/templates/
+        #   ansible-vars.yml   → vars.yml          (renamed back to Ansible convention)
+        #   vault-example.yml  → vault.yml.example (same rename pattern)
+        # if the scenario dir already exists (re-run on same codename+scenario),
+        # preserve ALL existing files — user may have edited vars.yml or filled vault.yml.
+        if not scen.exists():
+            scen.mkdir(parents=True, exist_ok=True)
+            sh.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
+            sh.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
+            log_row("PASS", "configured scenario", f"name={S.scenario}")
+        else:
+            log_row("PASS", "preserved scenario", f"name={S.scenario} (existing config untouched)")
         log_row("PASS", "vault template ready", "file=vault.yml.example")
         time.sleep(0.2)
 
@@ -1357,6 +1436,7 @@ def post_wizard():
         _print_cmd("")
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
+        _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
         _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
         return
@@ -1391,9 +1471,16 @@ def post_wizard():
     _print_info(f"running: ansible-playbook site.yml -i inventories/{S.codename}/hosts.yml")
     print()
 
+    # -e @<scenario_vars_file> loads scenario-specific variables as extra vars.
+    # Without this, Ansible silently ignores inventories/<cn>/group_vars/<scenario>/vars.yml
+    # because no inventory group matches the scenario name — role defaults would win,
+    # and user edits to vars.yml would have no effect on deployed VMs.
+    # Placed FIRST so the wizard's scalar -e overrides below still take precedence.
+    scenario_vars_file = f"inventories/{S.codename}/group_vars/{S.scenario}/vars.yml"
     rc = subprocess.run(
         ["ansible-playbook", "site.yml",
          "-i", f"inventories/{S.codename}/hosts.yml",
+         "-e", f"@{scenario_vars_file}",
          "-e", f"INFRASTRUCTURE_SCENARIO={S.scenario}",
          "-e", "context_ssh_keys_use_passphrase=NO",
          *extra],
@@ -1459,6 +1546,7 @@ def post_wizard():
         _print_cmd("")
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
+        _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
         _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
 
