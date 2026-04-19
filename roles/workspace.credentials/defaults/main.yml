@@ -23,3 +23,8 @@ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR: "/home/{{ DEPLOYER_CLI_USER }}/.s
 DEPLOYER_CLI__DST_SSH_KEYS_BACKEND_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/backend_keys"
 DEPLOYER_CLI__DST_SSH_KEYS_JUMP_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/jump_keys"
 DEPLOYER_CLI__DST_SSH_KEYS_STUDENT_DEST_DIR: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_KEYS_DIR }}/student_keys"
+
+# scenario templates directory on the CONTROLLER (operator's local clone)
+# the template module reads `src` on the controller, not on the target —
+# this path must always resolve to the operator's sibling range42-playbooks clone.
+SCENARIO_TEMPLATES_DIR: "{{ playbook_dir }}/../../range42-playbooks/scenarios/{{ INFRASTRUCTURE_SCENARIO }}/templates"

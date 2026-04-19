@@ -12,7 +12,7 @@
 
 - name: WORKSPACE SSH-CONFIG - GENERATE RANGE42 SSH CONFIG FROM TEMPLATE
   ansible.builtin.template:
-    src: "ssh-config-{{ INFRASTRUCTURE_SCENARIO }}.j2"
+    src: "{{ SCENARIO_TEMPLATES_DIR }}/ssh-config.j2"
     dest: "{{ DEPLOYER_CLI__DST_SSH_CONFIG_RANGE42_FILE }}"
     owner: "{{ DEPLOYER_CLI_USER }}"
     group: "{{ DEPLOYER_CLI_USER }}"
