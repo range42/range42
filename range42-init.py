@@ -6,7 +6,7 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
@@ -163,6 +163,35 @@ def list_deployable_scenarios():
             out.append(d.name)
     return out
 
+# ── wizard cache (XDG-compliant, survives reboot) ─────────────────────────────
+# Used to remember non-sensitive wizard inputs across runs (e.g. last apt proxy URL).
+# Never store credentials, vault contents, or anything per-codename here.
+_WIZARD_CACHE_DIR  = os.path.expanduser("~/.cache/range42")
+_WIZARD_CACHE_FILE = os.path.join(_WIZARD_CACHE_DIR, "wizard.json")
+
+
+def _load_wizard_cache() -> dict:
+    """Return cached wizard inputs as a dict. Silent fallback to {} on any error."""
+    try:
+        with open(_WIZARD_CACHE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, PermissionError, OSError):
+        return {}
+
+
+def _save_wizard_cache(updates: dict) -> None:
+    """Merge `updates` into the cache file. Silent fail if write impossible."""
+    try:
+        os.makedirs(_WIZARD_CACHE_DIR, exist_ok=True)
+        cache = _load_wizard_cache()
+        cache.update(updates)
+        with open(_WIZARD_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, indent=2)
+    except (PermissionError, OSError):
+        pass  # caching is best-effort, never block the wizard
+
+
 # ── state ──────────────────────────────────────────────────────────────────────
 class _S:
     codename        = ""
@@ -181,7 +210,41 @@ class _S:
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
     nat_bridges     = {f"vmbr{i}": True for i in range(140, 152)}
+    apt_proxy_url   = _load_wizard_cache().get("apt_proxy_url", "")
 S = _S()
+
+
+# ── apt proxy validation helpers ──────────────────────────────────────────────
+
+# Format: http(s)://host:port  (host can be IP or hostname; port is required)
+_APT_PROXY_RE = re.compile(r'^https?://[A-Za-z0-9._\-]+:\d+/?$')
+
+
+def _validate_apt_proxy_url(url: str) -> bool:
+    """Return True if url matches http(s)://host:port format."""
+    return bool(_APT_PROXY_RE.match(url))
+
+
+def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
+    """
+    Test reachability of an apt proxy URL via HTTP HEAD.
+    Returns (ok: bool, msg: str). 4xx/5xx counts as reachable (server responding).
+    """
+    try:
+        req = urllib.request.Request(url, method='HEAD')
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            return True, f"HTTP {resp.status}"
+    except urllib.error.HTTPError as e:
+        return True, f"HTTP {e.code}"
+    except urllib.error.URLError as e:
+        return False, str(e.reason)
+    except (TimeoutError, OSError) as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
 from wizard.preflight import run_all_checks, get_apt_install_command
@@ -302,8 +365,9 @@ LoadingIndicator { color: $primary; }
 
 # ── sidebar (table of contents) ────────────────────────────────────────────────
 STEPS = [
+    (0, "welcome"),
+    (0, "apt proxy"),
     (0, "prerequisites"),
-    (1, "welcome"),
     (2, "codename"),
     (2, "proxmox address"),
     (2, "proxmox node"),
@@ -355,10 +419,72 @@ class Step(Widget):
     def handle_back(self, app: "Range42"): pass
 
 
+# ── step 0 — apt proxy (optional) ─────────────────────────────────────────────
+class StepAptProxy(Step):
+    STEP_NUM  = 0
+    SHOW_BACK = True  # back to welcome
+
+    def handle_back(self, app):
+        app._go(StepWelcome())
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  step 0 — apt proxy (optional)", classes="title")
+        yield Rule()
+        yield Static(
+            "  If you have a local apt cache (apt-cacher-ng, Squid, etc.), enter\n"
+            "  its URL here. It will be used to speed up apt-get installs on:\n"
+            "    - the deployer-cli (during system bootstrap)\n"
+            "    - the Proxmox host (cloud-init cicustom snippet for VM templates)\n"
+            "    - all lab VMs (inherited via cloud-init from templates)\n\n"
+            "  Format: full URL with protocol AND port\n"
+            "  Examples:\n"
+            "    http://192.168.1.50:3142     (apt-cacher-ng default port)\n"
+            "    http://192.168.1.100:80      (proxy on port 80)\n\n"
+            "  Leave empty to disable. Reachability is checked on Continue.",
+            classes="muted")
+        yield Static("")
+        yield Input(value=S.apt_proxy_url, placeholder="(empty = no proxy)", id="i-apt-proxy")
+        yield Static("", id="apt-proxy-status", classes="muted")
+
+    def handle_next(self, app):
+        url = self.query_one("#i-apt-proxy", Input).value.strip()
+        status = self.query_one("#apt-proxy-status", Static)
+
+        # empty = OK, no proxy
+        if not url:
+            S.apt_proxy_url = ""
+            _save_wizard_cache({"apt_proxy_url": ""})
+            app._go(StepPreflight())
+            return
+
+        # validate format
+        if not _validate_apt_proxy_url(url):
+            status.update(
+                "[FAIL] invalid format — expected http(s)://host:port  "
+                "(e.g. http://192.168.1.50:3142)"
+            )
+            return
+
+        # reachability check
+        status.update(f"[INFO] checking reachability of {url} ...")
+        ok, msg = _check_apt_proxy_reachable(url)
+        if not ok:
+            status.update(f"[FAIL] not reachable: {msg}")
+            return
+
+        # validation passed — persist for next runs
+        S.apt_proxy_url = url
+        _save_wizard_cache({"apt_proxy_url": url})
+        app._go(StepPreflight())
+
+
 # ── step 0 — preflight ────────────────────────────────────────────────────────
 class StepPreflight(Step):
     STEP_NUM  = 0
-    SHOW_BACK = False
+    SHOW_BACK = True
+
+    def handle_back(self, app):
+        app._go(StepAptProxy())
 
     def compose(self) -> ComposeResult:
         yield Label("◆  prerequisites checks", classes="title")
@@ -505,7 +631,7 @@ class StepInstallPaths(Step):
             S.install_dir = self.query_one("#input-install-dir", Input).value.strip().rstrip("/")
         except Exception:
             pass  # recommended mode — input not mounted, use S value as-is
-        app._go(StepExisting() if existing() else StepWelcome())
+        app._go(StepExisting() if existing() else StepCodename())
 
     def handle_back(self, app):
         app._go(StepPreflight())
@@ -556,45 +682,40 @@ class StepExisting(Step):
         mode = bid[2:].split("--")[0]
         S.setup_mode = mode
         if mode != "new": prefill(mode)
-        self.app._go(StepWelcome())
+        self.app._go(StepCodename())
 
 
 # ── step 1 — welcome ──────────────────────────────────────────────────────────
 class StepWelcome(Step):
-    STEP_NUM = 1
+    STEP_NUM  = 0
+    SHOW_BACK = False  # very first step
 
     def compose(self) -> ComposeResult:
-        if S.setup_mode == "new":
-            yield Label("◆  range42  —  setup wizard", classes="title")
-            yield Rule()
-            yield Static("""\
-  Welcome to the range42 infrastructure setup.
+        yield Label("◆  range42  —  setup wizard", classes="title")
+        yield Rule()
+        yield Static("""\
+  Welcome to range42.
 
-  This wizard will guide you through the initial
-  configuration of your cyber range lab.
+  range42 deploys reproducible cyber range labs on Proxmox via Ansible.
+  This wizard configures the initial setup of a new lab environment.
 
-  It will:
-    1. Ask you a few questions about your Proxmox server
-    2. Create an Ansible inventory with your settings
-    3. Show you the exact commands to run next
+  Steps:
+    0. apt proxy (optional, speeds up package downloads)
+    1. prerequisites checks
+    2. Proxmox connection (host address, node)
+    3. scenario + deployer-cli configuration
+    4. credentials (Proxmox root, sudo, deployer-cli)
+    5. review + optional one-shot deployment
 
   You will need:
     - Your Proxmox server address (IP or FQDN)
-    - The Proxmox node name (visible in the Proxmox web UI)""", classes="muted")
-        else:
-            yield Label(f"◆  range42  —  reconfigure {S.setup_mode}", classes="title")
-            yield Rule()
-            yield Static(f"""\
-  Reconfiguring existing setup: {S.setup_mode}
+    - The Proxmox node name (visible in the Proxmox web UI)
+    - root and sudo passwords for Proxmox + deployer-cli
 
-  The wizard will show the current values as defaults.
-  Press Enter to keep a value, or type a new one.
+  Press Continue to start, or Ctrl+C to quit at any time.
+  Every step has a Back button so you can correct earlier inputs.""", classes="muted")
 
-  The existing inventory will be overwritten.""", classes="muted")
-
-    def handle_next(self, app): app._go(StepCodename())
-    def handle_back(self, app):
-        app._go(StepExisting() if existing() else StepPreflight())
+    def handle_next(self, app): app._go(StepAptProxy())
 
 
 # ── step 2 — infrastructure ───────────────────────────────────────────────────
@@ -625,7 +746,8 @@ class StepCodename(Step):
         S.codename = cn
         app._go(StepAddress())
 
-    def handle_back(self, app): app._go(StepWelcome())
+    def handle_back(self, app):
+        app._go(StepExisting() if existing() else StepInstallPaths())
 
 
 class StepAddress(Step):
@@ -1266,6 +1388,7 @@ class StepDeploy(Step):
              f'DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/{S.deployer_user}/range42.config"'),
             ('ssh_client__dst_config_dir: "/home/your_deployer_cli_username/.ssh"',
              f'ssh_client__dst_config_dir: "/home/{S.deployer_user}/.ssh"'),
+            ('apt_proxy_url: ""', f'apt_proxy_url: "{S.apt_proxy_url}"'),
         ]:
             sed_f(vars_, old, new)
         # inject range42_lab_bridges with NAT toggles
@@ -1377,7 +1500,7 @@ class Range42(App):
             self.register_theme(t)
         self.theme = R42_THEMES[2].name
         self._theme_idx = 2
-        self._go(StepPreflight())
+        self._go(StepWelcome())
 
     def _go(self, step: Step):
         content = self.query_one("#content", ScrollableContainer)
@@ -1437,7 +1560,8 @@ def post_wizard():
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
-        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
+        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario} \\")
+        _print_cmd(f"  -e context_ssh_keys_use_passphrase=NO")
         print()
         return
 
@@ -1547,7 +1671,8 @@ def post_wizard():
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
-        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
+        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario} \\")
+        _print_cmd(f"  -e context_ssh_keys_use_passphrase=NO")
         print()
 
 

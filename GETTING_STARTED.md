@@ -153,6 +153,27 @@ The wizard and `range42-context` need these open from your operator machine to t
 If you're behind a firewall, allow at least 22 + 8006. 
 
 
+### Optional — local apt proxy
+
+If you have a local apt cache (apt-cacher-ng, Squid, etc.), the wizard's
+**step 0** lets you provide its URL. When set, range42 plumbs the proxy through
+three layers automatically:
+
+- **deployer-cli** (`/etc/apt/apt.conf.d/00range42-proxy`) — applied by
+  `deployer.bootstrap` before any apt install
+- **Proxmox host** — a cloud-init snippet is dropped at
+  `/var/lib/vz/snippets/range42-apt-proxy.yaml` by `proxmox.init`
+- **lab VMs** — the snippet is attached as cloud-init `vendor-data` on every
+  VM template (`qm set <id> --cicustom vendor=...`); all clones inherit the
+  proxy at first boot
+
+Format expected: `http(s)://host:port` (e.g. `http://192.168.1.50:3142` for
+apt-cacher-ng's default port). The wizard validates the format and runs a
+reachability check before letting you proceed.
+
+Leave the field empty in the wizard if you don't have a proxy — everything
+works without it, just slower on apt-heavy installs.
+
 ---
 
 ## Walkthrough - wizard steps
