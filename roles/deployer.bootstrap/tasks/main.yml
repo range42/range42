@@ -20,6 +20,7 @@
 #
 ################################################################################
 
+- import_tasks: ./00_apt_proxy.yml      # MUST run first — configures /etc/apt/apt.conf.d before any apt op
 - import_tasks: ./00_ntp.yml
 - import_tasks: ./01_packages.yml
 - import_tasks: ./02_locale.yml

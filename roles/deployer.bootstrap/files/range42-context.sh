@@ -191,23 +191,30 @@ _r42_list() {
 
 _r42_flush_known_hosts() {
     local target="${1:-}"
-    local ssh_config_file="$HOME/.ssh/config_range42-${target}"
 
-    if [[ ! -f "$ssh_config_file" ]]; then
+    # Source of truth = the scenario manifest (manifest/scenario_vms.json).
+    # Only flush IPs of the scenario's VMs — never the Proxmox host (which is
+    # referenced as ProxyJump and shouldn't change between deploys).
+    local config_dir="$RANGE42_CONFIG_BASE_DIR/$target"
+    local scenario_link="$config_dir/scenario"
+    if [[ ! -L "$scenario_link" ]]; then
+        return 0
+    fi
+
+    local manifest="$(readlink -f "$scenario_link")/manifest/scenario_vms.json"
+    if [[ ! -f "$manifest" ]]; then
+        # fallback : workspace/scenario without manifest yet — silently skip
         return 0
     fi
 
     local flushed=0
-    grep -i '^\s*Hostname ' "$ssh_config_file" 2>/dev/null |
-        awk '{print $2}' |
-        grep -E '^[0-9]+\.' |
-        sort -u |
-        while read -r ip; do
-            ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$ip" >/dev/null 2>&1
-            flushed=$((flushed + 1))
-        done
+    while IFS= read -r ip; do
+        [[ -z "$ip" ]] && continue
+        ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$ip" >/dev/null 2>&1
+        flushed=$((flushed + 1))
+    done < <(jq -r '.vms[].ip' "$manifest")
 
-    _r42_print_step "flushed known_hosts for $target"
+    _r42_print_step "flushed known_hosts for $target ($flushed VM IPs)"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -759,6 +766,221 @@ _r42_delete_vms() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# helpers — scenario manifest discovery
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# Resolve the manifest path for the active scenario.
+# Echoes the path on stdout, returns 0 on success, 1 on failure.
+_r42_active_scenario_manifest() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace" >&2
+        return 1
+    fi
+
+    local scenario_dir="$config_dir/scenario"
+    if [[ ! -L "$scenario_dir" ]]; then
+        _r42_print_fail "scenario symlink not found" >&2
+        return 1
+    fi
+
+    local manifest="$(readlink -f "$scenario_dir")/manifest/scenario_vms.json"
+    if [[ ! -f "$manifest" ]]; then
+        _r42_print_fail "manifest not found: $manifest" >&2
+        _r42_print_warning "this scenario has no manifest yet (only blank_scenario_2_subnets has one for now)" >&2
+        return 1
+    fi
+
+    echo "$manifest"
+}
+
+# Echo the active scenario name (basename of the symlink target).
+_r42_active_scenario_name() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    [[ -z "$config_dir" ]] && return 1
+    local scenario_dir="$config_dir/scenario"
+    [[ ! -L "$scenario_dir" ]] && return 1
+    basename "$(readlink -f "$scenario_dir")"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# helper — apply a devkit vm action to all scenario VMs (start/stop/pause/resume)
+# usage: _r42_apply_to_scenario_vms <devkit_script> <label>
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_apply_to_scenario_vms() {
+    local action_script="$1"
+    local label="$2"
+    local manifest scenario_name
+    manifest=$(_r42_active_scenario_manifest) || return 1
+    scenario_name=$(_r42_active_scenario_name) || return 1
+
+    _r42_print_section "$label scenario VMs"
+    _r42_print_step "scenario: $scenario_name"
+    echo ""
+
+    jq -c '.vms[] | {vm_id: .vm_id}' "$manifest" | "$action_script"
+
+    echo ""
+    _r42_print_check "$label done"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context start / stop / stop-force / pause / resume
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_start()      { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.start.to.jsons.sh"      "starting"; }
+_r42_stop()       { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.stop.to.jsons.sh"       "stopping"; }
+_r42_stop_force() { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.stop_force.to.jsons.sh" "force-stopping"; }
+_r42_pause()      { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.pause.to.jsons.sh"      "pausing"; }
+_r42_resume()     { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.resume.to.jsons.sh"     "resuming"; }
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context snapshot — snapshot all VMs of the active scenario
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_snapshot() {
+    local manifest scenario_name snap_name
+    manifest=$(_r42_active_scenario_manifest) || return 1
+    scenario_name=$(_r42_active_scenario_name) || return 1
+
+    # Proxmox snapshot names: must start with [a-z], allow [a-z0-9_]
+    # auto-generate if not provided: r42_<scenario>_YYYYMMDD_HHMMSS (lowercased, hyphens→_)
+    local default_name
+    default_name="r42_$(echo "$scenario_name" | tr '[:upper:]-' '[:lower:]_')_$(date +%Y%m%d_%H%M%S)"
+    snap_name="${1:-$default_name}"
+
+    _r42_print_section "snapshot scenario VMs"
+    _r42_print_step "scenario : $scenario_name"
+    _r42_print_step "snapshot : $snap_name"
+    echo ""
+
+    jq -c --arg name "$snap_name" --arg desc "range42 snapshot of $scenario_name" \
+        '.vms[] | {vm_id: .vm_id, vm_snapshot_name: $name, vm_snapshot_description: $desc}' "$manifest" \
+        | proxmox_snapshot_vm.vm_id.create_snapshot.to.jsons.sh
+
+    echo ""
+    _r42_print_check "snapshot created: $snap_name"
+    echo "  revert with: range42-context revert $snap_name"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context revert — revert all VMs of the active scenario to a snapshot
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_revert() {
+    local manifest scenario_name snap_name
+    manifest=$(_r42_active_scenario_manifest) || return 1
+    scenario_name=$(_r42_active_scenario_name) || return 1
+
+    snap_name="${1:-}"
+    if [[ -z "$snap_name" ]]; then
+        _r42_print_fail "snapshot name required"
+        echo "  usage: range42-context revert <snapshot_name>"
+        echo "  list snapshots with: range42-context snapshot-list"
+        return 1
+    fi
+
+    _r42_print_section "revert scenario VMs to snapshot"
+    _r42_print_warning "this rolls back all scenario VMs to snapshot: $snap_name"
+    _r42_print_step "scenario : $scenario_name"
+    _r42_print_step "snapshot : $snap_name"
+    echo ""
+
+    jq -c --arg name "$snap_name" \
+        '.vms[] | {vm_id: .vm_id, vm_snapshot_name: $name}' "$manifest" \
+        | proxmox_snapshot_vm.vm_id.revert_snapshot.to.jsons.sh
+
+    echo ""
+    _r42_print_check "revert done"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context delete-everything — delete VMs + templates ACROSS ALL scenarios
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_delete_everything() {
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+    local playbooks_dir="$git_dir/range42-playbooks"
+
+    if [[ ! -d "$playbooks_dir" ]]; then
+        _r42_print_fail "range42-playbooks not found at: $playbooks_dir"
+        return 1
+    fi
+
+    # collect all manifests (bash + zsh compatible — no mapfile)
+    local manifests=()
+    while IFS= read -r m; do
+        [[ -n "$m" ]] && manifests+=("$m")
+    done < <(find "$playbooks_dir/scenarios" -mindepth 3 -maxdepth 3 -name 'scenario_vms.json' -path '*/manifest/*' 2>/dev/null | sort)
+
+    if [[ ${#manifests[@]} -eq 0 ]]; then
+        _r42_print_fail "no scenario manifest found under $playbooks_dir/scenarios/*/manifest/"
+        return 1
+    fi
+
+    _r42_print_section "DELETE EVERYTHING — cross-scenario nuke"
+    _r42_print_warning "this will destroy ALL VMs + templates referenced by EVERY scenario manifest on this Proxmox"
+    echo ""
+    echo "  scenarios with a manifest:"
+    for m in "${manifests[@]}"; do
+        local scn
+        scn=$(jq -r '.scenario' "$m")
+        local n_vms n_tpl
+        n_vms=$(jq '.vms | length' "$m")
+        n_tpl=$(jq '.templates | length' "$m")
+        echo "    - $scn  ($n_vms VMs, $n_tpl templates)"
+    done
+    echo ""
+    _r42_print_warning "scenarios WITHOUT a manifest are skipped (their VMs will NOT be deleted)"
+    echo ""
+
+    # confirmation
+    local reply
+    printf "  type 'YES' to confirm cross-scenario nuke: "
+    read -r reply
+    if [[ "$reply" != "YES" ]]; then
+        _r42_print_fail "aborted (you typed: '$reply')"
+        return 1
+    fi
+
+    # accumulate all VM ids + IPs across all manifests (bash + zsh compatible)
+    local all_ids=() all_ips=()
+    for m in "${manifests[@]}"; do
+        while IFS= read -r id; do
+            [[ -n "$id" ]] && all_ids+=("$id")
+        done < <(jq -r '.vms[].vm_id, .templates[].vm_id' "$m")
+        while IFS= read -r ip; do
+            [[ -n "$ip" ]] && all_ips+=("$ip")
+        done < <(jq -r '.vms[].ip' "$m")
+    done
+
+    # dedup
+    local dedup_ids=() dedup_ips=()
+    while IFS= read -r v; do [[ -n "$v" ]] && dedup_ids+=("$v"); done < <(printf '%s\n' "${all_ids[@]}" | sort -u)
+    while IFS= read -r v; do [[ -n "$v" ]] && dedup_ips+=("$v"); done < <(printf '%s\n' "${all_ips[@]}" | sort -u)
+    all_ids=("${dedup_ids[@]}")
+    all_ips=("${dedup_ips[@]}")
+
+    local id_regex
+    id_regex=$(printf '|%s' "${all_ids[@]}" | sed 's/^|//')
+
+    echo ""
+    _r42_print_step "stopping and deleting ${#all_ids[@]} VMs/templates ..."
+    proxmox_vm.list.to.jsons.sh | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
+    proxmox_vm.list.to.jsons.sh | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
+
+    echo ""
+    _r42_print_step "cleaning ${#all_ips[@]} known_hosts entries ..."
+    for ip in "${all_ips[@]}"; do
+        ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$ip" >/dev/null 2>&1 && echo "  - $ip"
+    done
+
+    echo ""
+    _r42_print_check "cross-scenario nuke complete"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context init — launch the setup wizard from anywhere
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -849,8 +1071,18 @@ _r42_help() {
     printf "    ${N}deploy-vms${R}                     ${D}deploy VMs only (skip templates)${R}\n"
     printf "    ${N}delete${R}                         ${D}delete all scenario VMs + templates${R}\n"
     printf "    ${N}delete-vms${R}                     ${D}delete VMs only (keep templates)${R}\n"
+    printf "    ${N}delete-everything${R}              ${D}delete ALL VMs+templates across ALL scenarios (cross-scenario)${R}\n"
     printf "    ${N}reset${R}                          ${D}delete + recreate all VMs${R}\n"
     printf "    ${N}ssh-reload${R}                     ${D}reload SSH keys for active workspace${R}\n"
+    echo ""
+    printf "  ${C}lifecycle (all VMs of active scenario)${R}\n"
+    printf "    ${N}start${R}                          ${D}start all scenario VMs${R}\n"
+    printf "    ${N}stop${R}                           ${D}graceful shutdown of all scenario VMs${R}\n"
+    printf "    ${N}stop-force${R}                     ${D}force stop all scenario VMs${R}\n"
+    printf "    ${N}pause${R}                          ${D}pause all scenario VMs${R}\n"
+    printf "    ${N}resume${R}                         ${D}resume all paused scenario VMs${R}\n"
+    printf "    ${N}snapshot${R} [name]                ${D}snapshot all scenario VMs (auto-named if not provided)${R}\n"
+    printf "    ${N}revert${R} <name>                  ${D}revert all scenario VMs to a snapshot${R}\n"
     echo ""
     printf "  ${C}info${R}\n"
     printf "    ${N}inventory${R}                      ${D}show ansible inventory tree${R}\n"
@@ -876,11 +1108,19 @@ range42-context() {
         use)            _r42_use "$@" ;;
         status)         _r42_status ;;
         init)           _r42_init ;;
-        deploy)         _r42_deploy ;;
-        deploy-vms)     _r42_deploy_vms ;;
-        delete)         _r42_delete ;;
-        delete-vms)     _r42_delete_vms ;;
-        reset)          _r42_reset ;;
+        deploy)             _r42_deploy ;;
+        deploy-vms)         _r42_deploy_vms ;;
+        delete)             _r42_delete ;;
+        delete-vms)         _r42_delete_vms ;;
+        delete-everything)  _r42_delete_everything ;;
+        reset)              _r42_reset ;;
+        start)              _r42_start ;;
+        stop)               _r42_stop ;;
+        stop-force)         _r42_stop_force ;;
+        pause)              _r42_pause ;;
+        resume)             _r42_resume ;;
+        snapshot)           _r42_snapshot "$@" ;;
+        revert)             _r42_revert "$@" ;;
         ssh-reload)     _r42_ssh_reload ;;
         inventory|inv)  _r42_inventory ;;
         passwords|pw)   _r42_passwords ;;

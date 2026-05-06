@@ -3,6 +3,19 @@
 #
 # source: configure.deployer-cli/tasks/01_packages.yml (lines 138-151)
 
+# minimal Ubuntu/Debian images may not ship with the `locales` package — without it
+# /var/lib/locales/supported.d/ and /etc/locale.gen are missing and the next task fails.
+# install it unconditionally before generating the locale.
+- name: DEPLOYER BOOTSTRAP - INSTALL locales PACKAGE (REQUIRED FOR locale_gen)
+  ansible.builtin.apt:
+    name: locales
+    state: present
+    update_cache: true
+  become: true
+  when:
+    - ansible_facts['os_family'] == 'Debian'
+    - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
+
 - name: DEPLOYER BOOTSTRAP - ENSURE EN_US.UTF-8 LOCALE EXISTS
   community.general.locale_gen:
     name: en_US.UTF-8
