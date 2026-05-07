@@ -1186,12 +1186,9 @@ class StepSudoPassword(Step):
     def handle_next(self, app):
         pw = self.query_one("#i-sudopw", Input).value
         S.sudo_pw = pw
-        if pw:
-            self.query_one("#spin-sudopw").display = True
-            self.query_one("#e-sudopw", Label).update("")
-            self._test_sudo(pw)
-        else:
-            app._go(StepProxmoxCheck())
+        self.query_one("#spin-sudopw").display = True
+        self.query_one("#e-sudopw", Label).update("")
+        self._test_sudo(pw)
 
     @work(thread=True)
     def _test_sudo(self, pw):
@@ -1211,8 +1208,10 @@ class StepSudoPassword(Step):
                 self.query_one("#e-sudopw", Label).update("")
                 self.app._go(StepProxmoxCheck())
             else:
-                self.query_one("#e-sudopw", Label).update(
-                    "✗ sudo authentication failed — check password")
+                msg = ("✗ sudo requires a password — enter it above"
+                       if not pw else
+                       "✗ sudo authentication failed — check password")
+                self.query_one("#e-sudopw", Label).update(msg)
         self.app.call_from_thread(_show)
 
     def handle_back(self, app): app._go(StepRootPassword())
@@ -1385,7 +1384,7 @@ class StepDeploy(Step):
         if S.deployer_ip not in ("127.0.0.1","localhost"):
             hosts.write_text("\n".join(
                 line for line in hosts.read_text().splitlines()
-                if "ansible_connection: local" not in l))
+                if "ansible_connection: local" not in line))
         log_row("PASS", "configured hosts.yml",
                 f"proxmox={S.proxmox_address}  deployer={S.deployer_ip}")
         time.sleep(0.1)
