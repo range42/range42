@@ -18,7 +18,7 @@
 #   │   │   └── r42.CODENAME-SCENARIO-deployer-key_alice (+.pub)
 #   │   └── student_keys/
 #   │       ├── r42.CODENAME-SCENARIO-student-key_bob (+.pub)
-#   │       └── additionnal.students/
+#   │       └── additional.students/
 #   │           └── r42.CODENAME-SCENARIO-student-key_bob_{1..N} (+.pub)
 #   ├── passwords.env         ← passphrases and passwords (plaintext reference)
 #   └── summary.txt           ← full recap: paths, passwords, config locations
@@ -29,7 +29,7 @@
 #   - credentials_output_dir        (required — base output path)
 #   - context_auto_generate_ssh_keys        (YES/NO, default YES)
 #   - context_auto_generate_vm_passwords    (YES/NO, default YES)
-#   - student_additionnal_keys_count        (int, default 5)
+#   - student_additional_keys_count         (int, default 5)
 #
 ################################################################################
 

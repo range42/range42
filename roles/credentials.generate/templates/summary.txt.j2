@@ -29,11 +29,11 @@
   student keys:
     bob       : {{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob
     bob.pub   : {{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob.pub
-{% if student_additionnal_keys_count | default(0) | int > 0 %}
+{% if student_additional_keys_count | default(0) | int > 0 %}
 
-  additional student keys ({{ student_additionnal_keys_count }}):
-{% for i in range(1, student_additionnal_keys_count + 1) %}
-    bob_{{ i }}     : {{ credentials_output_dir }}/ssh_keys/student_keys/additionnal.students/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob_{{ i }}
+  additional student keys ({{ student_additional_keys_count }}):
+{% for i in range(1, student_additional_keys_count + 1) %}
+    bob_{{ i }}     : {{ credentials_output_dir }}/ssh_keys/student_keys/additional.students/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob_{{ i }}
 {% endfor %}
 {% endif %}
 

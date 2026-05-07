@@ -20,4 +20,4 @@ context_auto_generate_vm_passwords: "YES"
 context_ssh_keys_use_passphrase: "YES"
 
 # number of additional student keys (bob_1 .. bob_N)
-student_additionnal_keys_count: 5
+student_additional_keys_count: 5
