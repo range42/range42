@@ -10,7 +10,7 @@
 - name: PROXMOX API-TOKEN - CHECK EXISTING ACL FOR API USER
   ansible.builtin.command: >
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
-    "pveum acl list --path /"
+    "pveum acl list"
   register: _existing_acl
   changed_when: false
 
