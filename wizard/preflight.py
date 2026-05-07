@@ -208,6 +208,9 @@ _SCENARIO_REQUIRED_FILES = (
     "vault-example.yml",
 )
 
+# public alias — imported by range42-init.py to avoid duplication
+SCENARIO_REQUIRED_FILES = _SCENARIO_REQUIRED_FILES
+
 
 def _has_deployable_scenario(scenarios_dir):
     """Return True if scenarios_dir contains at least one scenario with a complete templates/ dir."""
