@@ -29,3 +29,4 @@
     "echo '{{ jump_user }}:{{ jump_password }}' | chpasswd"
   when: jump_on_proxmox | default('YES') | upper == 'YES'
   no_log: true
+  changed_when: true
