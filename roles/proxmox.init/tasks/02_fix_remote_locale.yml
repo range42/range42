@@ -7,14 +7,6 @@
 #
 # source: proxmox_fix_remote_locale() lines 946-979
 
-# minimal Proxmox images may not ship with the `locales` package — without it
-# locale-gen fails silently. mirrors deployer.bootstrap/02_locale.yml fix (PR #80).
-- name: PROXMOX INIT - INSTALL locales PACKAGE ON PROXMOX (REQUIRED FOR locale-gen)
-  ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
-    "apt-get update -qq && apt-get install -y locales"
-  changed_when: true
-
 - name: PROXMOX INIT - SET /ETC/DEFAULT/LOCALE TO {{ proxmox_locale }}
   ansible.builtin.shell: |
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} 'bash -c "
