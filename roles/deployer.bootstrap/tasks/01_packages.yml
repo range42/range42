@@ -69,10 +69,12 @@
     - ansible_facts['distribution'] == 'Ubuntu'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
-- name: DEPLOYER BOOTSTRAP - INSTALL ANSIBLE VIA RAW (UBUNTU)
-  ansible.builtin.raw: |
-    apt-get update -y
-    apt-get install -y python3 ansible
+- name: DEPLOYER BOOTSTRAP - INSTALL ANSIBLE AND PYTHON3 (UBUNTU)
+  ansible.builtin.apt:
+    name:
+      - python3
+      - ansible
+    state: present
   become: true
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
@@ -122,10 +124,12 @@
     - ansible_facts['distribution'] == 'Debian'
     - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES | default('YES') | upper != 'NO'
 
-- name: DEPLOYER BOOTSTRAP - INSTALL ANSIBLE VIA RAW (DEBIAN)
-  ansible.builtin.raw: |
-    apt-get update -y
-    apt-get install -y python3 ansible
+- name: DEPLOYER BOOTSTRAP - INSTALL ANSIBLE AND PYTHON3 (DEBIAN)
+  ansible.builtin.apt:
+    name:
+      - python3
+      - ansible
+    state: present
   become: true
   when:
     - ansible_facts['distribution'] == 'Debian'

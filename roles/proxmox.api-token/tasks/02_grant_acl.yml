@@ -1,10 +1,22 @@
 ---
 # proxmox api-token - grant administrator acl on / for the api user
 #
+# Administrator on / gives full Proxmox API access — required for range42
+# to create and manage VMs, networks, and storage via the API.
+# Scope is intentionally / (root) to avoid per-datastore permission complexity.
+#
 # source: proxmox_generate_api_credentials() lines 1096-1097
+
+- name: PROXMOX API-TOKEN - CHECK EXISTING ACL FOR API USER
+  ansible.builtin.command: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pveum acl list --path /"
+  register: _existing_acl
+  changed_when: false
 
 - name: PROXMOX API-TOKEN - GRANT ADMINISTRATOR ROLE ON /
   ansible.builtin.command: >
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
-    pveum acl modify / -user {{ proxmox_api_user }} -role Administrator
-  changed_when: true
+    "pveum acl modify / -user {{ proxmox_api_user }} -role Administrator"
+  changed_when: proxmox_api_user not in _existing_acl.stdout
+  when: proxmox_api_user not in _existing_acl.stdout
