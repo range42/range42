@@ -39,6 +39,7 @@
 - name: PROXMOX JUMP-USER - VERIFY JUMP USER SSH ACCESS WORKS
   ansible.builtin.command: >
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    -o UserKnownHostsFile={{ known_hosts_file }}
     -i {{ proxmox_jump_ssh_key_path }}
     {{ jump_user }}@{{ jump_host }} true
   changed_when: false
