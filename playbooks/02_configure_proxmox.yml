@@ -43,6 +43,7 @@
         ssh-agent -s | head -2
       register: _agent_start
       when: _agent_check.rc == 2
+      changed_when: _agent_start is not skipped
 
     - name: SET SSH_AUTH_SOCK FACT (NEW AGENT)
       ansible.builtin.set_fact:
