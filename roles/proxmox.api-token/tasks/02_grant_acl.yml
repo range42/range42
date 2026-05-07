@@ -3,6 +3,13 @@
 #
 # source: proxmox_generate_api_credentials() lines 1096-1097
 
+- name: PROXMOX API-TOKEN - CHECK EXISTING ACL FOR API USER
+  ansible.builtin.command: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pveum acl list"
+  register: _existing_acl
+  changed_when: false
+
 - name: PROXMOX API-TOKEN - GRANT ADMINISTRATOR ROLE ON /
   ansible.builtin.command: >
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
