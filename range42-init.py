@@ -6,7 +6,7 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import json, os, re, shlex, shutil, subprocess, ssl, sys, tempfile, urllib.request
+import json, os, re, shlex, shutil, subprocess, ssl, sys, tempfile, time, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
@@ -23,10 +23,11 @@ try:
     from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
     from textual.reactive import reactive
     from textual.theme import Theme
+    from textual.css.query import NoMatches
     from textual.widget import Widget
     from textual.widgets import (
-        Button, DataTable, Footer, Header,
-        Input, Label, LoadingIndicator, RichLog, Select, Static, Rule, Switch,
+        Button, Footer, Header,
+        Input, Label, LoadingIndicator, RichLog, Select, Static, Rule,
     )
 
     # themes — hex-only, independent of terminal palette
@@ -80,10 +81,10 @@ except ImportError:
         try:
             import venv
             venv.create(str(_venv), with_pip=True)
-        except Exception:
+        except OSError as e:
             import shutil as _sh
             _sh.rmtree(str(_venv), ignore_errors=True)
-            print("  \033[1;31mFAIL\033[0m  could not create python venv")
+            print(f"  \033[1;31mFAIL\033[0m  could not create python venv: {e}")
             print()
             print("  fix:  sudo apt-get install python3-venv")
             print("  then: python3 range42-init.py")
@@ -135,15 +136,6 @@ EXAMPLE_DIR = INVENTORIES / "example"
 # range42-playbooks lives as a sibling of the range42 repo on the operator machine.
 # preflight auto-clones it if missing (see wizard/preflight.py:ensure_playbooks_repo).
 PLAYBOOKS_DIR = SCRIPT_DIR.parent / "range42-playbooks"
-
-# files required in each scenario's templates/ dir for it to be deployable
-SCENARIO_REQUIRED_FILES = (
-    "ansible-inventory.j2",
-    "ansible-vars.yml",
-    "ssh-config.j2",
-    "vault-example.yml",
-)
-
 
 def list_deployable_scenarios():
     """
@@ -263,7 +255,7 @@ def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
         return False, f"{type(e).__name__}: {e}", False
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
-from wizard.preflight import run_all_checks, get_apt_install_command
+from wizard.preflight import run_all_checks, get_apt_install_command, SCENARIO_REQUIRED_FILES
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def cmd_ok(c): return bool(shutil.which(c))
@@ -284,16 +276,18 @@ def existing():
 def prefill(name):
     vf = INVENTORIES / name / "group_vars" / "all" / "vars.yml"
     if not vf.exists(): return
-    txt = vf.read_text()
-    def ex(k):
-        m = re.search(rf'^{k}:\s*"([^"]*)"', txt, re.M)
-        return m.group(1) if m else ""
+    try:
+        import yaml
+        data = yaml.safe_load(vf.read_text()) or {}
+    except Exception:
+        return
     S.codename        = name
-    S.proxmox_address = ex("INFRASTRUCTURE_PROXMOX_ADDRESS")
-    S.proxmox_node    = ex("proxmox_node") or "pve"
-    S.deployer_user   = ex("DEPLOYER_CLI_USER") or S.deployer_user
-    S.deployer_ip     = ex("deployer_cli_ip") or "127.0.0.1"
-    S.network_iface   = ex("infrastructure_proxmox_default_network_card_interface") or "enp3s0"
+    S.proxmox_address = data.get("INFRASTRUCTURE_PROXMOX_ADDRESS", "")
+    S.proxmox_node    = data.get("proxmox_node", "") or "pve"
+    S.deployer_user   = data.get("DEPLOYER_CLI_USER", "") or S.deployer_user
+    S.deployer_ip     = data.get("deployer_cli_ip", "") or "127.0.0.1"
+    S.network_iface   = data.get(
+        "infrastructure_proxmox_default_network_card_interface", "") or "enp3s0"
     for d in (INVENTORIES / name / "group_vars").iterdir():
         if d.name != "all": S.scenario = d.name; break
 
@@ -522,7 +516,6 @@ class StepPreflight(Step):
 
     @work(thread=True)
     def check(self):
-        import time
         results, fail = run_all_checks(EXAMPLE_DIR)
         for r in results:
             self.app.call_from_thread(self._row, r["badge"], r["label"], r["detail"])
@@ -531,15 +524,6 @@ class StepPreflight(Step):
         self._apt_cmd = get_apt_install_command(results)
         S.preflight_ok = not fail
         self.app.call_from_thread(self._done, fail)
-
-    def _add_row(self, badge, msg, kv=""):
-        cls = {"PASS":"pf-badge-pass","WARN":"pf-badge-warn",
-               "FAIL":"pf-badge-fail","INFO":"pf-badge-info"}[badge]
-        row = Horizontal(classes="pf-row")
-        row.compose_add_child(Label(badge, classes=cls))
-        row.compose_add_child(Label(msg,   classes="pf-msg"))
-        row.compose_add_child(Label(kv,    classes="pf-kv"))
-        self.query_one("#pf-rows").mount(row)
 
     def _row(self, badge, msg, kv=""):
         cls = {"PASS":"pf-badge-pass","WARN":"pf-badge-warn",
@@ -583,16 +567,16 @@ class StepInstallPaths(Step):
         cfg_dir = os.path.expanduser("~/range42.config")
         return (
             f"  {git_dir}/\n"
-            f"  ├── range42/                      main repo (this wizard)\n"
-            f"  ├── range42-playbooks/             scenarios + bundles\n"
-            f"  ├── range42-catalog/               ansible roles + docker stacks\n"
-            f"  ├── range42-ansible_roles-proxmox_controller/\n"
-            f"  ├── range42-ansible_roles-debug-devkit/\n"
-            f"  ├── range42-backend-api/\n"
-            f"  └── range42-deployer-ui/\n"
-            f"\n"
+            "  ├── range42/                      main repo (this wizard)\n"
+            "  ├── range42-playbooks/             scenarios + bundles\n"
+            "  ├── range42-catalog/               ansible roles + docker stacks\n"
+            "  ├── range42-ansible_roles-proxmox_controller/\n"
+            "  ├── range42-ansible_roles-debug-devkit/\n"
+            "  ├── range42-backend-api/\n"
+            "  └── range42-deployer-ui/\n"
+            "\n"
             f"  {cfg_dir}/\n"
-            f"  └── <codename>-<scenario>/         workspace (secrets, keys, inventory)\n"
+            "  └── <codename>-<scenario>/         workspace (secrets, keys, inventory)\n"
         )
 
     def compose(self) -> ComposeResult:
@@ -644,7 +628,7 @@ class StepInstallPaths(Step):
         """Update preview tree in real time when user types."""
         try:
             git_dir = self.query_one("#input-install-dir", Input).value.strip().rstrip("/")
-        except Exception:
+        except NoMatches:
             return
         S.install_dir = git_dir
         self.query_one("#path-preview", Static).update(
@@ -653,7 +637,7 @@ class StepInstallPaths(Step):
     def handle_next(self, app):
         try:
             S.install_dir = self.query_one("#input-install-dir", Input).value.strip().rstrip("/")
-        except Exception:
+        except NoMatches:
             pass  # recommended mode — input not mounted, use S value as-is
         app._go(StepExisting() if existing() else StepCodename())
 
@@ -793,8 +777,12 @@ class StepAddress(Step):
         addr = self.query_one("#i-addr", Input).value.strip()
         if not addr:
             self.query_one("#e-addr", Label).update("✗ address is required"); return
+        host = addr.split(":")[0]
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', host):
+            self.query_one("#e-addr", Label).update(
+                "✗ invalid address — use an IP or hostname (letters, numbers, dots, hyphens only)"); return  # IPv6 not supported
         self.query_one("#e-addr", Label).update("")
-        S.proxmox_address = addr.split(":")[0]
+        S.proxmox_address = host
         app._go(StepNode())
 
     def handle_back(self, app): app._go(StepCodename())
@@ -840,7 +828,7 @@ class StepProxmoxCheck(Step):
 
     @work(thread=True)
     def do_check(self):
-        import time; time.sleep(0.4)
+        time.sleep(0.4)
         ok = False
         try:
             ctx = ssl.create_default_context()
@@ -852,7 +840,7 @@ class StepProxmoxCheck(Step):
         except urllib.error.HTTPError:
             # 401/403 = proxmox is responding, just no auth — that's fine
             ok = True
-        except Exception:
+        except (urllib.error.URLError, TimeoutError, OSError):
             pass
         self.app.call_from_thread(self._show, ok)
 
@@ -928,7 +916,8 @@ class StepAutoDetectNAT(Step):
             else:
                 # no root password — can't SSH, use default
                 detected = "vmbr0"
-        except Exception:
+        except (subprocess.SubprocessError, subprocess.TimeoutExpired,
+                FileNotFoundError, OSError):
             pass
 
         S.nat_interface = detected
@@ -1158,7 +1147,8 @@ class StepRootPassword(Step):
                  f"root@{S.proxmox_address}", "true"],
                 env=env, capture_output=True, timeout=10)
             ok = r.returncode == 0
-        except Exception:
+        except (subprocess.SubprocessError, subprocess.TimeoutExpired,
+                FileNotFoundError, OSError):
             pass
 
         def _show(ok=ok):
@@ -1211,7 +1201,8 @@ class StepSudoPassword(Step):
                 ["sudo", "-S", "-k", "true"],
                 input=pw + "\n", capture_output=True, text=True, timeout=5)
             ok = r.returncode == 0
-        except Exception:
+        except (subprocess.SubprocessError, subprocess.TimeoutExpired,
+                FileNotFoundError, OSError):
             pass
 
         def _show(ok=ok):
@@ -1320,8 +1311,8 @@ class StepDeploy(Step):
         if dest.exists():
             self.query_one("#ow-msg", Label).update(
                 f"  ⚠  inventories/{S.codename}/  already exists.\n\n"
-                f"  This will refresh hosts.yml + group_vars/all/vars.yml with current values.\n"
-                f"  Existing scenario configs (group_vars/<scenario>/) are preserved.")
+                "  This will refresh hosts.yml + group_vars/all/vars.yml with current values.\n"
+                "  Existing scenario configs (group_vars/<scenario>/) are preserved.")
             self.query_one("#overwrite-confirm").display = True
         else:
             self.create_inventory()
@@ -1337,8 +1328,6 @@ class StepDeploy(Step):
     # ── inventory creation ────────────────────────────────────────────────────
     @work(thread=True)
     def create_inventory(self):
-        import time, shutil as sh
-
         def log_row(badge, msg, kv=""):
             cols = {"PASS":"#4ade80","WARN":"#fbbf24","FAIL":"#f87171","INFO":"#38bdf8"}
             c = cols.get(badge, "#94a3b8")
@@ -1348,6 +1337,10 @@ class StepDeploy(Step):
                         f"[bold {col}]{b:6}[/bold {col}]  {m}  [dim]{k}[/dim]"))
 
         dest = INVENTORIES / S.codename
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', S.scenario):
+            log_row("FAIL", "invalid scenario name",
+                    "must contain only letters, numbers, hyphens, underscores, dots")
+            return
         scenario_tmpl = PLAYBOOKS_DIR / "scenarios" / S.scenario / "templates"
 
         # validate the scenario: dir must exist AND contain all 4 required template files
@@ -1367,8 +1360,8 @@ class StepDeploy(Step):
             # create skeleton: hosts.yml + group_vars/all/ only
             # scenario group_vars are populated further down from playbooks templates
             (dest / "group_vars" / "all").mkdir(parents=True, exist_ok=True)
-            sh.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
-            sh.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml",
+            shutil.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
+            shutil.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml",
                      dest / "group_vars" / "all" / "vars.yml")
             log_row("PASS", "created" if was_new else "updated",
                     f"path=inventories/{S.codename}/")
@@ -1391,7 +1384,7 @@ class StepDeploy(Step):
         sed_f(hosts, 'ansible_user: "your_deployer_cli_username"', f'ansible_user: "{S.deployer_user}"')
         if S.deployer_ip not in ("127.0.0.1","localhost"):
             hosts.write_text("\n".join(
-                l for l in hosts.read_text().splitlines()
+                line for line in hosts.read_text().splitlines()
                 if "ansible_connection: local" not in l))
         log_row("PASS", "configured hosts.yml",
                 f"proxmox={S.proxmox_address}  deployer={S.deployer_ip}")
@@ -1436,8 +1429,8 @@ class StepDeploy(Step):
         # preserve ALL existing files — user may have edited vars.yml or filled vault.yml.
         if not scen.exists():
             scen.mkdir(parents=True, exist_ok=True)
-            sh.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
-            sh.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
+            shutil.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
+            shutil.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
             log_row("PASS", "configured scenario", f"name={S.scenario}")
         else:
             log_row("PASS", "preserved scenario", f"name={S.scenario} (existing config untouched)")
@@ -1455,11 +1448,11 @@ class StepDeploy(Step):
             f"  [bold #fbbf24]TODO[/bold #fbbf24]  create your vault secrets file:\n\n"
             f"  cp inventories/{S.codename}/group_vars/{S.scenario}/vault.yml.example \\\n"
             f"     inventories/{S.codename}/group_vars/{S.scenario}/vault.yml\n\n"
-            f"  Edit vault.yml — fill in your passwords and secrets.\n"
-            f"  Then encrypt it:\n\n"
-            f"  ansible-vault encrypt \\\n"
+            "  Edit vault.yml — fill in your passwords and secrets.\n"
+            "  Then encrypt it:\n\n"
+            "  ansible-vault encrypt \\\n"
             f"    inventories/{S.codename}/group_vars/{S.scenario}/vault.yml\n\n"
-            f"  The vault.yml.example file has comments explaining each field.")
+            "  The vault.yml.example file has comments explaining each field.")
         log.write("")
         log.write("[dim]─────────────────────────────────────────────────────[/dim]")
         log.write("")
@@ -1470,7 +1463,7 @@ class StepDeploy(Step):
             "    1. generate credentials  (SSH keys, vault)\n"
             "    2. configure proxmox     (root SSH, jump user, API token)\n"
             "    3. deploy deployer-cli   (packages, workspace, SSH config)\n\n"
-            f"  Note: step 2 needs the Proxmox root password for SSH setup.\n"
+            "  Note: step 2 needs the Proxmox root password for SSH setup.\n"
             f"  Root password: {'provided' if S.proxmox_root_pw else 'not set (will prompt during deploy)'}")
         log.write("")
         self.query_one("#deploy-btns").display = True
