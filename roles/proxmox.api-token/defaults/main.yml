@@ -13,9 +13,9 @@ proxmox_api_user: "range42_api@pam"
 proxmox_api_token_id: "r42_{{ INFRASTRUCTURE_CODENAME }}_{{ INFRASTRUCTURE_SCENARIO }}"
 proxmox_api_token_secret: ""
 
-# set to false if your proxmox server uses a self-signed certificate (most lab setups do)
-# override in inventories/<codename>/group_vars/all/vars.yml: proxmox_api_validate_certs: false
-proxmox_api_validate_certs: true
+# proxmox ships with a self-signed certificate — set to true only if you have a valid CA-signed cert
+# override in inventories/<codename>/group_vars/all/vars.yml: proxmox_api_validate_certs: true
+proxmox_api_validate_certs: false
 
 # root directory of the deployer-cli range42 repo
 # normally set by playbooks/02_configure_proxmox.yml vars section
