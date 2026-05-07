@@ -4,7 +4,7 @@
 #
 #  infrastructure : {{ INFRASTRUCTURE_CODENAME }}
 #  scenario       : {{ INFRASTRUCTURE_SCENARIO }}
-#  generated      : {{ ansible_date_time.iso8601 | default('unknown') }}
+#  generated      : {{ lookup('pipe', 'date -Iseconds') }}
 #  passphrase     : {{ (context_ssh_keys_use_passphrase | default('YES') | upper == 'YES') | ternary('enabled', 'disabled (no passphrase)') }}
 #
 #  DO NOT COMMIT THIS FILE

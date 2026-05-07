@@ -16,3 +16,8 @@ proxmox_api_token_secret: ""
 # set to false if your proxmox server uses a self-signed certificate (most lab setups do)
 # override in inventories/<codename>/group_vars/all/vars.yml: proxmox_api_validate_certs: false
 proxmox_api_validate_certs: true
+
+# root directory of the deployer-cli range42 repo
+# normally set by playbooks/02_configure_proxmox.yml vars section
+# this default allows the role to be invoked standalone
+DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
