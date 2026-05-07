@@ -36,3 +36,28 @@
     - { name: "DEPLOYER_CLI_USER",               value: "{{ DEPLOYER_CLI_USER | default('your_deployer_cli_username') }}" }
   loop_control:
     label: "{{ item.name }}"
+
+- name: VALIDATE - CHECK SCENARIO TEMPLATES DIR EXISTS
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.fileglob', SCENARIO_TEMPLATES_DIR ~ '/*.j2') | length > 0
+        or lookup('ansible.builtin.fileglob', SCENARIO_TEMPLATES_DIR ~ '/*.yml') | length > 0
+    fail_msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+
+      MISSING SCENARIO TEMPLATES: {{ SCENARIO_TEMPLATES_DIR }}
+
+      The scenario templates directory is empty or does not exist.
+      This usually means the range42-playbooks sibling repo is missing.
+
+      Clone it alongside the range42 repo:
+
+        cd {{ playbook_dir }}/../../..
+        git clone https://github.com/range42/range42-playbooks.git
+
+      #### #### #### #### #### #### #### #### #### #### ####
+    quiet: true
+  when:
+    - SCENARIO_TEMPLATES_DIR is defined
+    - SCENARIO_TEMPLATES_DIR != "to_define"
