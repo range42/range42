@@ -6,7 +6,10 @@
 deprecation_warnings = False
 command_warnings = False
 force_valid_group_names = ignore
-host_key_checking = False
+# host_key_checking is intentionally NOT disabled here.
+# It is disabled only in the bootstrap-phase ansible.cfg (range42/ansible.cfg)
+# to allow first-time SSH key installation on Proxmox.
+# After bootstrap, host key checking is active for all scenario playbook runs.
 timeout = 30
 
 [privilege_escalation]
