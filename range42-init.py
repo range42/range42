@@ -6,7 +6,7 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import json, os, re, shlex, shutil, subprocess, ssl, sys, tempfile, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
@@ -228,23 +228,39 @@ def _validate_apt_proxy_url(url: str) -> bool:
 def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
     """
     Test reachability of an apt proxy URL via HTTP HEAD.
-    Returns (ok: bool, msg: str). 4xx/5xx counts as reachable (server responding).
+    Returns (ok: bool, msg: str, cert_warn: bool).
+    cert_warn=True when proxy responded but TLS cert is invalid/self-signed.
+    4xx/5xx counts as reachable (server responding).
     """
-    try:
+    def _attempt(ctx):
         req = urllib.request.Request(url, method='HEAD')
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             return True, f"HTTP {resp.status}"
+
+    # attempt 1: verified TLS
+    try:
+        ok, msg = _attempt(ssl.create_default_context())
+        return ok, msg, False
     except urllib.error.HTTPError as e:
-        return True, f"HTTP {e.code}"
+        return True, f"HTTP {e.code}", False
+    except ssl.SSLCertVerificationError:
+        pass  # fall through to unverified retry
+
+    # attempt 2: unverified — cert is invalid or self-signed
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        ok, msg = _attempt(ctx)
+        return ok, msg + " (TLS cert unverified — self-signed?)", True
+    except urllib.error.HTTPError as e:
+        return True, f"HTTP {e.code} (TLS cert unverified)", True
     except urllib.error.URLError as e:
-        return False, str(e.reason)
+        return False, str(e.reason), False
     except (TimeoutError, OSError) as e:
-        return False, str(e)
+        return False, str(e), False
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        return False, f"{type(e).__name__}: {e}", False
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
 from wizard.preflight import run_all_checks, get_apt_install_command
@@ -467,10 +483,18 @@ class StepAptProxy(Step):
 
         # reachability check
         status.update(f"[INFO] checking reachability of {url} ...")
-        ok, msg = _check_apt_proxy_reachable(url)
+        ok, msg, cert_warn = _check_apt_proxy_reachable(url)
         if not ok:
             status.update(f"[FAIL] not reachable: {msg}")
             return
+        if cert_warn:
+            status.update(
+                f"[WARN] reachable but TLS cert is invalid: {msg}\n"
+                "  The proxy will be used — apt downloads may be interceptable.\n"
+                "  Press Continue to accept, or clear the URL to disable the proxy."
+            )
+        else:
+            status.update(f"[OK] reachable: {msg}")
 
         # validation passed — persist for next runs
         S.apt_proxy_url = url
@@ -1569,7 +1593,6 @@ def post_wizard():
     _print_bold("starting deployment")
 
     env = os.environ.copy()
-    extra = []
 
     if S.proxmox_root_pw:
         env["SSHPASS"] = S.proxmox_root_pw
@@ -1578,12 +1601,14 @@ def post_wizard():
     else:
         _print_info("proxmox root password not set — you will be prompted")
 
+    # build sensitive extra-vars — written to a temp file, NOT passed on the CLI
+    # (CLI args are visible to all users via ps aux / /proc/<pid>/cmdline)
+    extra_vars_lines = []
     if S.deployer_ip not in ("127.0.0.1", "localhost") and S.deployer_cli_pw:
-        extra += ["-e", f"ansible_ssh_pass={S.deployer_cli_pw}"]
+        extra_vars_lines.append(f"ansible_ssh_pass: {S.deployer_cli_pw!r}\n")
         _print_ok("deployer-cli password provided")
-
     if S.sudo_pw:
-        extra += ["-e", f"ansible_become_pass={S.sudo_pw}"]
+        extra_vars_lines.append(f"ansible_become_pass: {S.sudo_pw!r}\n")
         _print_ok("sudo password provided")
     else:
         _print_info("sudo password not set — assuming NOPASSWD")
@@ -1601,20 +1626,28 @@ def post_wizard():
     # and user edits to vars.yml would have no effect on deployed VMs.
     # Placed FIRST so the wizard's scalar -e overrides below still take precedence.
     scenario_vars_file = f"inventories/{S.codename}/group_vars/{S.scenario}/vars.yml"
-    rc = subprocess.run(
-        ["ansible-playbook", "site.yml",
-         "-i", f"inventories/{S.codename}/hosts.yml",
-         "-e", f"@{scenario_vars_file}",
-         "-e", f"INFRASTRUCTURE_SCENARIO={S.scenario}",
-         "-e", "context_ssh_keys_use_passphrase=NO",
-         *extra],
-        cwd=str(SCRIPT_DIR), env=env
-    ).returncode
+    _tmp_fd, _tmp_path = tempfile.mkstemp(prefix="r42-extra-", suffix=".yml")
+    try:
+        with os.fdopen(_tmp_fd, "w") as _f:
+            _f.writelines(extra_vars_lines)
+        os.chmod(_tmp_path, 0o600)
+        rc = subprocess.run(
+            ["ansible-playbook", "site.yml",
+             "-i", f"inventories/{S.codename}/hosts.yml",
+             "-e", f"@{scenario_vars_file}",
+             "-e", f"INFRASTRUCTURE_SCENARIO={S.scenario}",
+             "-e", "context_ssh_keys_use_passphrase=NO",
+             "-e", f"@{_tmp_path}"],
+            cwd=str(SCRIPT_DIR), env=env
+        ).returncode
+    finally:
+        try:
+            os.unlink(_tmp_path)
+        except OSError:
+            pass
+        S.proxmox_root_pw = S.sudo_pw = S.deployer_cli_pw = ""
 
-    # clear passwords
-    S.proxmox_root_pw = S.sudo_pw = S.deployer_cli_pw = ""
-
-    print()
+    print()  # noqa: passwords already cleared in finally block above
     if rc == 0:
         _print_bold("deployment complete")
         _print_ok("credentials generated")
@@ -1697,11 +1730,15 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # post-TUI: if user clicked "Install prerequisites", run apt then re-launch
-    if app._install_cmd:
+    if app._install_cmd:  # list of package names from get_apt_install_command()
         print()
-        print(f"  \033[1;33mINFO\033[0m  running: {app._install_cmd}")
+        print(f"  \033[1;33mINFO\033[0m  running: sudo apt-get install -y {' '.join(app._install_cmd)}")
         print()
-        rc = subprocess.call(app._install_cmd, shell=True)
+        rc_update = subprocess.run(["sudo", "apt-get", "update"], check=False).returncode
+        rc_install = subprocess.run(
+            ["sudo", "apt-get", "install", "-y", *app._install_cmd], check=False
+        ).returncode
+        rc = rc_update or rc_install
         if rc == 0:
             print()
             print("  \033[1;32m   OK\033[0m  packages installed — restarting wizard...")
@@ -1719,7 +1756,7 @@ if __name__ == "__main__":
         else:
             print()
             print("  \033[1;31m FAIL\033[0m  install failed — run manually:")
-            print(f"         {app._install_cmd}")
+            print(f"         sudo apt-get install -y {' '.join(app._install_cmd)}")
             print(f"         then: python3 {__file__}")
             sys.exit(1)
     post_wizard()
