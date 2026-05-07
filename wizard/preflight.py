@@ -183,20 +183,17 @@ def run_all_checks(example_dir):
 
 def get_apt_install_command(results):
     """
-    Build a single 'sudo apt-get install ...' command from failed/warned checks.
+    Return sorted list of package names to install from failed/warned checks.
     Only includes checks that have an apt fix (not manual).
-    Returns None if nothing to install.
+    Returns empty list if nothing to install.
     """
     packages = set()
     for r in results:
         apt_fix = r.get("apt_fix")
         if apt_fix and r["badge"] in ("FAIL", "WARN"):
-            # extract package name from "sudo apt install <pkg>"
             pkg = apt_fix.replace("sudo apt install ", "").strip()
             packages.add(pkg)
-    if not packages:
-        return None
-    return "sudo apt-get update && sudo apt-get install -y " + " ".join(sorted(packages))
+    return sorted(packages)
 
 
 # files required in each scenario's templates/ dir for it to be deployable
