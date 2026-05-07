@@ -10,6 +10,8 @@
     repo: https://github.com/ohmyzsh/ohmyzsh.git
     dest: "/home/{{ DEPLOYER_CLI_USER }}/.oh-my-zsh"
     update: false
+  become: true
+  become_user: "{{ DEPLOYER_CLI_USER }}"
 
 - name: DEPLOYER BOOTSTRAP - CHECK ZSH BINARY EXISTS
   ansible.builtin.stat:
