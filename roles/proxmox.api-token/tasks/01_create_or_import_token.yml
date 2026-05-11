@@ -33,25 +33,42 @@
   no_log: true
   failed_when: false
 
-#### token already existed AND we have a secret in config — use it
+#### token already existed AND we have a secret in config — validate it first
 
-- name: PROXMOX API-TOKEN - USE SECRET FROM CONFIG (TOKEN ALREADY EXISTED)
+- name: PROXMOX API-TOKEN - VALIDATE SECRET FROM VAULT AGAINST LIVE TOKEN
+  ansible.builtin.uri:
+    url: "https://{{ proxmox_api_host }}/api2/json/nodes"
+    method: GET
+    headers:
+      Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret }}"
+    validate_certs: false
+    status_code: [200, 401, 403, 500]
+  register: vault_secret_validation
+  when:
+    - token_already_existed | bool
+    - proxmox_api_token_secret | default('') | length > 0
+  failed_when: false
+  no_log: true
+
+- name: PROXMOX API-TOKEN - USE SECRET FROM CONFIG (TOKEN ALREADY EXISTED, VALIDATED)
   ansible.builtin.set_fact:
     proxmox_api_token_secret_result: "{{ proxmox_api_token_secret }}"
   when:
     - token_already_existed | bool
     - proxmox_api_token_secret | default('') | length > 0
+    - vault_secret_validation.status | default(0) == 200
   no_log: true
 
-#### token already existed BUT no secret — auto-recovery: delete and recreate
+#### token already existed BUT secret is missing or stale — auto-recovery: delete and recreate
 
-- name: PROXMOX API-TOKEN - AUTO-RECOVERY — DELETE TOKEN (NO SECRET AVAILABLE)
+- name: PROXMOX API-TOKEN - AUTO-RECOVERY — DELETE TOKEN (NO SECRET OR STALE SECRET)
   ansible.builtin.shell: >
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "pveum user token remove {{ proxmox_api_user }} {{ proxmox_api_token_id }} 2>&1 || true"
   when:
     - token_already_existed | bool
-    - proxmox_api_token_secret | default('') | length == 0
+    - (proxmox_api_token_secret | default('') | length == 0) or
+      (vault_secret_validation.status | default(0) != 200)
     - proxmox_api_token_secret_result is not defined
 
 - name: PROXMOX API-TOKEN - AUTO-RECOVERY — RECREATE TOKEN
