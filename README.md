@@ -29,8 +29,8 @@ Start with [GETTING_STARTED.md](GETTING_STARTED.md) for a hands-on walkthrough, 
 The recommended way to deploy range42 is the setup wizard:
 
 ```bash
-sudo apt-get update ; apt-get upgrade -y
-sudo apt-get install python3-venv git
+sudo apt update && sudo apt upgrade -y
+sudo apt install python3-venv git
 mkdir -p $HOME/range42 && cd $HOME/range42
 git clone https://github.com/range42/range42.git
 cd range42
@@ -53,7 +53,7 @@ range42 is developed and tested on Ubuntu LTS (Desktop / Server) and is also exp
 ## Daily operations
 
 Once deployed, you manage your lab with the `range42-context` shell tool (switch workspaces, deploy / undeploy, SSH into VMs, view credentials, etc.). The full reference is in
-[GETTING_STARTED.md - What you can do after deploy](GETTING_STARTED.md#what-you-can-do-after-deploy).
+[OPERATIONS.md](OPERATIONS.md).
 
 ---
 
