@@ -9,6 +9,7 @@
 - name: PROXMOX INIT - TEST IF ROOT KEY AUTH ALREADY WORKS
   ansible.builtin.command: >
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    -o IdentitiesOnly=yes
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
   register: root_ssh_test
   changed_when: false
@@ -66,6 +67,7 @@
 - name: PROXMOX INIT - VERIFY ROOT KEY AUTH WORKS AFTER INSTALL
   ansible.builtin.command: >
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    -o IdentitiesOnly=yes
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
   when: root_ssh_test.rc != 0
   changed_when: false
