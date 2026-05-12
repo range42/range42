@@ -204,6 +204,8 @@ def _save_wizard_cache(updates: dict) -> None:
 
 # ── state ──────────────────────────────────────────────────────────────────────
 _IDENT = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+_PATH  = re.compile(r'^(/[^/\0]+)+$')
+_IFACE = re.compile(r'^[a-zA-Z][a-zA-Z0-9._-]{0,14}$')
 
 
 class WizardState(BaseModel):
@@ -231,11 +233,25 @@ class WizardState(BaseModel):
         default_factory=lambda: _load_wizard_cache().get("apt_proxy_url", "")
     )
 
-    @field_validator("codename", "scenario", "proxmox_node", mode="before")
+    @field_validator("codename", "scenario", "proxmox_node", "deployer_user", mode="before")
     @classmethod
     def validate_ident(cls, v: str) -> str:
         if v and not _IDENT.match(v):
             raise ValueError(f"invalid identifier: {v!r}")
+        return v
+
+    @field_validator("install_dir", mode="before")
+    @classmethod
+    def validate_path(cls, v: str) -> str:
+        if v and not _PATH.match(v):
+            raise ValueError(f"invalid path: {v!r}")
+        return v
+
+    @field_validator("network_iface", mode="before")
+    @classmethod
+    def validate_iface(cls, v: str) -> str:
+        if v and not _IFACE.match(v):
+            raise ValueError(f"invalid interface name: {v!r}")
         return v
 
 
@@ -611,6 +627,7 @@ class StepInstallPaths(Step):
         yield Static("")
         yield Static(self._tree_text(S.install_dir), id="path-preview")
         yield Container(id="custom-inputs")
+        yield Label("", id="e-install", classes="err")
 
     def on_mount(self):
         lst = self.query_one("#path-choices")
@@ -650,13 +667,19 @@ class StepInstallPaths(Step):
             git_dir = self.query_one("#input-install-dir", Input).value.strip().rstrip("/")
         except Exception:
             return
-        S.install_dir = git_dir
+        if _PATH.match(git_dir):
+            S.install_dir = git_dir
         self.query_one("#path-preview", Static).update(
             self._tree_text(git_dir))
 
     def handle_next(self, app):
         try:
-            S.install_dir = self.query_one("#input-install-dir", Input).value.strip().rstrip("/")
+            path = self.query_one("#input-install-dir", Input).value.strip().rstrip("/")
+            if not _PATH.match(path):
+                self.query_one("#e-install", Label).update(
+                    "✗ absolute path required (e.g. /home/user/range42)"); return
+            self.query_one("#e-install", Label).update("")
+            S.install_dir = path
         except Exception:
             pass  # recommended mode — input not mounted, use S value as-is
         app._go(StepExisting() if existing() else StepCodename())
@@ -1102,9 +1125,15 @@ class StepDeployerUser(Step):
             classes="muted")
         yield Static("")
         yield Input(value=S.deployer_user, placeholder="alice", id="i-duser")
+        yield Label("", id="e-duser", classes="err")
 
     def handle_next(self, app):
-        S.deployer_user = self.query_one("#i-duser", Input).value.strip() or os.environ.get("USER", "")
+        user = self.query_one("#i-duser", Input).value.strip() or os.environ.get("USER", "")
+        if not _IDENT.match(user):
+            self.query_one("#e-duser", Label).update(
+                "✗ letters, numbers, hyphens, underscores, dots only"); return
+        self.query_one("#e-duser", Label).update("")
+        S.deployer_user = user
         S.deployer_cli_pw = S.sudo_pw  # reuse sudo password for deployer SSH
         app._go(StepReview())
 
