@@ -36,3 +36,26 @@
     - { name: "DEPLOYER_CLI_USER",               value: "{{ DEPLOYER_CLI_USER | default('your_deployer_cli_username') }}" }
   loop_control:
     label: "{{ item.name }}"
+
+- name: VALIDATE - CHECK JUMP_PASSWORD COMPLEXITY
+  ansible.builtin.assert:
+    that:
+      - jump_password is defined
+      - jump_password | length >= 12
+      - jump_password | regex_search('[A-Z]')
+      - jump_password | regex_search('[a-z]')
+      - jump_password | regex_search('[0-9]')
+    fail_msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+
+      WEAK PASSWORD: jump_password
+
+      jump_password must be at least 12 characters and contain
+      uppercase, lowercase, and a digit.
+
+      Please edit your vault file:
+        inventories/<codename>/group_vars/<scenario>/vault.yml
+
+      #### #### #### #### #### #### #### #### #### #### ####
+    quiet: true
