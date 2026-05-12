@@ -8,7 +8,7 @@
 
 - name: PROXMOX INIT - TEST IF ROOT KEY AUTH ALREADY WORKS
   ansible.builtin.command: >
-    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    ssh {{ proxmox_ssh_args | default('') }} -o BatchMode=yes
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
   register: root_ssh_test
   changed_when: false
@@ -36,7 +36,7 @@
 - name: PROXMOX INIT - INSTALL ROOT PUBLIC KEY VIA SSHPASS + SSH-COPY-ID
   ansible.builtin.shell: >
     sshpass -e ssh-copy-id
-    -o StrictHostKeyChecking=accept-new
+    {{ proxmox_ssh_args | default('') }}
     -o IdentitiesOnly=yes
     -i "{{ proxmox_root_ssh_key_path }}.pub"
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
@@ -52,7 +52,7 @@
 - name: PROXMOX INIT - INSTALL ROOT PUBLIC KEY VIA SSH-COPY-ID (INTERACTIVE FALLBACK)
   ansible.builtin.command: >
     ssh-copy-id
-    -o StrictHostKeyChecking=accept-new
+    {{ proxmox_ssh_args | default('') }}
     -o IdentitiesOnly=yes
     -o PreferredAuthentications=password
     -i "{{ proxmox_root_ssh_key_path }}.pub"
@@ -65,7 +65,7 @@
 
 - name: PROXMOX INIT - VERIFY ROOT KEY AUTH WORKS AFTER INSTALL
   ansible.builtin.command: >
-    ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    ssh {{ proxmox_ssh_args | default('') }} -o BatchMode=yes
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
   when: root_ssh_test.rc != 0
   changed_when: false

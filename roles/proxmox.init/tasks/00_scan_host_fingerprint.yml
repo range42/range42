@@ -1,0 +1,42 @@
+---
+# proxmox.init - capture Proxmox SSH fingerprint into per-deployment known_hosts
+#
+# On first run: ssh-keyscan collects all host keys from INFRASTRUCTURE_PROXMOX_ADDRESS
+# and writes them to config/<codename>-<scenario>/known_hosts (gitignored via config/*/).
+# force: false preserves the file on subsequent runs so the stored key acts as the
+# trust anchor — ssh errors loudly if the key changes unexpectedly.
+
+- name: PROXMOX INIT - SCAN PROXMOX HOST KEYS
+  ansible.builtin.shell: >
+    ssh-keyscan -H {{ INFRASTRUCTURE_PROXMOX_ADDRESS }} 2>/dev/null
+  register: _ssh_keyscan
+  changed_when: false
+  failed_when: _ssh_keyscan.stdout | length == 0
+
+- name: PROXMOX INIT - WRITE KNOWN_HOSTS (FIRST RUN ONLY — NOT OVERWRITTEN)
+  ansible.builtin.copy:
+    content: "{{ _ssh_keyscan.stdout }}\n"
+    dest: "{{ proxmox_known_hosts_path }}"
+    mode: "0600"
+    force: false
+
+- name: PROXMOX INIT - COMPUTE FINGERPRINT FOR DISPLAY
+  ansible.builtin.shell: >
+    ssh-keygen -l -f {{ proxmox_known_hosts_path }}
+  register: _fingerprint
+  changed_when: false
+  failed_when: false
+
+- name: PROXMOX INIT - SHOW KNOWN_HOSTS FINGERPRINT
+  ansible.builtin.debug:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+      Proxmox SSH fingerprint — verify on first setup:
+
+      {{ _fingerprint.stdout | default('(could not compute fingerprint)') }}
+
+      To verify on Proxmox:
+        ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} \
+          'ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub'
+      #### #### #### #### #### #### #### #### #### #### ####

@@ -12,3 +12,7 @@ proxmox_api_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:8006"
 proxmox_api_user: "range42_api@pam"
 proxmox_api_token_id: "r42_{{ INFRASTRUCTURE_CODENAME }}_{{ INFRASTRUCTURE_SCENARIO }}"
 proxmox_api_token_secret: ""
+
+# SSH -o options injected into all ssh commands targeting Proxmox
+# set by 02_configure_proxmox.yml; empty string = system defaults (backward-compat)
+proxmox_ssh_args: ""

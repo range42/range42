@@ -15,7 +15,7 @@
 
 - name: PROXMOX INIT - ENSURE SNIPPETS DIR EXISTS ON PROXMOX
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "mkdir -p /var/lib/vz/snippets"
   when: apt_proxy_url is defined and (apt_proxy_url | length) > 0
   changed_when: false
@@ -33,9 +33,9 @@
 
 - name: PROXMOX INIT - UPLOAD APT PROXY SNIPPET TO PROXMOX
   ansible.builtin.shell: >
-    scp /tmp/range42-apt-proxy.yaml
+    scp {{ proxmox_ssh_args | default('') }} /tmp/range42-apt-proxy.yaml
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:/var/lib/vz/snippets/range42-apt-proxy.yaml &&
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "chmod 644 /var/lib/vz/snippets/range42-apt-proxy.yaml"
   when: apt_proxy_url is defined and (apt_proxy_url | length) > 0
 
@@ -47,7 +47,7 @@
 
 - name: PROXMOX INIT - REMOVE APT PROXY SNIPPET ON PROXMOX (apt_proxy_url unset)
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "rm -f /var/lib/vz/snippets/range42-apt-proxy.yaml"
   when: apt_proxy_url is not defined or (apt_proxy_url | length) == 0
   changed_when: false

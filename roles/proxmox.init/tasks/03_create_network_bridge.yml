@@ -8,7 +8,7 @@
 
 - name: PROXMOX INIT - CHECK EXISTING BRIDGES
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "pvesh get /nodes/{{ proxmox_node }}/network --type bridge 2>/dev/null | grep -oP 'vmbr1[45]\d' | sort -u || true"
   register: existing_bridges
   changed_when: false
@@ -17,7 +17,7 @@
 
 - name: PROXMOX INIT - CREATE LAB BRIDGES
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "pvesh create /nodes/{{ proxmox_node }}/network
     --iface {{ item.name }}
     --type bridge
@@ -31,7 +31,7 @@
 
 - name: PROXMOX INIT - APPLY NETWORK CONFIGURATION
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "pvesh set /nodes/{{ proxmox_node }}/network"
   when: bridges_created.changed | default(false)
 
@@ -39,9 +39,9 @@
 
 - name: PROXMOX INIT - UPLOAD NAT INJECT SCRIPT
   ansible.builtin.shell: >
-    scp {{ role_path }}/files/inject_nat_rules.sh
+    scp {{ proxmox_ssh_args | default('') }} {{ role_path }}/files/inject_nat_rules.sh
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:/tmp/inject_nat_rules.sh &&
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} "chmod +x /tmp/inject_nat_rules.sh"
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} "chmod +x /tmp/inject_nat_rules.sh"
 
 - name: PROXMOX INIT - RENDER NAT RULES FOR ENABLED BRIDGES
   ansible.builtin.template:
@@ -54,15 +54,15 @@
 
 - name: PROXMOX INIT - UPLOAD AND INJECT NAT (ENABLED BRIDGES)
   ansible.builtin.shell: >
-    scp /tmp/range42_nat_{{ item.name }}.txt
+    scp {{ proxmox_ssh_args | default('') }} /tmp/range42_nat_{{ item.name }}.txt
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:/tmp/range42_nat_{{ item.name }}.txt &&
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "/tmp/inject_nat_rules.sh {{ item.name }} /tmp/range42_nat_{{ item.name }}.txt"
   loop: "{{ range42_lab_bridges | selectattr('nat') | list }}"
 
 - name: PROXMOX INIT - REMOVE NAT (DISABLED BRIDGES)
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "/tmp/inject_nat_rules.sh {{ item.name }} REMOVE"
   loop: "{{ range42_lab_bridges | rejectattr('nat') | list }}"
 
@@ -74,14 +74,14 @@
 
 - name: PROXMOX INIT - CLEAN UP REMOTE INJECT SCRIPT
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "rm -f /tmp/inject_nat_rules.sh"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 - name: PROXMOX INIT - ENABLE IP FORWARDING
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "echo 1 > /proc/sys/net/ipv4/ip_forward &&
     (grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf &&
     sed -i 's/^#*net.ipv4.ip_forward=.*/net.ipv4.ip_forward=1/' /etc/sysctl.conf ||
@@ -92,7 +92,7 @@
 
 - name: PROXMOX INIT - RELOAD NETWORK
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "ifreload -a 2>/dev/null || true"
   changed_when: false
 

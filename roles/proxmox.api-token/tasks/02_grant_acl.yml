@@ -5,6 +5,6 @@
 
 - name: PROXMOX API-TOKEN - GRANT ADMINISTRATOR ROLE ON /
   ansible.builtin.command: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     pveum acl modify / -user {{ proxmox_api_user }} -role Administrator
   changed_when: true

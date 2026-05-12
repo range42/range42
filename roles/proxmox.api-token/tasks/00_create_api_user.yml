@@ -12,7 +12,7 @@
 
 - name: PROXMOX API-TOKEN - CREATE PVE USER (SKIP IF EXISTS)
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "pveum user add {{ proxmox_api_user }} 2>&1 || true"
   register: pve_user_create
   changed_when: "'already exists' not in pve_user_create.stdout"

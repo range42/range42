@@ -14,22 +14,27 @@
 # What this role does:
 #   1. Ensure ssh-agent is running
 #   2. Load the Proxmox root SSH key into the agent
-#   3. Install the public key on the Proxmox server (ssh-copy-id if needed)
-#   4. Fix locale on Proxmox (set C.UTF-8 in /etc/default/locale + locale-gen)
+#   3. Scan and store the Proxmox host fingerprint (per-deployment known_hosts)
+#   4. Install the public key on the Proxmox server (ssh-copy-id if needed)
+#   5. Fix locale on Proxmox (set C.UTF-8 in /etc/default/locale + locale-gen)
 #
 # Variables consumed:
 #   - INFRASTRUCTURE_PROXMOX_ADDRESS   (required — FQDN or IP of the Proxmox host)
 #   - proxmox_root_ssh_key_path        (required — path to the generated root SSH key)
+#   - proxmox_known_hosts_path         (required — local path to write the known_hosts)
+#   - proxmox_ssh_args                 (optional — extra SSH -o options for all commands)
 #
 # After this role:
 #   - root@PROXMOX_ADDRESS is reachable via SSH key (no password)
 #   - locale is set to C.UTF-8
+#   - config/<codename>-<scenario>/known_hosts contains the Proxmox host fingerprint
 #   - proxmox.jump-user and proxmox.api-token can run
 #
 ################################################################################
 
 - import_tasks: ./00_load_root_ssh_key.yml
+- import_tasks: ./00_scan_host_fingerprint.yml      # capture host fingerprint before first SSH
 - import_tasks: ./01_install_root_pubkey_on_proxmox.yml
 - import_tasks: ./02_fix_remote_locale.yml
 - import_tasks: ./03_create_network_bridge.yml
-- import_tasks: ./04_apt_proxy_snippet.yml      # cloud-init cicustom snippet (no-op if apt_proxy_url empty)
+- import_tasks: ./04_apt_proxy_snippet.yml          # cloud-init cicustom snippet (no-op if apt_proxy_url empty)

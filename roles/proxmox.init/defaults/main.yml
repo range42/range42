@@ -13,6 +13,14 @@ proxmox_root_ssh_key_path: "to_define"
 # locale to set on proxmox
 proxmox_locale: "C.UTF-8"
 
+# per-deployment known_hosts file — populated by 00_scan_host_fingerprint
+# typically: ./config/CODENAME-SCENARIO/known_hosts (gitignored via config/*/)
+proxmox_known_hosts_path: "to_define"
+
+# SSH -o options injected into all ssh/scp commands targeting Proxmox
+# set by 02_configure_proxmox.yml; empty string = system defaults (backward-compat)
+proxmox_ssh_args: ""
+
 # network bridge for lab VMs
 vm_net_virtio_bridge: "vmbr142"
 

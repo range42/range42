@@ -10,7 +10,7 @@
 
 - name: PROXMOX API-TOKEN - TRY TO CREATE TOKEN ON PROXMOX
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "pveum user token add {{ proxmox_api_user }} {{ proxmox_api_token_id }}
     --privsep 0 --output-format json 2>&1"
   register: token_create_raw
@@ -47,7 +47,7 @@
 
 - name: PROXMOX API-TOKEN - AUTO-RECOVERY — DELETE TOKEN (NO SECRET AVAILABLE)
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "pveum user token remove {{ proxmox_api_user }} {{ proxmox_api_token_id }} 2>&1 || true"
   when:
     - token_already_existed | bool
@@ -56,7 +56,7 @@
 
 - name: PROXMOX API-TOKEN - AUTO-RECOVERY — RECREATE TOKEN
   ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    ssh {{ proxmox_ssh_args | default('') }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
     "pveum user token add {{ proxmox_api_user }} {{ proxmox_api_token_id }}
     --privsep 0 --output-format json 2>&1"
   register: token_recreate_raw
