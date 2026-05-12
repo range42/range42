@@ -1,0 +1,20 @@
+---
+# proxmox api-token - create range42-operator custom role (least-privilege)
+#
+# Creates a custom Proxmox role with the minimal set of privileges required
+# by range42 playbooks, replacing the built-in Administrator grant.
+# Idempotent: pveum role add exits non-zero if role exists; the error is
+# suppressed with || true (same pattern as 00_create_api_user.yml).
+
+- name: PROXMOX API-TOKEN - CREATE RANGE42-OPERATOR ROLE (SKIP IF EXISTS)
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pveum role add range42-operator
+    --privs 'Datastore.AllocateSpace,Datastore.AllocateTemplate,SDN.Use,VM.Allocate,VM.Clone,VM.Config.CDROM,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Net,VM.Config.Options,VM.Console,VM.PowerMgmt,VM.Snapshot,VM.Snapshot.Rollback'
+    2>&1 || true"
+  register: _role_create
+  changed_when: "'already exists' not in _role_create.stdout"
+
+- name: PROXMOX API-TOKEN - DISPLAY OPERATOR ROLE STATUS
+  ansible.builtin.debug:
+    msg: "{{ ('already exists' in _role_create.stdout) | ternary('range42-operator role already exists — ok', 'range42-operator role created') }}"

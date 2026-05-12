@@ -1,10 +1,18 @@
 ---
-# proxmox api-token - grant administrator acl on / for the api user
+# proxmox api-token - grant range42-operator role on / for the api user
 #
-# source: proxmox_generate_api_credentials() lines 1096-1097
+# Revokes the Administrator role previously granted (migration, no-op if not
+# set) and grants the least-privilege range42-operator role instead.
+# The range42-operator role is created in 00_create_operator_role.yml.
 
-- name: PROXMOX API-TOKEN - GRANT ADMINISTRATOR ROLE ON /
+- name: PROXMOX API-TOKEN - REVOKE ADMINISTRATOR ROLE ON / (MIGRATION)
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pveum acl modify / -user {{ proxmox_api_user }} -role Administrator -delete 2>&1 || true"
+  changed_when: false
+
+- name: PROXMOX API-TOKEN - GRANT RANGE42-OPERATOR ROLE ON /
   ansible.builtin.command: >
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
-    pveum acl modify / -user {{ proxmox_api_user }} -role Administrator
+    pveum acl modify / -user {{ proxmox_api_user }} -role range42-operator
   changed_when: true

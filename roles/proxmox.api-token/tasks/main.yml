@@ -13,11 +13,12 @@
 #
 # What this role does:
 #   1. Create PVE user (pveum user add) if it doesn't exist
-#   2. Check if API token already exists (pveum user token list)
-#   3. If token exists → use secret from config (or parent_config)
-#   4. If token does not exist → create it (pveum user token add --privsep 0)
-#   5. Grant Administrator ACL on / (pveum acl modify)
-#   6. Test the API token via curl (GET /api2/json/nodes)
+#   2. Create range42-operator custom role (least-privilege, skip if exists)
+#   3. Check if API token already exists (pveum user token list)
+#   4. If token exists → use secret from config (or parent_config)
+#   5. If token does not exist → create it (pveum user token add --privsep 0)
+#   6. Grant range42-operator ACL on / — revoke Administrator first (migration)
+#   7. Test the API token via curl (GET /api2/json/nodes)
 #
 # Variables consumed:
 #   - INFRASTRUCTURE_PROXMOX_ADDRESS       (required)
@@ -32,6 +33,7 @@
 ################################################################################
 
 - import_tasks: ./00_create_api_user.yml
+- import_tasks: ./00_create_operator_role.yml
 - import_tasks: ./01_create_or_import_token.yml
 - import_tasks: ./02_grant_acl.yml
 - import_tasks: ./03_test_api_token.yml
