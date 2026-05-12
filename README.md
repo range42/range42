@@ -68,15 +68,48 @@ Once deployed, you manage your lab with the `range42-context` shell tool (switch
 
 ## Architecture overview
 
-A range42 deployment looks like this:
+A range42 deployment can be driven in two complementary ways:
+
+**Web UI path** (visual, recommended for day-to-day operations):
 
 ```
-   [ deployer-cli ]  ─── SSH / API ──▶  [ Proxmox + lab VMs ]
-      │
-      ├─ runs the wizard
-      ├─ holds inventory + credentials
-      └─ drives Ansible playbooks
+  ┌─ range42-deployer-ui (Vue 3 + VueFlow) ──────────────────┐
+  │  Visual topology canvas — drag-and-drop lab design        │
+  └──────────────────────────┬───────────────────────────────┘
+                             │ REST + WebSocket
+  ┌──────────────────────────▼───────────────────────────────┐
+  │  range42-api-gw (Kong gateway)                           │
+  │  Auth, ACLs, rate-limiting                               │
+  └──────────────────────────┬───────────────────────────────┘
+                             │
+  ┌──────────────────────────▼───────────────────────────────┐
+  │  range42-backend-api (FastAPI)                           │
+  │  80 REST endpoints + /ws/status stream                   │
+  └──────────┬───────────────────────┬───────────────────────┘
+             │                       │
+  range42-playbooks          range42-catalog
+  (scenarios + bundles)      (roles, Docker, CTF content)
+             │
+             ▼
+  [ Proxmox VE cluster ]
+  VMs, LXC, networks
 ```
+
+**CLI path** (direct, for advanced/scripted use):
+
+```
+  [ deployer-cli (range42-context) ]
+     │
+     ├─ runs the setup wizard
+     ├─ holds inventory + credentials
+     └─ drives Ansible playbooks directly
+             │
+             ▼
+  [ Proxmox VE cluster ]
+  VMs, LXC, networks
+```
+
+Both paths converge on the same Proxmox infrastructure and Ansible playbooks — the web UI simply adds a visual layer and a managed API on top.
 
 The **deployer-cli** is your local machine by default, or a dedicated pivot VM if you manage multiple Proxmox infrastructures from one place.
 
@@ -99,7 +132,7 @@ In its recommended configuration, range42 relies on:
 - **Docker / LXC** - containerized services and vulnerable stacks (recommended)
 - **Wazuh** - security monitoring and detection (optional)
 - **Firewalls / VPN** - network segmentation and access control (recommended)
-- **Vue.js / FastAPI / Kong** - web UI and API layer (optional)
+- **Vue.js / FastAPI / Kong** - web UI and API layer (available)
 
 ## Project mid / long term goals
 
