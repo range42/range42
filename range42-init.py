@@ -105,7 +105,7 @@ except ImportError:
         print("  \033[1;33mINFO\033[0m  installing textual (pip install textual)...")
         print("        do NOT use: apt install python3-textual (version too old)")
         print()
-        r = subprocess.run([str(_pip), "install", "--quiet", "textual"], check=False)
+        r = subprocess.run([str(_pip), "install", "--quiet", "textual", "pydantic"], check=False)
         if r.returncode != 0:
             print("  \033[1;31mFAIL\033[0m  pip install textual failed")
             print()
@@ -127,6 +127,16 @@ except ImportError:
 
 from textual import work, on
 from rich.text import Text
+
+try:
+    from pydantic import BaseModel, ConfigDict, Field, field_validator
+except ImportError:
+    _pip = Path(__file__).parent / ".venv-wizard" / "bin" / "pip"
+    if _pip.exists():
+        subprocess.run([str(_pip), "install", "--quiet", "pydantic"], check=False)
+        os.execv(sys.executable, [sys.executable, __file__] + sys.argv[1:])
+    print("  \033[1;31mFAIL\033[0m  pydantic is required: pip install pydantic")
+    sys.exit(1)
 
 # ── paths ──────────────────────────────────────────────────────────────────────
 SCRIPT_DIR  = Path(__file__).parent.resolve()
@@ -193,25 +203,43 @@ def _save_wizard_cache(updates: dict) -> None:
 
 
 # ── state ──────────────────────────────────────────────────────────────────────
-class _S:
-    codename        = ""
-    proxmox_address = ""
-    proxmox_node    = "pve"
-    scenario        = "blank_scenario_2_subnets"
-    deployer_user   = os.environ.get("USER", "")
-    deployer_ip     = "127.0.0.1"
-    network_iface   = "enp3s0"
-    proxmox_root_pw = ""
-    sudo_pw         = ""
-    deployer_cli_pw = ""
-    setup_mode      = "new"
-    preflight_ok    = False
-    deploy_now      = False
-    install_dir     = os.path.expanduser("~/range42")
-    nat_interface   = "vmbr0"
-    nat_bridges     = {f"vmbr{i}": True for i in range(140, 152)}
-    apt_proxy_url   = _load_wizard_cache().get("apt_proxy_url", "")
-S = _S()
+_IDENT = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$')
+
+
+class WizardState(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    codename:        str       = ""
+    proxmox_address: str       = ""
+    proxmox_node:    str       = "pve"
+    scenario:        str       = "blank_scenario_2_subnets"
+    deployer_user:   str       = Field(default_factory=lambda: os.environ.get("USER", ""))
+    deployer_ip:     str       = "127.0.0.1"
+    network_iface:   str       = "enp3s0"
+    proxmox_root_pw: str       = ""
+    sudo_pw:         str       = ""
+    deployer_cli_pw: str       = ""
+    setup_mode:      str       = "new"
+    preflight_ok:    bool      = False
+    deploy_now:      bool      = False
+    install_dir:     str       = Field(default_factory=lambda: os.path.expanduser("~/range42"))
+    nat_interface:   str       = "vmbr0"
+    nat_bridges:     dict[str, bool] = Field(
+        default_factory=lambda: {f"vmbr{i}": True for i in range(140, 152)}
+    )
+    apt_proxy_url:   str       = Field(
+        default_factory=lambda: _load_wizard_cache().get("apt_proxy_url", "")
+    )
+
+    @field_validator("codename", "scenario", "proxmox_node", mode="before")
+    @classmethod
+    def validate_ident(cls, v: str) -> str:
+        if v and not _IDENT.match(v):
+            raise ValueError(f"invalid identifier: {v!r}")
+        return v
+
+
+S = WizardState()
 
 
 # ── apt proxy validation helpers ──────────────────────────────────────────────
@@ -739,7 +767,7 @@ class StepCodename(Step):
         cn = self.query_one("#i-cn", Input).value.strip()
         if not cn:
             self.query_one("#e-cn", Label).update("✗ codename is required"); return
-        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', cn):
+        if not _IDENT.match(cn):
             self.query_one("#e-cn", Label).update(
                 "✗ letters, numbers, hyphens, underscores, dots only"); return
         self.query_one("#e-cn", Label).update("")
