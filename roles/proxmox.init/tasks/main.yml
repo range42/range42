@@ -16,15 +16,18 @@
 #   2. Load the Proxmox root SSH key into the agent
 #   3. Install the public key on the Proxmox server (ssh-copy-id if needed)
 #   4. Fix locale on Proxmox (set C.UTF-8 in /etc/default/locale + locale-gen)
+#   5. Fetch the Proxmox CA cert for TLS verification (stored locally)
 #
 # Variables consumed:
 #   - INFRASTRUCTURE_PROXMOX_ADDRESS   (required — FQDN or IP of the Proxmox host)
 #   - proxmox_root_ssh_key_path        (required — path to the generated root SSH key)
+#   - proxmox_ca_cert_path             (required — local path to write the CA cert)
 #
 # After this role:
 #   - root@PROXMOX_ADDRESS is reachable via SSH key (no password)
 #   - locale is set to C.UTF-8
 #   - proxmox.jump-user and proxmox.api-token can run
+#   - config/<codename>-<scenario>/proxmox_ca.crt exists for TLS distribution
 #
 ################################################################################
 
@@ -33,3 +36,4 @@
 - import_tasks: ./02_fix_remote_locale.yml
 - import_tasks: ./03_create_network_bridge.yml
 - import_tasks: ./04_apt_proxy_snippet.yml      # cloud-init cicustom snippet (no-op if apt_proxy_url empty)
+- import_tasks: ./05_fetch_ca_cert.yml          # fetch Proxmox CA cert for TLS distribution
