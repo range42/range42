@@ -11,7 +11,8 @@ class CallbackModule(DefaultCallbackModule):
     CALLBACK_TYPE = "stdout"
     CALLBACK_NAME = "no_skipped"
     CALLBACK_NEEDS_WHITELIST = False
+    CALLBACK_NEEDS_ENABLED = False
 
     def v2_runner_on_skipped(self, result):
-        # attempt to overwrite the methode to avoid printing skipped task.
+        # attempt to overwrite the method to avoid printing skipped task.
         return
