@@ -12,3 +12,7 @@ proxmox_api_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:8006"
 proxmox_api_user: "range42_api@pam"
 proxmox_api_token_id: "r42_{{ INFRASTRUCTURE_CODENAME }}_{{ INFRASTRUCTURE_SCENARIO }}"
 proxmox_api_token_secret: ""
+
+# proxmox ships with a self-signed certificate — set to true only if you have a valid CA-signed cert
+# override in inventories/<codename>/group_vars/all/vars.yml: proxmox_api_validate_certs: true
+proxmox_api_validate_certs: false
