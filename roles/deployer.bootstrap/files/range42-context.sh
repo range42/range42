@@ -967,8 +967,15 @@ _r42_delete_everything() {
 
     echo ""
     _r42_print_step "stopping and deleting ${#all_ids[@]} VMs/templates ..."
-    proxmox_vm.list.to.jsons.sh | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
-    proxmox_vm.list.to.jsons.sh | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
+    local _vm_list_json
+    _vm_list_json=$(proxmox_vm.list.to.jsons.sh 2>&1)
+    if ! echo "$_vm_list_json" | jq -e . >/dev/null 2>&1; then
+        _r42_print_fail "proxmox_vm.list.to.jsons.sh returned invalid JSON — aborting nuke"
+        _r42_print_warning "output: ${_vm_list_json[1,200]}"
+        return 1
+    fi
+    echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
+    echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
 
     echo ""
     _r42_print_step "cleaning ${#all_ips[@]} known_hosts entries ..."
