@@ -765,12 +765,21 @@ class StepAddress(Step):
         yield Input(value=S.proxmox_address, placeholder="192.168.1.100", id="i-addr")
         yield Label("", id="e-addr", classes="err")
 
+    _ADDR_RE = re.compile(
+        r'^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$'  # IPv4
+        r'|^[a-zA-Z]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?'
+        r'(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$'  # FQDN (letter start, 1+ dots)
+    )
+
     def handle_next(self, app):
-        addr = self.query_one("#i-addr", Input).value.strip()
+        addr = self.query_one("#i-addr", Input).value.strip().split(":")[0]
+        err = self.query_one("#e-addr", Label)
         if not addr:
-            self.query_one("#e-addr", Label).update("✗ address is required"); return
-        self.query_one("#e-addr", Label).update("")
-        S.proxmox_address = addr.split(":")[0]
+            err.update("✗ address is required"); return
+        if not self._ADDR_RE.match(addr):
+            err.update("✗ invalid address — use an IPv4 (192.168.1.100) or hostname (proxmox.local)"); return
+        err.update("")
+        S.proxmox_address = addr
         app._go(StepNode())
 
     def handle_back(self, app): app._go(StepCodename())
@@ -1100,6 +1109,7 @@ class StepRootPassword(Step):
             classes="muted", markup=True)
         yield Static("")
         yield Input(password=True, placeholder="leave empty to skip", id="i-rootpw")
+        yield Static("  Ctrl+P to reveal / hide", classes="muted")
         yield Label("", id="e-rootpw", classes="err")
         yield LoadingIndicator(id="spin-rootpw")
 
@@ -1163,6 +1173,7 @@ class StepSudoPassword(Step):
             classes="muted", markup=True)
         yield Static("")
         yield Input(password=True, placeholder="leave empty to skip", id="i-sudopw")
+        yield Static("  Ctrl+P to reveal / hide", classes="muted")
         yield Label("", id="e-sudopw", classes="err")
         yield LoadingIndicator(id="spin-sudopw")
 
@@ -1216,6 +1227,7 @@ class StepDeployerPassword(Step):
             classes="muted")
         yield Static("")
         yield Input(password=True, placeholder="leave empty to skip", id="i-clipw")
+        yield Static("  Ctrl+P to reveal / hide", classes="muted")
 
     def handle_next(self, app):
         S.deployer_cli_pw = self.query_one("#i-clipw", Input).value
@@ -1474,9 +1486,61 @@ class Range42(App):
         Binding("up", "focus_previous", "up", show=False, priority=False),
         Binding("down", "focus_next", "down", show=False, priority=False),
         Binding("t", "cycle_theme", "theme", show=True),
+        # override Textual's built-in ctrl+p (command palette) — we use it for password toggle
+        Binding("ctrl+p", "toggle_password", "show/hide password", show=False, priority=True),
     ]
 
     _theme_idx: int = 0
+
+    # Textual does not translate numpad keys to characters — AZERTY users
+    # cannot type dots or digits from the numpad without this handler.
+    _NUMPAD_CHARS: dict[str, str] = {
+        # kp_ prefix variant (most terminals)
+        "kp_decimal": ".", "kp_separator": ",",
+        "kp_0": "0", "kp_1": "1", "kp_2": "2", "kp_3": "3", "kp_4": "4",
+        "kp_5": "5", "kp_6": "6", "kp_7": "7", "kp_8": "8", "kp_9": "9",
+        # no-prefix variant (confirmed on AZERTY + this terminal)
+        "decimal": ".", "separator": ",",
+        "numpad_0": "0", "numpad_1": "1", "numpad_2": "2", "numpad_3": "3",
+        "numpad_4": "4", "numpad_5": "5", "numpad_6": "6", "numpad_7": "7",
+        "numpad_8": "8", "numpad_9": "9",
+        # arithmetic operators — both naming variants
+        "kp_divide": "/",   "divide":   "/",
+        "kp_multiply": "*", "multiply": "*",
+        "kp_subtract": "-", "subtract": "-",
+        "kp_add": "+",      "add":      "+",
+    }
+
+    def action_toggle_password(self) -> None:
+        focused = self.focused
+        if isinstance(focused, Input) and focused.password is not None:
+            focused.password = not focused.password
+
+    @on(Input.Submitted)
+    def on_input_submitted(self) -> None:
+        steps = list(self.query_one("#content").children)
+        if steps:
+            steps[0].handle_next(self)
+
+    def on_key(self, event) -> None:
+        focused = self.focused
+        if not isinstance(focused, Input):
+            return
+
+        # Numpad keys — explicit map first, then fall back to event.character
+        # for any kp_* / numpad_* key not in the map (terminal-dependent names)
+        char = self._NUMPAD_CHARS.get(event.key)
+        if char is None and (event.key.startswith("kp_") or event.key.startswith("numpad_")):
+            c = getattr(event, "character", None)
+            if c and c.isprintable() and not c.isspace():
+                char = c
+        if char is None:
+            return
+        cursor = focused.cursor_position
+        focused.value = focused.value[:cursor] + char + focused.value[cursor:]
+        focused.cursor_position = cursor + 1
+        event.prevent_default()
+        event.stop()
 
     def action_quit(self): self.exit()
 
