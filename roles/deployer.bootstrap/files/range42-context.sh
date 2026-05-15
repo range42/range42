@@ -568,10 +568,21 @@ _r42_ssh() {
         return 1
     fi
 
-    # find matching host in active ssh config
+    # find matching host in main config + all included scenario configs
+    # (grep does not follow Include directives, so we expand them manually)
     local ssh_config="${HOME}/.ssh/config"
     local matches
-    matches=$(grep "^Host r42\." "$ssh_config" 2>/dev/null | awk '{print $2}' | grep -i "$pattern" | sort -u)
+    matches=$(
+        {
+            grep "^Host r42\." "$ssh_config" 2>/dev/null
+            grep '^Include ' "$ssh_config" 2>/dev/null \
+                | grep 'config_range42' \
+                | sed 's/^Include //' \
+                | while IFS= read -r inc; do
+                    grep "^Host r42\." "$inc" 2>/dev/null
+                done
+        } | awk '{print $2}' | grep -i "$pattern" | sort -u
+    )
 
     if [[ -z "$matches" ]]; then
         _r42_print_fail "no host matching '$pattern' found"
