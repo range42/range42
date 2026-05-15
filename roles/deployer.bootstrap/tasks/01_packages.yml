@@ -37,6 +37,7 @@
       - keychain
       - openssh-client
       - ca-certificates
+      - rsync
     state: present
   become: true
   when:
@@ -90,6 +91,7 @@
       - keychain
       - openssh-client
       - ca-certificates
+      - rsync
     state: present
   become: true
   when:
