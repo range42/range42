@@ -247,7 +247,7 @@ def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
         return False, f"{type(e).__name__}: {e}"
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
-from wizard.preflight import run_all_checks, get_apt_install_command
+from wizard.preflight import run_all_checks, get_apt_install_command, get_apt_install_packages
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def cmd_ok(c): return bool(shutil.which(c))
@@ -504,18 +504,9 @@ class StepPreflight(Step):
             self.app.call_from_thread(self._row, r["badge"], r["label"], r["detail"])
             time.sleep(0.12)
 
-        self._apt_cmd = get_apt_install_command(results)
+        self._apt_cmd = get_apt_install_packages(results)  # list of packages (not a shell string)
         S.preflight_ok = not fail
         self.app.call_from_thread(self._done, fail)
-
-    def _add_row(self, badge, msg, kv=""):
-        cls = {"PASS":"pf-badge-pass","WARN":"pf-badge-warn",
-               "FAIL":"pf-badge-fail","INFO":"pf-badge-info"}[badge]
-        row = Horizontal(classes="pf-row")
-        row.compose_add_child(Label(badge, classes=cls))
-        row.compose_add_child(Label(msg,   classes="pf-msg"))
-        row.compose_add_child(Label(kv,    classes="pf-kv"))
-        self.query_one("#pf-rows").mount(row)
 
     def _row(self, badge, msg, kv=""):
         cls = {"PASS":"pf-badge-pass","WARN":"pf-badge-warn",
@@ -1579,11 +1570,11 @@ def post_wizard():
         _print_info("proxmox root password not set — you will be prompted")
 
     if S.deployer_ip not in ("127.0.0.1", "localhost") and S.deployer_cli_pw:
-        extra += ["-e", f"ansible_ssh_pass={S.deployer_cli_pw}"]
+        env["ANSIBLE_SSH_PASS"] = S.deployer_cli_pw
         _print_ok("deployer-cli password provided")
 
     if S.sudo_pw:
-        extra += ["-e", f"ansible_become_pass={S.sudo_pw}"]
+        env["ANSIBLE_BECOME_PASS"] = S.sudo_pw
         _print_ok("sudo password provided")
     else:
         _print_info("sudo password not set — assuming NOPASSWD")
@@ -1699,9 +1690,13 @@ if __name__ == "__main__":
     # post-TUI: if user clicked "Install prerequisites", run apt then re-launch
     if app._install_cmd:
         print()
-        print(f"  \033[1;33mINFO\033[0m  running: {app._install_cmd}")
+        print(f"  \033[1;33mINFO\033[0m  installing packages: {' '.join(app._install_cmd)}")
         print()
-        rc = subprocess.call(app._install_cmd, shell=True)
+        rc = subprocess.run(["sudo", "apt-get", "update"], check=False).returncode
+        if rc == 0:
+            rc = subprocess.run(
+                ["sudo", "apt-get", "install", "-y", *app._install_cmd], check=False
+            ).returncode
         if rc == 0:
             print()
             print("  \033[1;32m   OK\033[0m  packages installed — restarting wizard...")
@@ -1719,7 +1714,7 @@ if __name__ == "__main__":
         else:
             print()
             print("  \033[1;31m FAIL\033[0m  install failed — run manually:")
-            print(f"         {app._install_cmd}")
+            print(f"         sudo apt-get update && sudo apt-get install -y {' '.join(app._install_cmd)}")
             print(f"         then: python3 {__file__}")
             sys.exit(1)
     post_wizard()
