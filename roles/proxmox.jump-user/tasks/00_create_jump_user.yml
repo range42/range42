@@ -46,9 +46,9 @@
   changed_when: true
   no_log: true
 
-- name: PROXMOX JUMP-USER - FORCE PASSWORD CHANGE ON FIRST LOGIN
-  ansible.builtin.command: >
-    ssh root@{{ jump_host }}
-    chage -d 0 {{ jump_user }}
-  when: jump_on_proxmox | default('YES') | upper == 'YES'
-  changed_when: true
+# Note : the `chage -d 0` "force password change on first login" task from #122
+# was removed on 2026-05-20. PAM's `account` stack (default on Debian/Ubuntu
+# sshd with UsePAM yes) blocks SSH key auth after `chage -d 0` with
+# "Password change required but no TTY available." — including ProxyJump
+# connections that have no TTY. A dedicated `password-rotation` Ansible role
+# will be introduced in a separate issue to handle this safely.
