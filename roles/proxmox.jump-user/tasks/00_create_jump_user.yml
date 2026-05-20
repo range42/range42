@@ -45,4 +45,10 @@
     - jump_password_hash is defined
   changed_when: true
   no_log: true
+
+- name: PROXMOX JUMP-USER - FORCE PASSWORD CHANGE ON FIRST LOGIN
+  ansible.builtin.command: >
+    ssh root@{{ jump_host }}
+    chage -d 0 {{ jump_user }}
+  when: jump_on_proxmox | default('YES') | upper == 'YES'
   changed_when: true
