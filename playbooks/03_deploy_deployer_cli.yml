@@ -18,6 +18,7 @@
 #   - SSH keys + vault + inventory deployed
 #   - SSH config configured (Include + range42 host entries)
 #   - symlinks created (secrets, scenario)
+#   - Proxmox CA cert installed in system trust store (if 02 was run first)
 #
 ################################################################################
 
@@ -29,6 +30,7 @@
     DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
     INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys"
     INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    proxmox_ca_cert_local_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/proxmox_ca.crt"
 
   roles:
     - deployer.bootstrap

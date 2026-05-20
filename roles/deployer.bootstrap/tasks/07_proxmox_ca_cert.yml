@@ -1,0 +1,36 @@
+---
+# deployer.bootstrap - install Proxmox CA cert into system trust store
+#
+# Copies the locally-fetched cert to /usr/local/share/ca-certificates/ and runs
+# update-ca-certificates so Python/urllib/requests can verify Proxmox TLS.
+# Skipped when proxmox_ca_cert_local_path is undefined or the file does not yet
+# exist (e.g. 03_deploy_deployer_cli run before 02_configure_proxmox).
+
+- name: DEPLOYER BOOTSTRAP - STAT PROXMOX CA CERT LOCALLY
+  ansible.builtin.stat:
+    path: "{{ proxmox_ca_cert_local_path }}"
+  register: _proxmox_ca_cert_stat
+  delegate_to: localhost
+  become: false
+  when: proxmox_ca_cert_local_path is defined and proxmox_ca_cert_local_path | length > 0
+
+- name: DEPLOYER BOOTSTRAP - INSTALL PROXMOX CA CERT IN TRUST STORE
+  ansible.builtin.copy:
+    src: "{{ proxmox_ca_cert_local_path }}"
+    dest: "/usr/local/share/ca-certificates/proxmox_ca.crt"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when:
+    - proxmox_ca_cert_local_path is defined and proxmox_ca_cert_local_path | length > 0
+    - _proxmox_ca_cert_stat.stat.exists | default(false)
+  register: _proxmox_ca_cert_copy
+
+- name: DEPLOYER BOOTSTRAP - UPDATE CA CERTIFICATES
+  ansible.builtin.command: update-ca-certificates
+  become: true
+  when:
+    - _proxmox_ca_cert_copy is not skipped
+    - _proxmox_ca_cert_copy.changed
+  changed_when: true

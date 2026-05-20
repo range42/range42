@@ -1,0 +1,25 @@
+---
+# proxmox.init - fetch Proxmox self-signed CA cert and store locally
+#
+# Extracts the TLS certificate from the Proxmox HTTPS API using openssl s_client
+# and writes it to config/<codename>-<scenario>/proxmox_ca.crt (gitignored).
+# Consumed by 03_deploy_deployer_cli to install it into the deployer-cli CA trust
+# store, enabling TLS verification without validate_certs: false.
+
+- name: PROXMOX INIT - FETCH CA CERT VIA OPENSSL S_CLIENT
+  ansible.builtin.shell: >
+    openssl s_client
+    -connect {{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:8006
+    -showcerts </dev/null 2>/dev/null
+    | openssl x509 -outform PEM
+  register: _proxmox_ca_cert_pem
+  changed_when: false
+  failed_when: >
+    _proxmox_ca_cert_pem.rc != 0
+    or _proxmox_ca_cert_pem.stdout | length == 0
+
+- name: PROXMOX INIT - WRITE CA CERT TO LOCAL CONFIG
+  ansible.builtin.copy:
+    content: "{{ _proxmox_ca_cert_pem.stdout }}\n"
+    dest: "{{ proxmox_ca_cert_path }}"
+    mode: "0644"
