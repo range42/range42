@@ -568,10 +568,21 @@ _r42_ssh() {
         return 1
     fi
 
-    # find matching host in active ssh config
+    # find matching host in main config + all included scenario configs
+    # (grep does not follow Include directives, so we expand them manually)
     local ssh_config="${HOME}/.ssh/config"
     local matches
-    matches=$(grep "^Host r42\." "$ssh_config" 2>/dev/null | awk '{print $2}' | grep -i "$pattern" | sort -u)
+    matches=$(
+        {
+            grep "^Host r42\." "$ssh_config" 2>/dev/null
+            grep '^Include ' "$ssh_config" 2>/dev/null \
+                | grep 'config_range42' \
+                | sed 's/^Include //' \
+                | while IFS= read -r inc; do
+                    grep "^Host r42\." "$inc" 2>/dev/null
+                done
+        } | awk '{print $2}' | grep -i "$pattern" | sort -u
+    )
 
     if [[ -z "$matches" ]]; then
         _r42_print_fail "no host matching '$pattern' found"
@@ -967,8 +978,15 @@ _r42_delete_everything() {
 
     echo ""
     _r42_print_step "stopping and deleting ${#all_ids[@]} VMs/templates ..."
-    proxmox_vm.list.to.jsons.sh | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
-    proxmox_vm.list.to.jsons.sh | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
+    local _vm_list_json
+    _vm_list_json=$(proxmox_vm.list.to.jsons.sh 2>&1 | grep '"vm_id":[0-9]')
+    if [ -z "$_vm_list_json" ]; then
+        _r42_print_fail "proxmox_vm.list.to.jsons.sh returned no VM data (no vm_id lines) — aborting nuke"
+        _r42_print_warning "output: ${_vm_list_json[1,200]}"
+        return 1
+    fi
+    echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
+    echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
 
     echo ""
     _r42_print_step "cleaning ${#all_ips[@]} known_hosts entries ..."

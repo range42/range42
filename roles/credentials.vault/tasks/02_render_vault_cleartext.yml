@@ -13,3 +13,4 @@
     src: default_vault.yml.j2
     dest: "{{ vault_output_dir }}/default_vault.yml"
     mode: "0600"
+  no_log: true
