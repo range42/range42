@@ -23,10 +23,26 @@
     - jump_on_proxmox | default('YES') | upper == 'YES'
     - jump_user_check.rc != 0
 
-- name: PROXMOX JUMP-USER - SET JUMP USER PASSWORD
-  ansible.builtin.shell: >
-    ssh root@{{ jump_host }}
-    "echo '{{ jump_user }}:{{ jump_password }}' | chpasswd"
+- name: PROXMOX JUMP-USER - HASH JUMP PASSWORD CLIENT-SIDE
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - passwd
+      - -6
+      - "{{ jump_password }}"
+  register: jump_password_hash
+  changed_when: false
+  no_log: true
   when: jump_on_proxmox | default('YES') | upper == 'YES'
+  delegate_to: localhost
+
+- name: PROXMOX JUMP-USER - SET JUMP USER PASSWORD (HASHED)
+  ansible.builtin.command: >
+    ssh root@{{ jump_host }}
+    "echo '{{ jump_user }}:{{ jump_password_hash.stdout }}' | chpasswd -e"
+  when:
+    - jump_on_proxmox | default('YES') | upper == 'YES'
+    - jump_password_hash is defined
+  changed_when: true
   no_log: true
   changed_when: true

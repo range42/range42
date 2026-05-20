@@ -16,3 +16,7 @@ jump_port: "22"
 # path to the generated jump SSH key (from credentials.generate)
 # typically: ./config/CODENAME-SCENARIO/ssh_keys/jump_keys/px.CODENAME-SCENARIO-ssh_cli.jump_user
 proxmox_jump_ssh_key_path: "to_define"
+
+# per-codename known_hosts file for jump-host SSH key pinning
+# prevents keys from silently accumulating in ~/.ssh/known_hosts
+known_hosts_file: "/tmp/range42_known_hosts_{{ INFRASTRUCTURE_CODENAME | default('unknown') }}"
