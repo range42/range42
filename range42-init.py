@@ -210,7 +210,12 @@ class _S:
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
     nat_bridges     = {f"vmbr{i}": True for i in range(140, 152)}
-    apt_proxy_url   = _load_wizard_cache().get("apt_proxy_url", "")
+    apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
+    apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
+    apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
+    apt_mirror_prewarm    = _load_wizard_cache().get("apt_mirror_prewarm", False)
+    apt_mirror_persistent = _load_wizard_cache().get("apt_mirror_persistent", False)
+    apt_mirror_vm_ip      = _load_wizard_cache().get("apt_mirror_vm_ip", "")
 S = _S()
 
 
@@ -278,6 +283,14 @@ def prefill(name):
     S.deployer_user   = ex("DEPLOYER_CLI_USER") or S.deployer_user
     S.deployer_ip     = ex("deployer_cli_ip") or "127.0.0.1"
     S.network_iface   = ex("infrastructure_proxmox_default_network_card_interface") or "enp3s0"
+    def ex_bool(k):
+        m = re.search(rf'^{k}:\s*(true|false)', txt, re.M)
+        return m.group(1) == "true" if m else False
+    S.apt_mirror_enabled    = ex_bool("apt_mirror_enabled")
+    S.apt_mirror_airgapped  = ex_bool("apt_mirror_airgapped")
+    S.apt_mirror_prewarm    = ex_bool("apt_mirror_prewarm")
+    S.apt_mirror_persistent = ex_bool("apt_mirror_persistent")
+    S.apt_mirror_vm_ip      = ex("apt_mirror_vm_ip")
     for d in (INVENTORIES / name / "group_vars").iterdir():
         if d.name != "all": S.scenario = d.name; break
 
@@ -367,6 +380,7 @@ LoadingIndicator { color: $primary; }
 STEPS = [
     (0, "welcome"),
     (0, "apt proxy"),
+    (0, "apt mirror"),
     (0, "prerequisites"),
     (2, "codename"),
     (2, "proxmox address"),
@@ -475,6 +489,92 @@ class StepAptProxy(Step):
         # validation passed — persist for next runs
         S.apt_proxy_url = url
         _save_wizard_cache({"apt_proxy_url": url})
+        app._go(StepAptMirror())
+
+
+# ── step 0 — apt mirror ───────────────────────────────────────────────────────
+class StepAptMirror(Step):
+    STEP_NUM  = 0
+    SHOW_BACK = True
+
+    def handle_back(self, app):
+        app._go(StepAptProxy())
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  step 0 — local APT mirror (optional)", classes="title")
+        yield Rule()
+        yield Static(
+            "  Deploy a local APT mirror VM on your Proxmox host to cache\n"
+            "  Debian/Ubuntu packages and accelerate VM provisioning.\n\n"
+            "  When enabled, a dedicated VM (admin-apt-mirror) is created\n"
+            "  and configured automatically during scenario deployment,\n"
+            "  just like admin-wazuh.\n",
+            classes="muted")
+        yield Horizontal(
+            Switch(value=S.apt_mirror_enabled, id="sw-mirror-enabled"),
+            Static("  Enable local APT mirror", classes="muted"),
+        )
+        yield Static("")
+        yield Static("  Mirror VM IP (in your lab network, e.g. 192.168.142.50)", classes="muted")
+        yield Input(
+            value=S.apt_mirror_vm_ip,
+            placeholder="192.168.142.50",
+            id="i-mirror-ip",
+            disabled=not S.apt_mirror_enabled,
+        )
+        yield Static("")
+        yield Horizontal(
+            Switch(value=S.apt_mirror_airgapped, id="sw-airgapped",
+                   disabled=not S.apt_mirror_enabled),
+            Static("  Air-gapped mode — aptly full mirror (~200 GB)", classes="muted"),
+        )
+        yield Horizontal(
+            Switch(value=S.apt_mirror_prewarm, id="sw-prewarm",
+                   disabled=not S.apt_mirror_enabled),
+            Static("  Pre-warm cache after deployment", classes="muted"),
+        )
+        yield Horizontal(
+            Switch(value=S.apt_mirror_persistent, id="sw-persistent",
+                   disabled=not S.apt_mirror_enabled),
+            Static("  Persist cache between exercises", classes="muted"),
+        )
+        yield Static("", id="mirror-status", classes="muted")
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.control.id != "sw-mirror-enabled":
+            return
+        enabled = event.value
+        for sw_id in ("sw-airgapped", "sw-prewarm", "sw-persistent"):
+            self.query_one(f"#{sw_id}", Switch).disabled = not enabled
+        self.query_one("#i-mirror-ip", Input).disabled = not enabled
+        if not enabled:
+            self.query_one("#mirror-status", Static).update("")
+
+    def handle_next(self, app):
+        enabled = self.query_one("#sw-mirror-enabled", Switch).value
+        S.apt_mirror_enabled = enabled
+
+        if enabled:
+            ip = self.query_one("#i-mirror-ip", Input).value.strip()
+            if not ip or not re.match(r'^\d{1,3}(?:\.\d{1,3}){3}$', ip):
+                self.query_one("#mirror-status", Static).update(
+                    "[FAIL] a valid IPv4 address is required when the mirror is enabled")
+                return
+            S.apt_mirror_vm_ip = ip
+        else:
+            S.apt_mirror_vm_ip = ""
+
+        S.apt_mirror_airgapped  = self.query_one("#sw-airgapped",  Switch).value
+        S.apt_mirror_prewarm    = self.query_one("#sw-prewarm",    Switch).value
+        S.apt_mirror_persistent = self.query_one("#sw-persistent", Switch).value
+
+        _save_wizard_cache({
+            "apt_mirror_enabled":    S.apt_mirror_enabled,
+            "apt_mirror_airgapped":  S.apt_mirror_airgapped,
+            "apt_mirror_prewarm":    S.apt_mirror_prewarm,
+            "apt_mirror_persistent": S.apt_mirror_persistent,
+            "apt_mirror_vm_ip":      S.apt_mirror_vm_ip,
+        })
         app._go(StepPreflight())
 
 
@@ -484,7 +584,7 @@ class StepPreflight(Step):
     SHOW_BACK = True
 
     def handle_back(self, app):
-        app._go(StepAptProxy())
+        app._go(StepAptMirror())
 
     def compose(self) -> ComposeResult:
         yield Label("◆  prerequisites checks", classes="title")
@@ -1259,6 +1359,8 @@ class StepReview(Step):
             ("deployer IP",     S.deployer_ip),
             ("NAT interface",   S.nat_interface),
             ("NAT bridges",     ", ".join(n for n, v in sorted(S.nat_bridges.items()) if v)),
+            ("apt mirror",       "enabled" if S.apt_mirror_enabled else "disabled"),
+            ("mirror IP",        S.apt_mirror_vm_ip if S.apt_mirror_enabled else "—"),
             ("root password",   pw),
             ("sudo password",   spw),
             ("deployer access", dpw),
@@ -1391,9 +1493,46 @@ class StepDeploy(Step):
              f'DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/{S.deployer_user}/range42.config"'),
             ('ssh_client__dst_config_dir: "/home/your_deployer_cli_username/.ssh"',
              f'ssh_client__dst_config_dir: "/home/{S.deployer_user}/.ssh"'),
-            ('apt_proxy_url: ""', f'apt_proxy_url: "{S.apt_proxy_url}"'),
+            # if local mirror enabled, use its URL as the apt proxy
+            ('apt_proxy_url: ""', 'apt_proxy_url: "{}"'.format(
+                f"http://{S.apt_mirror_vm_ip}:3142"
+                if S.apt_mirror_enabled and S.apt_mirror_vm_ip and not S.apt_proxy_url
+                else S.apt_proxy_url
+            )),
         ]:
             sed_f(vars_, old, new)
+
+        # apt mirror feature vars
+        if S.apt_mirror_enabled:
+            for old, new in [
+                ('apt_mirror_enabled: false',    'apt_mirror_enabled: true'),
+                ('apt_mirror_vm_ip: ""',         f'apt_mirror_vm_ip: "{S.apt_mirror_vm_ip}"'),
+                ('apt_mirror_airgapped: false',  f'apt_mirror_airgapped: {str(S.apt_mirror_airgapped).lower()}'),
+                ('apt_mirror_prewarm: false',    f'apt_mirror_prewarm: {str(S.apt_mirror_prewarm).lower()}'),
+                ('apt_mirror_persistent: false', f'apt_mirror_persistent: {str(S.apt_mirror_persistent).lower()}'),
+            ]:
+                sed_f(vars_, old, new)
+            # inject apt_mirror host group into hosts.yml
+            mirror_block = (
+                "\n\n    #### apt-mirror — local APT cache VM\n"
+                "    apt_mirror:\n"
+                "      hosts:\n"
+                "        apt-mirror:\n"
+                f'          ansible_host: "{S.apt_mirror_vm_ip}"\n'
+                "          ansible_port: 22\n"
+                f'          ansible_user: "{S.deployer_user}"\n'
+                '          ansible_ssh_private_key_file: "~/.ssh/id_ed25519"\n'
+            )
+            hc = hosts.read_text()
+            if "apt_mirror:" not in hc:
+                marker = "    #### deployer-cli"
+                hosts.write_text(
+                    hc.replace(marker, mirror_block + marker)
+                    if marker in hc else hc + mirror_block
+                )
+            log_row("PASS", "configured apt-mirror",
+                    f"ip={S.apt_mirror_vm_ip}  airgapped={S.apt_mirror_airgapped}")
+
         # inject range42_lab_bridges with NAT toggles
         bridges_yaml = "\n\n# lab bridges NAT configuration (managed by wizard)\nrange42_lab_bridges:\n"
         for name in sorted(S.nat_bridges.keys()):

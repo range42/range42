@@ -188,15 +188,17 @@ apt_proxy_url: ""
 
 #### APT MIRROR (OPTIONAL) ####
 
-# Local APT mirror/cache deployed on the exercise Proxmox host.
-# Deploy the mirror VM first (range42-catalog: software.install.apt_mirror_server),
-# then set apt_mirror_enabled: true and apt_proxy_url to the mirror VM's IP.
+# Managed by the wizard — do not edit manually.
+# Set via range42-init.py to deploy a local APT mirror VM automatically.
 #
-# apt_mirror_airgapped: false = apt-cacher-ng (caching proxy, no pre-download)
-#                       true  = aptly (full mirror, offline/air-gapped support)
+# apt_mirror_airgapped: false = apt-cacher-ng (caching proxy)
+#                       true  = aptly (full offline mirror, ~200 GB)
 #
 apt_mirror_enabled: false
+apt_mirror_vm_ip: ""
 apt_mirror_port: 3142
+apt_mirror_vm_id: 1050
+apt_mirror_vm_template_id: 9221
 apt_mirror_airgapped: false
 apt_mirror_prewarm: false
 apt_mirror_persistent: false
