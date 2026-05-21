@@ -195,7 +195,7 @@ apt_proxy_url: ""
 #                       true  = aptly (full offline mirror, ~200 GB)
 #
 apt_mirror_enabled: false
-apt_mirror_vm_ip: ""
+apt_mirror_vm_ip: "192.168.142.50"
 apt_mirror_port: 3142
 apt_mirror_vm_id: 1050
 apt_mirror_vm_template_id: 9221
