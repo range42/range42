@@ -136,6 +136,15 @@ EXAMPLE_DIR = INVENTORIES / "example"
 # preflight auto-clones it if missing (see wizard/preflight.py:ensure_playbooks_repo).
 PLAYBOOKS_DIR = SCRIPT_DIR.parent / "range42-playbooks"
 
+# files required in each scenario's templates/ dir for it to be deployable
+SCENARIO_REQUIRED_FILES = (
+    "ansible-inventory.j2",
+    "ansible-vars.yml",
+    "ssh-config.j2",
+    "vault-example.yml",
+)
+
+
 def list_deployable_scenarios():
     """
     Return sorted list of scenario names in range42-playbooks/scenarios/ that
@@ -240,7 +249,7 @@ def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
         return False, f"{type(e).__name__}: {e}"
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
-from wizard.preflight import run_all_checks, get_apt_install_command, get_apt_install_packages, SCENARIO_REQUIRED_FILES
+from wizard.preflight import run_all_checks, get_apt_install_command, get_apt_install_packages
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def cmd_ok(c): return bool(shutil.which(c))
@@ -497,18 +506,9 @@ class StepPreflight(Step):
             self.app.call_from_thread(self._row, r["badge"], r["label"], r["detail"])
             time.sleep(0.12)
 
-        self._apt_cmd = get_apt_install_command(results)
+        self._apt_cmd = get_apt_install_packages(results)  # list of packages (not a shell string)
         S.preflight_ok = not fail
         self.app.call_from_thread(self._done, fail)
-
-    def _add_row(self, badge, msg, kv=""):
-        cls = {"PASS":"pf-badge-pass","WARN":"pf-badge-warn",
-               "FAIL":"pf-badge-fail","INFO":"pf-badge-info"}[badge]
-        row = Horizontal(classes="pf-row")
-        row.compose_add_child(Label(badge, classes=cls))
-        row.compose_add_child(Label(msg,   classes="pf-msg"))
-        row.compose_add_child(Label(kv,    classes="pf-kv"))
-        self.query_one("#pf-rows").mount(row)
 
     def _row(self, badge, msg, kv=""):
         cls = {"PASS":"pf-badge-pass","WARN":"pf-badge-warn",
@@ -761,12 +761,21 @@ class StepAddress(Step):
         yield Input(value=S.proxmox_address, placeholder="192.168.1.100", id="i-addr")
         yield Label("", id="e-addr", classes="err")
 
+    _ADDR_RE = re.compile(
+        r'^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$'  # IPv4
+        r'|^[a-zA-Z]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?'
+        r'(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)+$'  # FQDN (letter start, 1+ dots)
+    )
+
     def handle_next(self, app):
-        addr = self.query_one("#i-addr", Input).value.strip()
+        addr = self.query_one("#i-addr", Input).value.strip().split(":")[0]
+        err = self.query_one("#e-addr", Label)
         if not addr:
-            self.query_one("#e-addr", Label).update("✗ address is required"); return
-        self.query_one("#e-addr", Label).update("")
-        S.proxmox_address = addr.split(":")[0]
+            err.update("✗ address is required"); return
+        if not self._ADDR_RE.match(addr):
+            err.update("✗ invalid address — use an IPv4 (192.168.1.100) or hostname (proxmox.local)"); return
+        err.update("")
+        S.proxmox_address = addr
         app._go(StepNode())
 
     def handle_back(self, app): app._go(StepCodename())
@@ -1097,6 +1106,7 @@ class StepRootPassword(Step):
             classes="muted", markup=True)
         yield Static("")
         yield Input(password=True, placeholder="leave empty to skip", id="i-rootpw")
+        yield Static("  Ctrl+P to reveal / hide", classes="muted")
         yield Label("", id="e-rootpw", classes="err")
         yield LoadingIndicator(id="spin-rootpw")
 
@@ -1166,6 +1176,7 @@ class StepSudoPassword(Step):
             classes="muted", markup=True)
         yield Static("")
         yield Input(password=True, placeholder="leave empty to skip", id="i-sudopw")
+        yield Static("  Ctrl+P to reveal / hide", classes="muted")
         yield Label("", id="e-sudopw", classes="err")
         yield LoadingIndicator(id="spin-sudopw")
 
@@ -1210,8 +1221,6 @@ class StepSudoPassword(Step):
         self.app.call_from_thread(_show)
 
     def handle_back(self, app): app._go(StepRootPassword())
-
-
 
 
 # ── step 5 — review & confirm ─────────────────────────────────────────────────
@@ -1464,9 +1473,61 @@ class Range42(App):
         Binding("up", "focus_previous", "up", show=False, priority=False),
         Binding("down", "focus_next", "down", show=False, priority=False),
         Binding("t", "cycle_theme", "theme", show=True),
+        # override Textual's built-in ctrl+p (command palette) — we use it for password toggle
+        Binding("ctrl+p", "toggle_password", "show/hide password", show=False, priority=True),
     ]
 
     _theme_idx: int = 0
+
+    # Textual does not translate numpad keys to characters — AZERTY users
+    # cannot type dots or digits from the numpad without this handler.
+    _NUMPAD_CHARS: dict[str, str] = {
+        # kp_ prefix variant (most terminals)
+        "kp_decimal": ".", "kp_separator": ",",
+        "kp_0": "0", "kp_1": "1", "kp_2": "2", "kp_3": "3", "kp_4": "4",
+        "kp_5": "5", "kp_6": "6", "kp_7": "7", "kp_8": "8", "kp_9": "9",
+        # no-prefix variant (confirmed on AZERTY + this terminal)
+        "decimal": ".", "separator": ",",
+        "numpad_0": "0", "numpad_1": "1", "numpad_2": "2", "numpad_3": "3",
+        "numpad_4": "4", "numpad_5": "5", "numpad_6": "6", "numpad_7": "7",
+        "numpad_8": "8", "numpad_9": "9",
+        # arithmetic operators — both naming variants
+        "kp_divide": "/",   "divide":   "/",
+        "kp_multiply": "*", "multiply": "*",
+        "kp_subtract": "-", "subtract": "-",
+        "kp_add": "+",      "add":      "+",
+    }
+
+    def action_toggle_password(self) -> None:
+        focused = self.focused
+        if isinstance(focused, Input) and focused.password is not None:
+            focused.password = not focused.password
+
+    @on(Input.Submitted)
+    def on_input_submitted(self) -> None:
+        steps = list(self.query_one("#content").children)
+        if steps:
+            steps[0].handle_next(self)
+
+    def on_key(self, event) -> None:
+        focused = self.focused
+        if not isinstance(focused, Input):
+            return
+
+        # Numpad keys — explicit map first, then fall back to event.character
+        # for any kp_* / numpad_* key not in the map (terminal-dependent names)
+        char = self._NUMPAD_CHARS.get(event.key)
+        if char is None and (event.key.startswith("kp_") or event.key.startswith("numpad_")):
+            c = getattr(event, "character", None)
+            if c and c.isprintable() and not c.isspace():
+                char = c
+        if char is None:
+            return
+        cursor = focused.cursor_position
+        focused.value = focused.value[:cursor] + char + focused.value[cursor:]
+        focused.cursor_position = cursor + 1
+        event.prevent_default()
+        event.stop()
 
     def action_quit(self): self.exit()
 
@@ -1569,11 +1630,11 @@ def post_wizard():
         _print_info("proxmox root password not set — you will be prompted")
 
     if S.deployer_ip not in ("127.0.0.1", "localhost") and S.deployer_cli_pw:
-        extra += ["-e", f"ansible_ssh_pass={S.deployer_cli_pw}"]
+        env["ANSIBLE_SSH_PASS"] = S.deployer_cli_pw
         _print_ok("deployer-cli password provided")
 
     if S.sudo_pw:
-        extra += ["-e", f"ansible_become_pass={S.sudo_pw}"]
+        env["ANSIBLE_BECOME_PASS"] = S.sudo_pw
         _print_ok("sudo password provided")
     else:
         _print_info("sudo password not set — assuming NOPASSWD")
@@ -1689,9 +1750,13 @@ if __name__ == "__main__":
     # post-TUI: if user clicked "Install prerequisites", run apt then re-launch
     if app._install_cmd:
         print()
-        print(f"  \033[1;33mINFO\033[0m  running: {app._install_cmd}")
+        print(f"  \033[1;33mINFO\033[0m  installing packages: {' '.join(app._install_cmd)}")
         print()
-        rc = subprocess.call(app._install_cmd, shell=True)
+        rc = subprocess.run(["sudo", "apt-get", "update"], check=False).returncode
+        if rc == 0:
+            rc = subprocess.run(
+                ["sudo", "apt-get", "install", "-y", *app._install_cmd], check=False
+            ).returncode
         if rc == 0:
             print()
             print("  \033[1;32m   OK\033[0m  packages installed — restarting wizard...")
@@ -1709,7 +1774,7 @@ if __name__ == "__main__":
         else:
             print()
             print("  \033[1;31m FAIL\033[0m  install failed — run manually:")
-            print(f"         {app._install_cmd}")
+            print(f"         sudo apt-get update && sudo apt-get install -y {' '.join(app._install_cmd)}")
             print(f"         then: python3 {__file__}")
             sys.exit(1)
     post_wizard()
