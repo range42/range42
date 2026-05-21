@@ -186,6 +186,30 @@ DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES: "YES"
 apt_proxy_url: ""
 
 
+#### APT MIRROR (OPTIONAL) ####
+
+# Managed by the wizard — do not edit manually.
+# Set via range42-init.py to deploy a local APT mirror VM automatically.
+#
+# apt_mirror_airgapped: false = apt-cacher-ng (caching proxy)
+#                       true  = aptly (full offline mirror, ~200 GB)
+#
+apt_mirror_enabled: false
+apt_mirror_vm_ip: ""
+apt_mirror_port: 3142
+apt_mirror_vm_id: 1050
+apt_mirror_vm_template_id: 9221
+apt_mirror_airgapped: false
+apt_mirror_prewarm: false
+apt_mirror_persistent: false
+apt_mirror_fallback: true
+apt_mirror_debian_stable: true
+apt_mirror_ubuntu_2204: true
+apt_mirror_ubuntu_2404: true
+apt_mirror_backports: false
+apt_mirror_security: false
+
+
 #### PASSWORD FORMAT ####
 # All passwords, secrets, API tokens must use ONLY: a-z A-Z 0-9 - _
 # AVOID: $ { } \ ! % @ * " ' < > | & and spaces
