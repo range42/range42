@@ -181,11 +181,11 @@ def run_all_checks(example_dir):
     return results, fail
 
 
-def get_apt_install_command(results):
+def get_apt_install_packages(results) -> list:
     """
-    Build a single 'sudo apt-get install ...' command from failed/warned checks.
-    Only includes checks that have an apt fix (not manual).
-    Returns None if nothing to install.
+    Return a sorted list of package names that need to be installed.
+    Only includes checks that have an apt fix (not manual) and are FAIL or WARN.
+    Returns an empty list if nothing to install.
     """
     packages = set()
     for r in results:
@@ -194,9 +194,19 @@ def get_apt_install_command(results):
             # extract package name from "sudo apt install <pkg>"
             pkg = apt_fix.replace("sudo apt install ", "").strip()
             packages.add(pkg)
+    return sorted(packages)
+
+
+def get_apt_install_command(results):
+    """
+    Build a single 'sudo apt-get install ...' command from failed/warned checks.
+    Only includes checks that have an apt fix (not manual).
+    Returns None if nothing to install (used for display / button visibility).
+    """
+    packages = get_apt_install_packages(results)
     if not packages:
         return None
-    return "sudo apt-get update && sudo apt-get install -y " + " ".join(sorted(packages))
+    return "sudo apt-get update && sudo apt-get install -y " + " ".join(packages)
 
 
 # files required in each scenario's templates/ dir for it to be deployable
