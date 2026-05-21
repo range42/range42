@@ -13,11 +13,10 @@
 #       Run once: pvesm set local --content iso,vztmpl,backup,snippets
 #       Or in GUI: Datacenter → Storage → local → Edit → Content → tick "Snippets"
 
-- name: PROXMOX INIT - ENSURE SNIPPETS DIR EXISTS ON PROXMOX
+- name: PROXMOX INIT - ENABLE SNIPPETS CONTENT TYPE ON LOCAL STORAGE
   ansible.builtin.shell: >
     ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
-    "mkdir -p /var/lib/vz/snippets"
-  when: apt_proxy_url is defined and (apt_proxy_url | length) > 0
+    "pvesm set local --content iso,vztmpl,backup,snippets 2>/dev/null; mkdir -p /var/lib/vz/snippets"
   changed_when: false
 
 - name: PROXMOX INIT - RENDER APT PROXY SNIPPET LOCALLY

@@ -1223,6 +1223,7 @@ class StepSudoPassword(Step):
     def handle_back(self, app): app._go(StepRootPassword())
 
 
+
 # ── step 5 — review & confirm ─────────────────────────────────────────────────
 class StepReview(Step):
     STEP_NUM   = 5

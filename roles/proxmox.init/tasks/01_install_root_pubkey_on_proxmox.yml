@@ -9,6 +9,9 @@
 - name: PROXMOX INIT - TEST IF ROOT KEY AUTH ALREADY WORKS
   ansible.builtin.command: >
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    -o IdentitiesOnly=yes
+    -o UserKnownHostsFile=/tmp/range42_known_hosts_{{ INFRASTRUCTURE_CODENAME | default('unknown') }}
+    -i "{{ proxmox_root_ssh_key_path }}"
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
   register: root_ssh_test
   changed_when: false
@@ -37,6 +40,7 @@
   ansible.builtin.shell: >
     sshpass -e ssh-copy-id
     -o StrictHostKeyChecking=accept-new
+    -o UserKnownHostsFile=/tmp/range42_known_hosts_{{ INFRASTRUCTURE_CODENAME | default('unknown') }}
     -o IdentitiesOnly=yes
     -i "{{ proxmox_root_ssh_key_path }}.pub"
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
@@ -53,6 +57,7 @@
   ansible.builtin.command: >
     ssh-copy-id
     -o StrictHostKeyChecking=accept-new
+    -o UserKnownHostsFile=/tmp/range42_known_hosts_{{ INFRASTRUCTURE_CODENAME | default('unknown') }}
     -o IdentitiesOnly=yes
     -o PreferredAuthentications=password
     -i "{{ proxmox_root_ssh_key_path }}.pub"
@@ -66,6 +71,9 @@
 - name: PROXMOX INIT - VERIFY ROOT KEY AUTH WORKS AFTER INSTALL
   ansible.builtin.command: >
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
+    -o IdentitiesOnly=yes
+    -o UserKnownHostsFile=/tmp/range42_known_hosts_{{ INFRASTRUCTURE_CODENAME | default('unknown') }}
+    -i "{{ proxmox_root_ssh_key_path }}"
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
   when: root_ssh_test.rc != 0
   changed_when: false

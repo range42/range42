@@ -17,6 +17,7 @@
 # Variables consumed:
 #   - DEPLOYER_CLI_USER                              (required)
 #   - DEV_MODE_INSTALL_JUMP_HOST_ANSIBLE_PACKAGES    (YES/NO, default YES)
+#   - proxmox_ca_cert_local_path                     (optional — path on controller)
 #
 ################################################################################
 
@@ -28,3 +29,4 @@
 - import_tasks: ./04_dot_files.yml
 - import_tasks: ./05_range42_context.yml
 - import_tasks: ./06_ansible_config.yml
+- import_tasks: ./07_proxmox_ca_cert.yml  # install Proxmox CA cert into system trust store

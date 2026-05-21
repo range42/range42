@@ -15,6 +15,7 @@
 #   - jump_user exists on proxmox with SSH key access
 #   - API token is created and tested
 #   - locale is set to C.UTF-8
+#   - config/<codename>-<scenario>/proxmox_ca.crt contains the Proxmox CA cert
 #
 ################################################################################
 
@@ -27,6 +28,7 @@
     DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
     proxmox_root_ssh_key_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
     proxmox_jump_ssh_key_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user"
+    proxmox_ca_cert_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/proxmox_ca.crt"
 
   # ensure ssh-agent is running for the entire play (all roles need it)
   # if agent is already running (keychain, etc.), reuse it
@@ -43,6 +45,7 @@
         ssh-agent -s | head -2
       register: _agent_start
       when: _agent_check.rc == 2
+      changed_when: _agent_start is not skipped
 
     - name: SET SSH_AUTH_SOCK FACT (NEW AGENT)
       ansible.builtin.set_fact:

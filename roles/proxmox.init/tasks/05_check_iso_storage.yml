@@ -1,0 +1,41 @@
+---
+# proxmox init - preflight: verify at least one storage supports ISO content type
+#
+# runs after SSH key auth is confirmed, before any ISO download is attempted
+# fails early with a clear message if no ISO-capable storage exists
+#
+# We use `grep -qE '\bactive\b'` instead of awk for two reasons :
+#   - awk's $N column variables get eaten by Ansible/bash local shell before
+#     SSH transports the command — escaping is error-prone
+#   - `\b` word boundary matches "active" only as a standalone token, so it
+#     does not accidentally match "inactive" as substring
+
+- name: PROXMOX INIT - CHECK ISO-CAPABLE STORAGE
+  ansible.builtin.shell: |
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} "pvesm status --content iso 2>/dev/null | grep -qE '\bactive\b'"
+  register: iso_storages_check
+  changed_when: false
+  failed_when: false
+  # rc=0 → at least one storage with content=iso and status=active
+  # rc!=0 → no active iso-capable storage (or grep/pvesm error)
+
+- name: PROXMOX INIT - FAIL IF NO ISO-CAPABLE STORAGE FOUND
+  ansible.builtin.fail:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+
+      PREFLIGHT FAILED: No Proxmox storage configured for ISO images
+
+      The deployer needs at least one active storage with ISO content
+      type enabled to download VM templates.
+
+      To fix this, in the Proxmox web UI:
+        Datacenter → Storage → select a storage → Edit
+        → enable "ISO Image" under Allowed Content
+
+      Or via CLI on the Proxmox host:
+        pvesm set local --content backup,iso,snippets,vztmpl
+
+      #### #### #### #### #### #### #### #### #### #### ####
+  when: iso_storages_check.rc != 0

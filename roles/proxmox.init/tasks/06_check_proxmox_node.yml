@@ -1,0 +1,50 @@
+---
+# proxmox init - verify proxmox_node variable matches an actual Proxmox node name
+#
+# Runs after SSH key auth is confirmed (01_install_root_pubkey) and locale fix
+# (02_fix_remote_locale), but BEFORE bridge creation (03_create_network_bridge).
+#
+# Without this check, a wrong proxmox_node (e.g. left at the default "pve"
+# while the actual cluster node is "hv-bw") causes pvesh to fail with :
+#     hostname lookup 'pve' failed - failed to get address info for: pve
+# only when bridge create runs, mid-deploy. This preflight catches it early
+# with a clear actionable error message.
+
+- name: PROXMOX INIT - LIST ACTUAL PROXMOX NODE NAMES
+  ansible.builtin.command: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "pvesh get /nodes --output-format json"
+  register: _proxmox_nodes_raw
+  changed_when: false
+
+- name: PROXMOX INIT - PARSE NODE NAMES
+  ansible.builtin.set_fact:
+    _proxmox_actual_nodes: >-
+      {{ (_proxmox_nodes_raw.stdout | from_json) | map(attribute='node') | list }}
+
+- name: PROXMOX INIT - VERIFY proxmox_node MATCHES AN ACTUAL NODE
+  ansible.builtin.fail:
+    msg: |
+
+      #### #### #### #### #### #### #### #### #### #### ####
+
+      MISCONFIGURED proxmox_node
+
+      Configured proxmox_node : "{{ proxmox_node }}"
+      Actual nodes on Proxmox : {{ _proxmox_actual_nodes | join(', ') }}
+
+      The variable proxmox_node must match one of the cluster's actual
+      node names exactly. Bridge creation and other API operations rely
+      on it.
+
+      Fix in your inventory file :
+        inventories/{{ INFRASTRUCTURE_CODENAME | default('<codename>') }}/group_vars/all/vars.yml
+
+      Set :
+        proxmox_node: "<one of the names above>"
+
+      Or re-run the wizard :
+        ./range42-init.py
+
+      #### #### #### #### #### #### #### #### #### #### ####
+  when: proxmox_node not in _proxmox_actual_nodes
