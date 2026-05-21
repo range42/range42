@@ -6,7 +6,16 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import json
+import os
+import re
+import shlex
+import shutil
+import ssl
+import subprocess
+import sys
+import time
+import urllib.request
 from pathlib import Path
 
 # make wizard/ importable
@@ -25,8 +34,8 @@ try:
     from textual.theme import Theme
     from textual.widget import Widget
     from textual.widgets import (
-        Button, DataTable, Footer, Header,
-        Input, Label, LoadingIndicator, RichLog, Select, Static, Rule, Switch,
+        Button, Footer, Header,
+        Input, Label, LoadingIndicator, RichLog, Select, Static, Rule,
     )
 
     # themes — hex-only, independent of terminal palette
@@ -166,8 +175,8 @@ def list_deployable_scenarios():
 # ── wizard cache (XDG-compliant, survives reboot) ─────────────────────────────
 # Used to remember non-sensitive wizard inputs across runs (e.g. last apt proxy URL).
 # Never store credentials, vault contents, or anything per-codename here.
-_WIZARD_CACHE_DIR  = os.path.expanduser("~/.cache/range42")
-_WIZARD_CACHE_FILE = os.path.join(_WIZARD_CACHE_DIR, "wizard.json")
+_WIZARD_CACHE_DIR  = Path.home() / ".cache" / "range42"
+_WIZARD_CACHE_FILE = _WIZARD_CACHE_DIR / "wizard.json"
 
 
 def _load_wizard_cache() -> dict:
@@ -183,7 +192,7 @@ def _load_wizard_cache() -> dict:
 def _save_wizard_cache(updates: dict) -> None:
     """Merge `updates` into the cache file. Silent fail if write impossible."""
     try:
-        os.makedirs(_WIZARD_CACHE_DIR, exist_ok=True)
+        _WIZARD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache = _load_wizard_cache()
         cache.update(updates)
         with open(_WIZARD_CACHE_FILE, "w", encoding="utf-8") as f:
@@ -232,10 +241,7 @@ def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
     """
     try:
         req = urllib.request.Request(url, method='HEAD')
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return True, f"HTTP {resp.status}"
     except urllib.error.HTTPError as e:
         return True, f"HTTP {e.code}"
@@ -270,7 +276,7 @@ def prefill(name):
     if not vf.exists(): return
     txt = vf.read_text()
     def ex(k):
-        m = re.search(rf'^{k}:\s*"([^"]*)"', txt, re.M)
+        m = re.search(rf'^{re.escape(k)}:\s*"([^"]*)"', txt, re.M)
         return m.group(1) if m else ""
     S.codename        = name
     S.proxmox_address = ex("INFRASTRUCTURE_PROXMOX_ADDRESS")
@@ -457,7 +463,7 @@ class StepAptProxy(Step):
             app._go(StepPreflight())
             return
 
-        # validate format
+        # validate format (fast, non-blocking — stays on event loop)
         if not _validate_apt_proxy_url(url):
             status.update(
                 "[FAIL] invalid format — expected http(s)://host:port  "
@@ -465,17 +471,23 @@ class StepAptProxy(Step):
             )
             return
 
-        # reachability check
+        # reachability check runs in a worker thread to avoid freezing the TUI
         status.update(f"[INFO] checking reachability of {url} ...")
+        self._check_proxy(url)
+
+    @work(thread=True)
+    def _check_proxy(self, url: str):
         ok, msg = _check_apt_proxy_reachable(url)
         if not ok:
-            status.update(f"[FAIL] not reachable: {msg}")
+            self.app.call_from_thread(
+                self.query_one("#apt-proxy-status", Static).update,
+                f"[FAIL] not reachable: {msg}",
+            )
             return
-
         # validation passed — persist for next runs
         S.apt_proxy_url = url
         _save_wizard_cache({"apt_proxy_url": url})
-        app._go(StepPreflight())
+        self.app.call_from_thread(self.app._go, StepPreflight())
 
 
 # ── step 0 — preflight ────────────────────────────────────────────────────────
@@ -498,7 +510,6 @@ class StepPreflight(Step):
 
     @work(thread=True)
     def check(self):
-        import time
         results, fail = run_all_checks(EXAMPLE_DIR)
         for r in results:
             self.app.call_from_thread(self._row, r["badge"], r["label"], r["detail"])
@@ -763,10 +774,13 @@ class StepAddress(Step):
     )
 
     def handle_next(self, app):
-        addr = self.query_one("#i-addr", Input).value.strip().split(":")[0]
+        addr_raw = self.query_one("#i-addr", Input).value.strip()
         err = self.query_one("#e-addr", Label)
-        if not addr:
+        if not addr_raw:
             err.update("✗ address is required"); return
+        if addr_raw.count(":") > 1:
+            err.update("✗ IPv6 not supported — use an IPv4 address or hostname"); return
+        addr = addr_raw.split(":")[0]
         if not self._ADDR_RE.match(addr):
             err.update("✗ invalid address — use an IPv4 (192.168.1.100) or hostname (proxmox.local)"); return
         err.update("")
@@ -977,7 +991,7 @@ class StepNATBridges(Step):
         bid = event.button.id or ""
         if not bid.startswith("nat-"):
             return
-        name = bid.replace("nat-", "")
+        name = bid.removeprefix("nat-")
         S.nat_bridges[name] = not S.nat_bridges[name]
         enabled = S.nat_bridges[name]
         event.button.label = self._btn_label(name, enabled)
@@ -1316,8 +1330,6 @@ class StepDeploy(Step):
     # ── inventory creation ────────────────────────────────────────────────────
     @work(thread=True)
     def create_inventory(self):
-        import time, shutil as sh
-
         def log_row(badge, msg, kv=""):
             cols = {"PASS":"#4ade80","WARN":"#fbbf24","FAIL":"#f87171","INFO":"#38bdf8"}
             c = cols.get(badge, "#94a3b8")
@@ -1346,8 +1358,8 @@ class StepDeploy(Step):
             # create skeleton: hosts.yml + group_vars/all/ only
             # scenario group_vars are populated further down from playbooks templates
             (dest / "group_vars" / "all").mkdir(parents=True, exist_ok=True)
-            sh.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
-            sh.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml",
+            shutil.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
+            shutil.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml",
                      dest / "group_vars" / "all" / "vars.yml")
             log_row("PASS", "created" if was_new else "updated",
                     f"path=inventories/{S.codename}/")
@@ -1415,8 +1427,8 @@ class StepDeploy(Step):
         # preserve ALL existing files — user may have edited vars.yml or filled vault.yml.
         if not scen.exists():
             scen.mkdir(parents=True, exist_ok=True)
-            sh.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
-            sh.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
+            shutil.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
+            shutil.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
             log_row("PASS", "configured scenario", f"name={S.scenario}")
         else:
             log_row("PASS", "preserved scenario", f"name={S.scenario} (existing config untouched)")
