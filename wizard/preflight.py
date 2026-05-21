@@ -143,6 +143,7 @@ def run_all_checks(example_dir):
             "label": f"collection {name}",
             "detail": "" if ok else f"  fix: ansible-galaxy collection install {name}",
             "required": False,
+            "apt_fix": None,
         })
 
     # example inventory check
@@ -154,6 +155,7 @@ def run_all_checks(example_dir):
         "label": "example inventory",
         "detail": "" if ok else f"  path: {example_dir}",
         "required": True,
+        "apt_fix": None,
     })
 
     # range42-playbooks repo check (auto-clone if missing)
@@ -167,6 +169,7 @@ def run_all_checks(example_dir):
         "label": "range42-playbooks",
         "detail": detail,
         "required": True,
+        "apt_fix": None,
     })
 
     # ssh-agent running check
@@ -176,6 +179,7 @@ def run_all_checks(example_dir):
         "label": "ssh-agent (running)",
         "detail": "" if agent_running else "  not running — will be handled during deployment",
         "required": False,
+        "apt_fix": None,
     })
 
     return results, fail
