@@ -15,7 +15,14 @@ the wave (e.g. WAVE_01 has 3 umbrellas across 3 repos). A single umbrella
 covering cross-repo work is also valid (e.g. WAVE_02 has 1 umbrella on
 playbooks that also tracks devkit work via SHA refs in its body).
 
-## WAVE_02 - in progress
+## WAVE_03 - in progress
+
+- range42/range42-playbooks#62
+- range42/range42#174
+- range42/range42-ansible_roles-debug-devkit#110
+- range42/range42-catalog#164
+
+## WAVE_02 - 2026-05-22
 
 - range42/range42-playbooks#55
 
