@@ -124,8 +124,21 @@ A zsh function available on the deployer-cli. Central tool for managing workspac
 | `range42-context deploy-vms` | deploy VMs only (skip template download, faster) |
 | `range42-context delete` | delete all scenario VMs + templates |
 | `range42-context delete-vms` | delete VMs only (keep templates for fast redeploy) |
+| `range42-context delete-everything` | delete ALL VMs + templates across ALL scenarios (cross-scenario nuke, requires confirmation) |
 | `range42-context reset` | delete + recreate all VMs |
 | `range42-context ssh-reload` | reload SSH keys for the active workspace |
+
+**Lifecycle (all VMs of active scenario):**
+
+| Command | What it does |
+|---------|-------------|
+| `range42-context start` | start all scenario VMs |
+| `range42-context stop` | graceful shutdown of all scenario VMs |
+| `range42-context stop-force` | force stop all scenario VMs |
+| `range42-context pause` | pause all scenario VMs |
+| `range42-context resume` | resume all paused scenario VMs |
+| `range42-context snapshot [name]` | snapshot all scenario VMs (auto-named if omitted) |
+| `range42-context revert <name>` | revert all scenario VMs to a snapshot |
 
 **Info:**
 
@@ -134,6 +147,7 @@ A zsh function available on the deployer-cli. Central tool for managing workspac
 | `range42-context inventory` | show the Ansible inventory tree |
 | `range42-context passwords` | show generated credentials (summary.txt) |
 | `range42-context ssh <pattern>` | quick SSH to a VM by partial name (e.g. `ssh wazuh`) |
+| `range42-context debug` | toggle verbose output (show/hide skipped tasks) |
 | `range42-context help` | show all commands |
 
 ### range42-workspace
