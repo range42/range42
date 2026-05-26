@@ -470,7 +470,7 @@ class StepAptProxy(Step):
         if not url:
             S.apt_proxy_url = ""
             _save_wizard_cache({"apt_proxy_url": ""})
-            app._go(StepPreflight())
+            app._go(StepAptMirror())
             return
 
         # validate format
