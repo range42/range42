@@ -30,7 +30,10 @@
     _credentials_dir: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
     _root_key_path: "{{ _credentials_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
     _alice_pubkey_path: "{{ _credentials_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice.pub"
-    _apt_mirror_gw: "{{ apt_mirror_vm_ip | regex_replace('^(\\d+\\.\\d+\\.\\d+)\\.\\d+$', '\\1.1') }}"
+    _mirror_vm_ip: "{{ apt_mirror_vm_ip | default('192.168.142.50') }}"
+    _mirror_vm_id: "{{ apt_mirror_vm_id | default(1050) }}"
+    _mirror_template_id: "{{ apt_mirror_vm_template_id | default(9221) }}"
+    _apt_mirror_gw: "{{ _mirror_vm_ip | regex_replace('^(\\d+\\.\\d+\\.\\d+)\\.\\d+$', '\\1.1') }}"
     _ssh_px: "ssh -o StrictHostKeyChecking=no -o BatchMode=yes -i {{ _root_key_path }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}"
 
   pre_tasks:
@@ -65,22 +68,22 @@
     SSH_AUTH_SOCK: "{{ _ssh_auth_sock | default(lookup('env', 'SSH_AUTH_SOCK')) }}"
 
   tasks:
-    - name: APT MIRROR VM - CHECK IF VM {{ apt_mirror_vm_id }} ALREADY EXISTS
+    - name: APT MIRROR VM - CHECK IF VM {{ _mirror_vm_id }} ALREADY EXISTS
       ansible.builtin.shell: >
         {{ _ssh_px }}
-        "qm list | awk '{print \$1}' | grep -qx {{ apt_mirror_vm_id }} && echo exists || echo not_exists"
+        "qm list | awk '{print \$1}' | grep -qx {{ _mirror_vm_id }} && echo exists || echo not_exists"
       register: _mirror_vm_check
       changed_when: false
 
     - name: APT MIRROR VM - ALREADY EXISTS (skipping clone)
       ansible.builtin.debug:
-        msg: "VM {{ apt_mirror_vm_id }} (admin-apt-mirror) already exists — skipping clone and cloud-init"
-      when: "'exists' in _mirror_vm_check.stdout"
+        msg: "VM {{ _mirror_vm_id }} (admin-apt-mirror) already exists — skipping clone and cloud-init"
+      when: _mirror_vm_check.stdout | trim == 'exists'
 
-    - name: APT MIRROR VM - CLONE TEMPLATE {{ apt_mirror_vm_template_id }} → {{ apt_mirror_vm_id }}
+    - name: APT MIRROR VM - CLONE TEMPLATE {{ _mirror_template_id }} → {{ _mirror_vm_id }}
       ansible.builtin.shell: >
         {{ _ssh_px }}
-        "qm clone {{ apt_mirror_vm_template_id }} {{ apt_mirror_vm_id }}
+        "qm clone {{ _mirror_template_id }} {{ _mirror_vm_id }}
         --name admin-apt-mirror
         --full 1
         --storage {{ infrastructure_proxmox_dest_vm_storage_name }}"
@@ -88,7 +91,7 @@
       changed_when: true
 
     - name: APT MIRROR VM - UPLOAD ALICE PUBLIC KEY TO PROXMOX
-      ansible.builtin.shell: >
+      ansible.builtin.shell: >-
         scp -o StrictHostKeyChecking=no -o BatchMode=yes
         -i {{ _root_key_path }}
         {{ _alice_pubkey_path }}
@@ -99,12 +102,12 @@
     - name: APT MIRROR VM - APPLY CLOUD-INIT (IP, gateway, user, SSH key)
       ansible.builtin.shell: >
         {{ _ssh_px }}
-        "qm set {{ apt_mirror_vm_id }}
+        "qm set {{ _mirror_vm_id }}
         --net0 virtio,bridge={{ vm_net_virtio_bridge | default('vmbr142') }}
-        --ipconfig0 ip={{ apt_mirror_vm_ip }}/24,gw={{ _apt_mirror_gw }}
+        --ipconfig0 ip={{ _mirror_vm_ip }}/24,gw={{ _apt_mirror_gw }}
         --ciuser alice
         --sshkeys /tmp/r42_mirror_pubkey.txt &&
-        qm cloudinit update {{ apt_mirror_vm_id }} 2>/dev/null || true ;
+        qm cloudinit update {{ _mirror_vm_id }} 2>/dev/null || true ;
         rm -f /tmp/r42_mirror_pubkey.txt"
       when: "'not_exists' in _mirror_vm_check.stdout"
       changed_when: true
@@ -112,23 +115,23 @@
     - name: APT MIRROR VM - TAG AS 'admin'
       ansible.builtin.shell: >
         {{ _ssh_px }}
-        "pvesh set /nodes/{{ proxmox_node }}/qemu/{{ apt_mirror_vm_id }}/config
+        "pvesh set /nodes/{{ proxmox_node }}/qemu/{{ _mirror_vm_id }}/config
         --tags admin 2>/dev/null || true"
       when: "'not_exists' in _mirror_vm_check.stdout"
       changed_when: true
 
-    - name: APT MIRROR VM - START VM {{ apt_mirror_vm_id }} (skip if already running)
+    - name: APT MIRROR VM - START VM {{ _mirror_vm_id }} (skip if already running)
       ansible.builtin.shell: >
         {{ _ssh_px }}
-        "qm status {{ apt_mirror_vm_id }} | grep -q running || qm start {{ apt_mirror_vm_id }}"
+        "qm status {{ _mirror_vm_id }} | grep -q running || qm start {{ _mirror_vm_id }}"
       register: _mirror_start
       changed_when: _mirror_start.stdout | length > 0
 
-    - name: APT MIRROR VM - WAIT FOR SSH ON {{ apt_mirror_vm_ip }}:22 (up to 120s via Proxmox)
+    - name: APT MIRROR VM - WAIT FOR SSH ON {{ _mirror_vm_ip }}:22 (up to 120s via Proxmox)
       ansible.builtin.shell: >
         {{ _ssh_px }}
         "timeout 120 bash -c
-        'until nc -z -w2 {{ apt_mirror_vm_ip }} 22 2>/dev/null; do sleep 3; done && echo ready'
+        'until nc -z -w2 {{ _mirror_vm_ip }} 22 2>/dev/null; do sleep 3; done && echo ready'
         || echo timeout"
       register: _mirror_ssh_wait
       changed_when: false
@@ -137,5 +140,5 @@
     - name: APT MIRROR VM - READY
       ansible.builtin.debug:
         msg: >-
-          VM {{ apt_mirror_vm_id }} (admin-apt-mirror) is up at {{ apt_mirror_vm_ip }}:22.
+          VM {{ _mirror_vm_id }} (admin-apt-mirror) is up at {{ _mirror_vm_ip }}:22.
           Play 04 will install and configure apt-cacher-ng.
