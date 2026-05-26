@@ -1491,6 +1491,19 @@ class StepDeploy(Step):
                 ('apt_mirror_persistent: false', f'apt_mirror_persistent: {str(S.apt_mirror_persistent).lower()}'),
             ]:
                 sed_f(vars_, old, new)
+            # ensure VM-identity vars exist (old inventories may predate the template addition)
+            vc = vars_.read_text()
+            missing = []
+            if 'apt_mirror_vm_ip:' not in vc:
+                missing.append(f'apt_mirror_vm_ip: "{_APT_MIRROR_DEFAULT_IP}"')
+            if 'apt_mirror_vm_id:' not in vc:
+                missing.append('apt_mirror_vm_id: 1050')
+            if 'apt_mirror_vm_template_id:' not in vc:
+                missing.append('apt_mirror_vm_template_id: 9221')
+            if missing:
+                with open(vars_, 'a') as _f:
+                    _f.write('\n# injected by wizard (apt mirror VM identity)\n')
+                    _f.write('\n'.join(missing) + '\n')
             # inject apt_mirror host group into hosts.yml (fixed IP, same convention as other admin VMs)
             mirror_block = (
                 "\n\n    #### apt-mirror — local APT cache VM\n"
