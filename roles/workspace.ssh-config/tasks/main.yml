@@ -18,7 +18,7 @@
 # Fixes included:
 #   - B1: insertbefore: BOF (was insertafter: EOF)
 #   - T1: pattern r42.init-vm-* (was r42.init-box-*)
-#   - T2: alias proxmox-cli prefixed by CODENAME (was global)
+#   - T2: alias proxmox_cli prefixed by CODENAME (was global)
 #
 # 3 sources of variables for the SSH config template:
 #   - infra vars: INFRASTRUCTURE_CODENAME, INFRASTRUCTURE_PROXMOX_ADDRESS

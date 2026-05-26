@@ -6,7 +6,7 @@
 #
 # fixes included in the template:
 #   - T1: pattern r42.init-vm-* (was r42.init-box-*)
-#   - T2: alias proxmox-cli prefixed by CODENAME (was global, conflict in multi-infra)
+#   - T2: alias proxmox_cli prefixed by CODENAME (was global, conflict in multi-infra)
 #
 # source: configure.deployer-cli/tasks/04_ssh_client.yml (lines 85-91)
 

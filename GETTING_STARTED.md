@@ -655,7 +655,7 @@ $ range42-context inventory
   |  |  |--r42.vuln-box-04
   |  |--@proxmox:
   |  |  |--mylab
-  |  |--@proxmox-cli:
+  |  |--@proxmox_cli:
   |  |  |--mylab-cli
 ```
 
