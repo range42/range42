@@ -40,7 +40,6 @@
 - name: VALIDATE - CHECK JUMP_PASSWORD COMPLEXITY
   ansible.builtin.assert:
     that:
-      - jump_password is defined
       - jump_password | length >= 12
       - jump_password | regex_search('[A-Z]')
       - jump_password | regex_search('[a-z]')
@@ -59,3 +58,8 @@
 
       #### #### #### #### #### #### #### #### #### #### ####
     quiet: true
+  # Skip when jump_password is not yet defined (fresh deploy : credentials.generate
+  # will create it before any role consumes it). This validate role runs first to
+  # catch misconfigurations, but cannot enforce complexity on a variable that does
+  # not exist yet — that's enforced later in the credentials.vault stage.
+  when: jump_password is defined
