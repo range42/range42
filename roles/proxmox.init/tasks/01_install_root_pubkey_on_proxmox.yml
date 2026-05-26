@@ -11,6 +11,7 @@
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
     -o IdentitiesOnly=yes
     -o UserKnownHostsFile=/tmp/range42_known_hosts_{{ INFRASTRUCTURE_CODENAME | default('unknown') }}
+    -i "{{ proxmox_root_ssh_key_path }}"
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
   register: root_ssh_test
   changed_when: false
@@ -72,6 +73,7 @@
     ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new
     -o IdentitiesOnly=yes
     -o UserKnownHostsFile=/tmp/range42_known_hosts_{{ INFRASTRUCTURE_CODENAME | default('unknown') }}
+    -i "{{ proxmox_root_ssh_key_path }}"
     root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }} true
   when: root_ssh_test.rc != 0
   changed_when: false

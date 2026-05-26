@@ -979,9 +979,9 @@ _r42_delete_everything() {
     echo ""
     _r42_print_step "stopping and deleting ${#all_ids[@]} VMs/templates ..."
     local _vm_list_json
-    _vm_list_json=$(proxmox_vm.list.to.jsons.sh 2>&1)
-    if ! echo "$_vm_list_json" | jq -e . >/dev/null 2>&1; then
-        _r42_print_fail "proxmox_vm.list.to.jsons.sh returned invalid JSON — aborting nuke"
+    _vm_list_json=$(proxmox_vm.list.to.jsons.sh 2>&1 | grep '"vm_id":[0-9]')
+    if [ -z "$_vm_list_json" ]; then
+        _r42_print_fail "proxmox_vm.list.to.jsons.sh returned no VM data (no vm_id lines) — aborting nuke"
         _r42_print_warning "output: ${_vm_list_json[1,200]}"
         return 1
     fi
