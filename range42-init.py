@@ -1763,6 +1763,16 @@ def post_wizard():
     _print_bold("starting deployment")
 
     env = os.environ.copy()
+
+    # Force a known-good locale before invoking ansible-playbook.
+    # SSH commonly forwards LC_* from the operator's client (e.g. macOS sets
+    # LC_ADDRESS=fr_FR.UTF-8 etc. via SendEnv). On a fresh deployer-cli only
+    # en_US.UTF-8 / C.UTF-8 are generated, so Ansible's setlocale(LC_ALL, '')
+    # fails with "unsupported locale setting". C.UTF-8 is POSIX-compatible
+    # and guaranteed present on every modern glibc.
+    env["LC_ALL"] = "C.UTF-8"
+    env["LANG"]   = "C.UTF-8"
+
     extra = []
 
     if S.proxmox_root_pw:
