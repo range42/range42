@@ -1,0 +1,6 @@
+---
+apt_cacher_port: "{{ apt_mirror_port | default(3142) }}"
+apt_cacher_passthrough: "{{ apt_mirror_fallback | default(true) | bool }}"
+apt_cacher_cache_dir: /var/cache/apt-cacher-ng
+apt_cacher_log_dir: /var/log/apt-cacher-ng
+apt_cacher_bind_address: "0.0.0.0"

@@ -1,0 +1,9 @@
+---
+- name: APT MIRROR CONFIGURE - WRITE ACNG CONFIG
+  ansible.builtin.template:
+    src: acng.conf.j2
+    dest: /etc/apt-cacher-ng/acng.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart apt-cacher-ng

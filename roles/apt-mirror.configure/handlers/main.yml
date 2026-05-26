@@ -1,0 +1,5 @@
+---
+- name: restart apt-cacher-ng
+  ansible.builtin.systemd:
+    name: apt-cacher-ng
+    state: restarted

@@ -1,0 +1,59 @@
+---
+################################################################################
+# 04 — Configure apt mirror VM (apt-cacher-ng)
+#
+# No-op when apt_mirror_enabled is false.
+#
+# Play 04a (localhost): resolve credential paths and register the mirror VM
+#   in a dynamic inventory group (apt_mirror_dynamic) so play 04b can
+#   connect. SSH jumps through root@proxmox via ProxyCommand because the VM
+#   is on a private network (192.168.142.x).
+#
+# Play 04b (apt_mirror_dynamic): install apt-cacher-ng as a native system
+#   package and enable the service via the apt-mirror.configure role.
+#   Runs with become:true (requires alice sudo access from cloud-init).
+#
+# Requires: 02b_apt_mirror_vm.yml completed (VM is running, SSH is up).
+# Requires: 01_generate_credentials.yml completed (alice key exists).
+#
+################################################################################
+
+- name: 04a apt mirror - register dynamic inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
+    _credentials_dir: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
+    _root_key_path: "{{ _credentials_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
+    _alice_key_path: "{{ _credentials_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice"
+
+  tasks:
+    - name: APT MIRROR CONFIG - SKIP PLAY (apt_mirror_enabled is false)
+      ansible.builtin.meta: end_play
+      when: not apt_mirror_enabled | default(false) | bool
+
+    - name: APT MIRROR CONFIG - REGISTER DYNAMIC HOST
+      ansible.builtin.add_host:
+        name: apt-mirror-dynamic
+        groups: apt_mirror_dynamic
+        ansible_host: "{{ apt_mirror_vm_ip }}"
+        ansible_user: alice
+        ansible_ssh_private_key_file: "{{ _alice_key_path }}"
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no
+          -o BatchMode=yes
+          -o ProxyCommand='ssh -o StrictHostKeyChecking=no -o BatchMode=yes
+          -i {{ _root_key_path }}
+          -W %h:%p
+          root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}'
+      changed_when: false
+
+- name: 04b apt mirror - install and configure apt-cacher-ng
+  hosts: apt_mirror_dynamic
+  gather_facts: true
+  become: true
+
+  roles:
+    - apt-mirror.configure

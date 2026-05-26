@@ -1,0 +1,5 @@
+---
+- import_tasks: 00_install.yml
+- import_tasks: 01_configure.yml
+- import_tasks: 02_service.yml
+- import_tasks: 03_firewall.yml

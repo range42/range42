@@ -1,0 +1,7 @@
+---
+- name: APT MIRROR CONFIGURE - ENABLE AND START APT-CACHER-NG
+  ansible.builtin.systemd:
+    name: apt-cacher-ng
+    state: started
+    enabled: true
+    daemon_reload: true

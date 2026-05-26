@@ -1,0 +1,10 @@
+---
+- name: APT MIRROR CONFIGURE - UPDATE APT CACHE
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: APT MIRROR CONFIGURE - INSTALL APT-CACHER-NG
+  ansible.builtin.apt:
+    name: apt-cacher-ng
+    state: present

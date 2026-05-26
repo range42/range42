@@ -1,0 +1,15 @@
+---
+- name: APT MIRROR CONFIGURE - CHECK UFW STATUS
+  ansible.builtin.command: ufw status
+  register: _ufw_status
+  changed_when: false
+  failed_when: false
+
+- name: APT MIRROR CONFIGURE - OPEN PORT {{ apt_cacher_port }}/TCP (UFW)
+  community.general.ufw:
+    rule: allow
+    port: "{{ apt_cacher_port | string }}"
+    proto: tcp
+  when:
+    - _ufw_status.rc == 0
+    - "'inactive' not in _ufw_status.stdout"
