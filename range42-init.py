@@ -192,6 +192,10 @@ def _save_wizard_cache(updates: dict) -> None:
         pass  # caching is best-effort, never block the wizard
 
 
+# Fixed IP for the admin-apt-mirror VM — same convention as admin-wazuh (.100),
+# admin-deployer-api-gateway (.120), etc.
+_APT_MIRROR_DEFAULT_IP = "192.168.142.50"
+
 # ── state ──────────────────────────────────────────────────────────────────────
 class _S:
     codename        = ""
@@ -215,14 +219,11 @@ class _S:
     apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
     apt_mirror_prewarm    = _load_wizard_cache().get("apt_mirror_prewarm", False)
     apt_mirror_persistent = _load_wizard_cache().get("apt_mirror_persistent", False)
+    apt_mirror_vm_ip      = _APT_MIRROR_DEFAULT_IP
 S = _S()
 
 
 # ── apt proxy validation helpers ──────────────────────────────────────────────
-
-# Fixed IP for the admin-apt-mirror VM — same convention as admin-wazuh (.100),
-# admin-deployer-api-gateway (.120), etc.
-_APT_MIRROR_DEFAULT_IP = "192.168.142.50"
 
 # Format: http(s)://host:port  (host can be IP or hostname; port is required)
 _APT_PROXY_RE = re.compile(r'^https?://[A-Za-z0-9._\-]+:\d+/?$')
