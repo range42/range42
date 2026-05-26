@@ -6,7 +6,7 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import json, os, re, secrets, shlex, shutil, string, subprocess, ssl, sys, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
@@ -221,6 +221,52 @@ class _S:
     apt_mirror_persistent = _load_wizard_cache().get("apt_mirror_persistent", False)
     apt_mirror_vm_ip      = _APT_MIRROR_DEFAULT_IP
 S = _S()
+
+
+# ── vault bootstrap ───────────────────────────────────────────────────────────
+
+_PW_ALPHABET = string.ascii_letters + string.digits + "-_"
+
+def _gen_pw(length: int = 24) -> str:
+    """Generate a strong password satisfying complexity: upper + lower + digit."""
+    while True:
+        pw = "".join(secrets.choice(_PW_ALPHABET) for _ in range(length))
+        if (any(c.isupper() for c in pw) and
+                any(c.islower() for c in pw) and
+                any(c.isdigit() for c in pw)):
+            return pw
+
+
+def _bootstrap_vault_if_needed(vault_path: Path, example_path: Path,
+                                deployer_user: str) -> bool:
+    """
+    Create vault.yml from vault.yml.example if it does not already exist.
+    Auto-generates strong passwords for fields that range42 owns.
+    Leaves proxmox_api_token_secret and tailscale keys as REPLACE_ME.
+    Returns True if a new vault was created.
+    """
+    if vault_path.exists():
+        return False
+    if not example_path.exists():
+        return False
+
+    content = example_path.read_text()
+    for old, new in [
+        ('jump_password: "REPLACE_ME"',
+            f'jump_password: "{_gen_pw()}"'),
+        ('default_admin_vm_ci_password: "REPLACE_ME"',
+            f'default_admin_vm_ci_password: "{_gen_pw()}"'),
+        ('default_trainee_vm_ci_password: "REPLACE_ME"',
+            f'default_trainee_vm_ci_password: "{_gen_pw()}"'),
+        ('WAZUH_PASSWORD: "REPLACE_ME"',
+            f'WAZUH_PASSWORD: "{_gen_pw()}"'),
+        ('deployer_cli_user_ssh_known_hosts: "/home/your_deployer_cli_username/.ssh/known_hosts"',
+            f'deployer_cli_user_ssh_known_hosts: "/home/{deployer_user}/.ssh/known_hosts"'),
+    ]:
+        content = content.replace(old, new)
+
+    vault_path.write_text(content)
+    return True
 
 
 # ── apt proxy validation helpers ──────────────────────────────────────────────
@@ -1767,6 +1813,18 @@ def post_wizard():
     print()
     _print_info(f"running: ansible-playbook site.yml -i inventories/{S.codename}/hosts.yml")
     print()
+
+    # bootstrap vault.yml from vault.yml.example if it does not exist yet
+    _vault_path   = SCRIPT_DIR / f"inventories/{S.codename}/group_vars/{S.scenario}/vault.yml"
+    _example_path = SCRIPT_DIR / f"inventories/{S.codename}/group_vars/{S.scenario}/vault.yml.example"
+    if _bootstrap_vault_if_needed(_vault_path, _example_path, S.deployer_user):
+        _print_ok("vault.yml auto-generated with strong passwords")
+        _print_info(
+            f"review: inventories/{S.codename}/group_vars/{S.scenario}/vault.yml"
+        )
+        _print_info(
+            "proxmox_api_token_secret and tailscale keys still need manual values"
+        )
 
     # -e @<scenario_vars_file> loads scenario-specific variables as extra vars.
     # Without this, Ansible silently ignores inventories/<cn>/group_vars/<scenario>/vars.yml
