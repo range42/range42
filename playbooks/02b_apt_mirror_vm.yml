@@ -120,6 +120,43 @@
       when: "'not_exists' in _mirror_vm_check.stdout"
       changed_when: true
 
+    # Always refresh sshkeys on Proxmox so the current deployer-cli alice key is
+    # authoritative in cloud-init metadata (guards against key mismatch when the
+    # VM was originally provisioned from a different machine).
+    - name: APT MIRROR VM - UPLOAD ALICE PUBLIC KEY (always, for key freshness)
+      ansible.builtin.shell: >-
+        scp -o StrictHostKeyChecking=no -o BatchMode=yes
+        -i {{ _root_key_path }}
+        {{ _alice_pubkey_path }}
+        root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}:/tmp/r42_mirror_pubkey.txt
+      changed_when: true
+
+    - name: APT MIRROR VM - UPDATE CLOUD-INIT SSHKEYS (always)
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "qm set {{ _mirror_vm_id }}
+        --sshkeys /tmp/r42_mirror_pubkey.txt &&
+        qm cloudinit update {{ _mirror_vm_id }} 2>/dev/null || true ;
+        rm -f /tmp/r42_mirror_pubkey.txt"
+      changed_when: true
+
+    # For already-running VMs cloud-init won't re-run, so inject the key directly
+    # via SSH from localhost (connection: local) using a ProxyCommand through root@proxmox.
+    # Best-effort: if the VM has a stale alice key this will fail gracefully.
+    - name: APT MIRROR VM - PUSH ALICE KEY INTO authorized_keys (live VM, best-effort)
+      ansible.builtin.shell: |
+        set -e
+        ALICE_PUB=$(cat {{ _alice_pubkey_path }})
+        ssh -o StrictHostKeyChecking=no -o BatchMode=yes -o IdentitiesOnly=yes \
+          -o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o BatchMode=yes -i {{ _root_key_path }} -W %h:%p root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}" \
+          -i {{ _alice_key_path }} \
+          alice@{{ _mirror_vm_ip }} \
+          "mkdir -p ~/.ssh && echo \"$ALICE_PUB\" >> ~/.ssh/authorized_keys && sort -u ~/.ssh/authorized_keys > /tmp/r42_ak_tmp && mv /tmp/r42_ak_tmp ~/.ssh/authorized_keys"
+      vars:
+        _alice_key_path: "{{ _credentials_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice"
+      changed_when: false
+      failed_when: false
+
     - name: APT MIRROR VM - START VM {{ _mirror_vm_id }} (skip if already running)
       ansible.builtin.shell: >
         {{ _ssh_px }}
