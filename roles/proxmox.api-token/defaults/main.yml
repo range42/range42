@@ -13,6 +13,11 @@ proxmox_api_user: "range42_api@pam"
 proxmox_api_token_id: "r42_{{ INFRASTRUCTURE_CODENAME }}_{{ INFRASTRUCTURE_SCENARIO }}"
 proxmox_api_token_secret: ""
 
-# proxmox ships with a self-signed certificate — set to true only if you have a valid CA-signed cert
+# proxmox ships with a self-signed certificate - set to true only if you have a valid CA-signed cert
 # override in inventories/<codename>/group_vars/all/vars.yml: proxmox_api_validate_certs: true
 proxmox_api_validate_certs: false
+
+# root directory of the deployer-cli range42 repo
+# normally set by playbooks/02_configure_proxmox.yml vars section
+# this default allows the role to be invoked standalone
+DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
