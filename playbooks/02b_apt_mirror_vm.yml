@@ -32,7 +32,7 @@
     _alice_pubkey_path: "{{ _credentials_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice.pub"
     _mirror_vm_ip: "{{ apt_mirror_vm_ip | default('192.168.142.50') }}"
     _mirror_vm_id: "{{ apt_mirror_vm_id | default(1050) }}"
-    _mirror_template_id: "{{ apt_mirror_vm_template_id | default(9221) }}"
+    _mirror_template_id: "{{ apt_mirror_vm_template_id | default(9301) }}"
     _apt_mirror_gw: "{{ _mirror_vm_ip | regex_replace('^(\\d+\\.\\d+\\.\\d+)\\.\\d+$', '\\1.1') }}"
     _ssh_px: "ssh -o StrictHostKeyChecking=no -o BatchMode=yes -i {{ _root_key_path }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}"
 
