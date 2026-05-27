@@ -999,6 +999,344 @@ _r42_delete_everything() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# catalog-try helpers (used by `range42-context catalog-try <path>`)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# Resolve a logical catalog path (e.g. `docker/_ctf/hello`) to an absolute path
+# under range42-catalog/.
+#
+# The logical path skips the numbered layer prefix : the operator types
+# `docker/_ctf/hello` instead of `03_container_layer/docker/_ctf/hello`. This
+# function searches all `NN_<x>_layer/` directories for the first key and
+# returns the matching absolute path.
+#
+# Usage: abs_path=$(_r42_catalog_resolve_path "docker/_ctf/hello")
+#
+# Returns 0 + abs path on stdout on success, 1 + error on stderr otherwise.
+# Validation : final dir must exist and contain at least one of compose.yml,
+# docker-compose.yml, or Makefile (otherwise not a deployable element).
+_r42_catalog_resolve_path() {
+    local input_path="$1"
+    if [[ -z "$input_path" ]]; then
+        _r42_print_fail "usage: _r42_catalog_resolve_path <path>" >&2
+        return 1
+    fi
+
+    local catalog_root="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42-catalog"
+    if [[ ! -d "$catalog_root" ]]; then
+        _r42_print_fail "range42-catalog not found at $catalog_root" >&2
+        return 1
+    fi
+
+    # Split input into first component (layer key) + rest
+    local first="${input_path%%/*}"
+    local rest="${input_path#*/}"
+    if [[ "$first" == "$input_path" ]]; then
+        rest=""
+    fi
+
+    # Find which numbered layer contains the first component as a subdir
+    local matches=()
+    local layer_dir
+    for layer_dir in "$catalog_root"/*/; do
+        layer_dir="${layer_dir%/}"
+        local layer_name
+        layer_name=$(basename "$layer_dir")
+        # Only consider canonical numbered layer dirs (NN_<x>_layer)
+        [[ "$layer_name" =~ ^[0-9]+_.*_layer$ ]] || continue
+        if [[ -d "$layer_dir/$first" ]]; then
+            matches+=("$layer_dir/$first")
+        fi
+    done
+
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        _r42_print_fail "no catalog layer contains '$first'" >&2
+        echo "  Available layer keys :" >&2
+        for layer_dir in "$catalog_root"/*/; do
+            layer_dir="${layer_dir%/}"
+            local lname
+            lname=$(basename "$layer_dir")
+            [[ "$lname" =~ ^[0-9]+_.*_layer$ ]] || continue
+            local sub
+            for sub in "$layer_dir"/*/; do
+                [[ -d "$sub" ]] && echo "    $(basename "$sub")  (in $lname)" >&2
+            done
+        done
+        return 1
+    fi
+
+    if [[ ${#matches[@]} -gt 1 ]]; then
+        _r42_print_fail "ambiguous : '$first' is in multiple layers" >&2
+        local m
+        for m in "${matches[@]}"; do echo "    $m" >&2; done
+        return 1
+    fi
+
+    # Single layer match - construct the full target path
+    local full_path="${matches[0]}"
+    if [[ -n "$rest" ]]; then
+        full_path="${full_path}/${rest}"
+    fi
+
+    # Verify the full path exists
+    if [[ ! -e "$full_path" ]]; then
+        _r42_print_fail "path not found : $full_path" >&2
+        local parent
+        parent=$(dirname "$full_path")
+        if [[ -d "$parent" ]]; then
+            echo "  Candidates under $parent :" >&2
+            local c
+            for c in "$parent"/*/; do
+                [[ -d "$c" ]] && echo "    $(basename "$c")" >&2
+            done
+        fi
+        return 1
+    fi
+
+    if [[ ! -d "$full_path" ]]; then
+        _r42_print_fail "not a directory : $full_path" >&2
+        return 1
+    fi
+
+    # Verify it's a deployable element (has at least one of compose.yml, docker-compose.yml, Makefile)
+    if [[ ! -f "$full_path/compose.yml" ]] && \
+       [[ ! -f "$full_path/docker-compose.yml" ]] && \
+       [[ ! -f "$full_path/Makefile" ]]; then
+        _r42_print_fail "not a deployable element : $full_path" >&2
+        echo "  Missing : at least one of compose.yml, docker-compose.yml, or Makefile" >&2
+        echo "  Subdirectories under this path (try a deeper match ?) :" >&2
+        local c
+        for c in "$full_path"/*/; do
+            [[ -d "$c" ]] && echo "    $(basename "$c")" >&2
+        done
+        return 1
+    fi
+
+    # Resolution OK - emit absolute path on stdout
+    echo "$full_path"
+    return 0
+}
+
+# Read a single scalar value from a catalog_try.yml file (simple grep, no full YAML parsing).
+# Usage : _r42_catalog_try_yml_get <yml_file> <key> [<default>]
+_r42_catalog_try_yml_get() {
+    local yml="$1" key="$2" default="${3:-}"
+    [[ ! -f "$yml" ]] && { echo "$default" ; return ; }
+    local val
+    val=$(grep -E "^${key}:" "$yml" 2>/dev/null | sed -E "s/^${key}:[[:space:]]*//" | sed -E 's/^"(.*)"$/\1/' | head -1)
+    if [[ -z "$val" ]] ; then
+        echo "$default"
+    else
+        echo "$val"
+    fi
+}
+
+# Main orchestrator : `range42-context catalog-try <path>`.
+# Overwrites the catalog_try test VM, deploys a single catalog element on it,
+# and runs a smoke check based on the element's optional catalog_try.yml.
+#
+# Usage : _r42_catalog_try <path>
+#   <path> : logical catalog path (e.g. docker/_ctf/hello)
+#
+# Requires : active scenario = catalog_try (range42-context use <codename> catalog_try first).
+_r42_catalog_try() {
+    local path="$1"
+    if [[ -z "$path" ]]; then
+        _r42_print_fail "usage: range42-context catalog-try <path>"
+        echo "  example : range42-context catalog-try docker/_ctf/hello" >&2
+        return 1
+    fi
+
+    # 1. Resolve logical path to absolute catalog element dir
+    local element_abs_path
+    element_abs_path=$(_r42_catalog_resolve_path "$path") || return 1
+    local element_name
+    element_name=$(basename "$element_abs_path")
+
+    # 2. Verify active scenario is catalog_try
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        echo "  Switch with : range42-context use <codename> catalog_try" >&2
+        return 1
+    fi
+    local active_scenario
+    active_scenario=$(_r42_active_scenario_name 2>/dev/null) || {
+        _r42_print_fail "could not resolve active scenario"
+        return 1
+    }
+    if [[ "$active_scenario" != "catalog_try" ]]; then
+        _r42_print_fail "active scenario is '$active_scenario', not 'catalog_try'"
+        echo "  Switch with : range42-context use <codename> catalog_try" >&2
+        return 1
+    fi
+
+    # 3. Read optional catalog_try.yml for smoke check config (defaults if missing)
+    local catalog_try_yml="$element_abs_path/catalog_try.yml"
+    local ct_mode ct_port ct_endpoint ct_init_timeout ct_exit_signature
+    ct_mode=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_mode" "service")
+    ct_port=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_port" "")
+    ct_endpoint=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_endpoint" "/")
+    ct_init_timeout=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_init_timeout" "60")
+    ct_exit_signature=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_exit_signature" "")
+    # Validate init_timeout is numeric (fall back to 60 if not)
+    if ! [[ "$ct_init_timeout" =~ ^[0-9]+$ ]]; then
+        _r42_print_warning "catalog_try_init_timeout '${ct_init_timeout}' is not a valid integer, defaulting to 60s"
+        ct_init_timeout=60
+    fi
+    # Clamp init_timeout to max 600s (C.19)
+    if [[ "$ct_init_timeout" -gt 600 ]]; then
+        _r42_print_warning "catalog_try_init_timeout clamped from ${ct_init_timeout}s to 600s (max)"
+        ct_init_timeout=600
+    fi
+    # Validate port is numeric if present (fall back to L1 if not)
+    if [[ -n "$ct_port" ]] && ! [[ "$ct_port" =~ ^[0-9]+$ ]]; then
+        _r42_print_warning "catalog_try_port '${ct_port}' is not a valid port number, falling back to L1 smoke check"
+        ct_port=""
+    fi
+
+    # 4. Read VM allocation from scenario manifest
+    local manifest
+    manifest=$(_r42_active_scenario_manifest) || return 1
+    local vm_ip vm_id vm_name vm_ssh
+    vm_ip=$(jq -r '.vms[0].ip' "$manifest")
+    vm_id=$(jq -r '.vms[0].vm_id' "$manifest")
+    vm_name=$(jq -r '.vms[0].vm_name' "$manifest")
+    vm_ssh="r42.${vm_name}"
+
+    # 5. Confirmation prompt
+    _r42_print_section "catalog-try : $path"
+    _r42_print_step "Element       : $element_abs_path"
+    _r42_print_step "Mode          : $ct_mode"
+    if [[ "$ct_mode" == "service" && -n "$ct_port" ]]; then
+        _r42_print_step "Smoke check   : curl http://${vm_ip}:${ct_port}${ct_endpoint}  (timeout ${ct_init_timeout}s)"
+    elif [[ "$ct_mode" == "oneshot" && -n "$ct_exit_signature" ]]; then
+        _r42_print_step "Smoke check   : grep '${ct_exit_signature}' in container output"
+    else
+        _r42_print_step "Smoke check   : L1 fallback (no contract declared)"
+    fi
+    _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip}, VMID ${vm_id})"
+    _r42_print_warning "This will DESTROY VM ${vm_id} and redeploy it fresh."
+    read -r -p "  Continue ? [y/N] " response
+    if [[ "$response" != "y" && "$response" != "Y" ]]; then
+        echo "  Aborted."
+        return 1
+    fi
+
+    # 6. Flush known_hosts for the test VM IP (avoid SSH host key collision)
+    ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$vm_ip" >/dev/null 2>&1 || true
+
+    # 7. Destroy previous test VM
+    _r42_print_section "destroying previous test VM"
+    _r42_delete_vms || { _r42_print_fail "delete_vms failed" ; return 1 ; }
+
+    # 8. Redeploy fresh VM with Docker baseline
+    _r42_print_section "redeploying test VM"
+    _r42_deploy_vms || { _r42_print_fail "deploy_vms failed" ; return 1 ; }
+
+    # 9. rsync element to the VM
+    _r42_print_section "rsync element to test VM"
+    local remote_dir="/home/alice/catalog-try-element"
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "rm -rf ${remote_dir} && mkdir -p ${remote_dir}" ; then
+        _r42_print_fail "cannot reach test VM via SSH (${vm_ssh})"
+        return 1
+    fi
+    if ! rsync -a --delete "${element_abs_path}/" "${vm_ssh}:${remote_dir}/" ; then
+        _r42_print_fail "rsync of element failed"
+        return 1
+    fi
+    _r42_print_check "element rsynced to ${vm_ssh}:${remote_dir}"
+
+    # 10. Run the element on the VM
+    _r42_print_section "running element on test VM"
+    local run_cmd
+    if [[ -f "${element_abs_path}/Makefile" ]]; then
+        # C.21 : Makefile wins if present
+        _r42_print_step "Makefile detected -> running 'make up'"
+        run_cmd="cd ${remote_dir} && make up"
+    elif [[ "$ct_mode" == "oneshot" ]]; then
+        _r42_print_step "oneshot mode -> docker compose up (no -d, captures output)"
+        run_cmd="cd ${remote_dir} && docker compose up --abort-on-container-exit"
+    else
+        _r42_print_step "service mode -> docker compose up -d (detached)"
+        run_cmd="cd ${remote_dir} && docker compose up -d"
+    fi
+    local run_log="/tmp/catalog-try-${element_name}-run.log"
+    ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "$run_cmd" 2>&1 | tee "$run_log"
+    local ssh_rc=${PIPESTATUS[0]}
+    if [[ "$ssh_rc" -ne 0 ]]; then
+        _r42_print_fail "run failed (ssh exit ${ssh_rc}) - log saved at ${run_log}"
+        return 1
+    fi
+
+    # 11. Smoke check based on mode + contract
+    _r42_print_section "smoke check"
+    if [[ "$ct_mode" == "oneshot" ]]; then
+        if [[ -n "$ct_exit_signature" ]]; then
+            local logs
+            logs=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "cd ${remote_dir} && docker compose logs 2>&1")
+            if echo "$logs" | grep -q "$ct_exit_signature" ; then
+                _r42_print_check "PASS : signature '${ct_exit_signature}' found in container output"
+            else
+                _r42_print_fail "FAIL : signature '${ct_exit_signature}' NOT found in output"
+                echo "----- container logs -----" >&2
+                echo "$logs" >&2
+                echo "--------------------------" >&2
+                return 1
+            fi
+        else
+            _r42_print_check "L1 PASS : container ran without runtime error (no exit_signature declared)"
+        fi
+    else
+        # service mode
+        if [[ -n "$ct_port" ]]; then
+            local url="http://${vm_ip}:${ct_port}${ct_endpoint}"
+            _r42_print_step "polling ${url}  (max ${ct_init_timeout}s)"
+            local elapsed=0
+            local step=5
+            local ok=false
+            while [[ "$elapsed" -lt "$ct_init_timeout" ]]; do
+                if curl -fsS --max-time 5 "$url" >/dev/null 2>&1 ; then
+                    ok=true
+                    break
+                fi
+                sleep "$step"
+                elapsed=$((elapsed + step))
+                printf "    waited %ds / %ds ...\n" "$elapsed" "$ct_init_timeout"
+            done
+            if $ok ; then
+                _r42_print_check "PASS : ${url} responded 200 OK after ${elapsed}s"
+            else
+                _r42_print_fail "FAIL : ${url} not reachable within ${ct_init_timeout}s"
+                echo "----- compose logs (tail 50) -----" >&2
+                ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "cd ${remote_dir} && docker compose logs --tail 50" >&2
+                echo "----------------------------------" >&2
+                return 1
+            fi
+        else
+            # L1 fallback : check docker ps shows at least one container
+            local ps_out
+            ps_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "docker ps --format '{{.Names}} {{.Status}}'")
+            if [[ -n "$ps_out" ]] ; then
+                _r42_print_check "L1 PASS : container(s) running"
+                echo "$ps_out"
+            else
+                _r42_print_fail "L1 FAIL : no container visible in docker ps"
+                return 1
+            fi
+        fi
+    fi
+
+    # 12. Print VM IP for inspection
+    _r42_print_section "done"
+    _r42_print_step "Test VM kept up for inspection :"
+    _r42_print_step "  range42-context ssh ${vm_ssh}"
+    _r42_print_step "  IP : ${vm_ip}"
+    _r42_print_step "  Element rsynced at : ${remote_dir}  (on the VM)"
+    _r42_print_step "Re-run with : range42-context catalog-try ${path}  (will overwrite)"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context init — launch the setup wizard from anywhere
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -1145,6 +1483,7 @@ range42-context() {
         ssh)            _r42_ssh "$@" ;;
         cd)             _r42_cd "$@" ;;
         debug)          _r42_debug ;;
+        catalog-try)    _r42_catalog_try "$@" ;;
         help|--help|-h) _r42_help ;;
         *)
             _r42_print_fail "unknown command: $cmd"
