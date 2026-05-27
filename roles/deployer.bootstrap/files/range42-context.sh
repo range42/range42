@@ -1040,8 +1040,7 @@ _r42_catalog_resolve_path() {
     local layer_dir
     for layer_dir in "$catalog_root"/*/; do
         layer_dir="${layer_dir%/}"
-        local layer_name
-        layer_name=$(basename "$layer_dir")
+        local layer_name="${layer_dir##*/}"
         # Only consider canonical numbered layer dirs (NN_<x>_layer)
         [[ "$layer_name" =~ ^[0-9]+_.*_layer$ ]] || continue
         if [[ -d "$layer_dir/$first" ]]; then
@@ -1054,12 +1053,13 @@ _r42_catalog_resolve_path() {
         echo "  Available layer keys :" >&2
         for layer_dir in "$catalog_root"/*/; do
             layer_dir="${layer_dir%/}"
-            local lname
-            lname=$(basename "$layer_dir")
+            local lname="${layer_dir##*/}"
             [[ "$lname" =~ ^[0-9]+_.*_layer$ ]] || continue
-            local sub
+            local sub sname
             for sub in "$layer_dir"/*/; do
-                [[ -d "$sub" ]] && echo "    $(basename "$sub")  (in $lname)" >&2
+                sub="${sub%/}"
+                sname="${sub##*/}"
+                [[ -d "$sub" ]] && echo "    ${sname}  (in ${lname})" >&2
             done
         done
         return 1
@@ -1081,13 +1081,14 @@ _r42_catalog_resolve_path() {
     # Verify the full path exists
     if [[ ! -e "$full_path" ]]; then
         _r42_print_fail "path not found : $full_path" >&2
-        local parent
-        parent=$(dirname "$full_path")
+        local parent="${full_path%/*}"
         if [[ -d "$parent" ]]; then
             echo "  Candidates under $parent :" >&2
-            local c
+            local c cname
             for c in "$parent"/*/; do
-                [[ -d "$c" ]] && echo "    $(basename "$c")" >&2
+                c="${c%/}"
+                cname="${c##*/}"
+                [[ -d "$c" ]] && echo "    ${cname}" >&2
             done
         fi
         return 1
@@ -1105,9 +1106,11 @@ _r42_catalog_resolve_path() {
         _r42_print_fail "not a deployable element : $full_path" >&2
         echo "  Missing : at least one of compose.yml, docker-compose.yml, or Makefile" >&2
         echo "  Subdirectories under this path (try a deeper match ?) :" >&2
-        local c
+        local c cname
         for c in "$full_path"/*/; do
-            [[ -d "$c" ]] && echo "    $(basename "$c")" >&2
+            c="${c%/}"
+            cname="${c##*/}"
+            [[ -d "$c" ]] && echo "    ${cname}" >&2
         done
         return 1
     fi
