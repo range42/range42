@@ -1045,16 +1045,11 @@ _r42_debug() {
         return 1
     fi
 
-    # check current state — if stdout_callback is active (not commented), we're in clean mode
-    if grep -q '^stdout_callback = no_skipped' "$cfg"; then
-        # switch to debug mode — comment out the no_skipped lines
-        sed -i 's/^stdout_callback = no_skipped/# stdout_callback = no_skipped/' "$cfg"
-        sed -i 's/^callback_plugins = callback_plugins/# callback_plugins = callback_plugins/' "$cfg"
+    if grep -q '^display_skipped_hosts = False' "$cfg"; then
+        sed -i 's/^display_skipped_hosts = False/# display_skipped_hosts = False/' "$cfg"
         _r42_print_check "debug mode ON — skipped tasks will be visible"
     else
-        # switch to clean mode — uncomment the no_skipped lines
-        sed -i 's/^# stdout_callback = no_skipped/stdout_callback = no_skipped/' "$cfg"
-        sed -i 's/^# callback_plugins = callback_plugins/callback_plugins = callback_plugins/' "$cfg"
+        sed -i 's/^# display_skipped_hosts = False/display_skipped_hosts = False/' "$cfg"
         _r42_print_check "debug mode OFF — skipped tasks hidden"
     fi
 }
