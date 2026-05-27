@@ -16,7 +16,8 @@ class CallbackModule(DefaultCallbackModule):
     CALLBACK_NEEDS_ENABLED = False
 
     def v2_runner_on_skipped(self, result):
-        pass
+        # attempt to overwrite the method to avoid printing skipped task.
+        return
 
     def v2_runner_item_on_skipped(self, result):
         pass

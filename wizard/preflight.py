@@ -60,7 +60,7 @@ def check_collection(name):
         ["ansible-galaxy", "collection", "list"],
         capture_output=True, text=True,
     )
-    return name in r.stdout
+    return any(line.strip().startswith(name) for line in r.stdout.splitlines())
 
 
 def check_ssh_agent_running():
@@ -210,8 +210,7 @@ def get_apt_install_command(results):
 
 
 # files required in each scenario's templates/ dir for it to be deployable
-# (duplicated in range42-init.py to avoid circular imports; keep in sync)
-_SCENARIO_REQUIRED_FILES = (
+SCENARIO_REQUIRED_FILES = (
     "ansible-inventory.j2",
     "ansible-vars.yml",
     "ssh-config.j2",
@@ -227,7 +226,7 @@ def _has_deployable_scenario(scenarios_dir):
         if not d.is_dir() or d.name.startswith("_"):
             continue
         tmpl = d / "templates"
-        if tmpl.is_dir() and all((tmpl / f).exists() for f in _SCENARIO_REQUIRED_FILES):
+        if tmpl.is_dir() and all((tmpl / f).exists() for f in SCENARIO_REQUIRED_FILES):
             return True
     return False
 

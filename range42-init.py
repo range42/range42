@@ -136,14 +136,6 @@ EXAMPLE_DIR = INVENTORIES / "example"
 # preflight auto-clones it if missing (see wizard/preflight.py:ensure_playbooks_repo).
 PLAYBOOKS_DIR = SCRIPT_DIR.parent / "range42-playbooks"
 
-# files required in each scenario's templates/ dir for it to be deployable
-SCENARIO_REQUIRED_FILES = (
-    "ansible-inventory.j2",
-    "ansible-vars.yml",
-    "ssh-config.j2",
-    "vault-example.yml",
-)
-
 
 def list_deployable_scenarios():
     """
@@ -209,13 +201,15 @@ class _S:
     deploy_now      = False
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
-    nat_bridges     = {f"vmbr{i}": True for i in range(140, 152)}
     apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
     apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
     apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
     apt_mirror_prewarm    = _load_wizard_cache().get("apt_mirror_prewarm", False)
     apt_mirror_persistent = _load_wizard_cache().get("apt_mirror_persistent", False)
     apt_mirror_vm_ip      = _load_wizard_cache().get("apt_mirror_vm_ip", "")
+
+    def __init__(self):
+        self.nat_bridges = {f"vmbr{i}": True for i in range(140, 152)}
 S = _S()
 
 
@@ -252,7 +246,7 @@ def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
         return False, f"{type(e).__name__}: {e}"
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
-from wizard.preflight import run_all_checks, get_apt_install_command, get_apt_install_packages
+from wizard.preflight import SCENARIO_REQUIRED_FILES, run_all_checks, get_apt_install_command, get_apt_install_packages
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def cmd_ok(c): return bool(shutil.which(c))
@@ -772,7 +766,10 @@ class StepExisting(Step):
         if not bid.startswith("c-"): return
         mode = bid[2:].split("--")[0]
         S.setup_mode = mode
-        if mode != "new": prefill(mode)
+        if mode != "new":
+            if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', mode):
+                return  # reject invalid names silently (button was created from filesystem, shouldn't happen)
+            prefill(mode)
         self.app._go(StepCodename())
 
 
@@ -1004,8 +1001,9 @@ class StepAutoDetectNAT(Step):
             else:
                 # no root password — can't SSH, use default
                 detected = "vmbr0"
-        except Exception:
-            pass
+        except Exception as exc:
+            detected = "vmbr0"
+            _exc_msg = str(exc)  # available for UI if needed
 
         S.nat_interface = detected
 
@@ -1177,7 +1175,7 @@ class StepDeployerUser(Step):
 
     def handle_next(self, app):
         S.deployer_user = self.query_one("#i-duser", Input).value.strip() or os.environ.get("USER", "")
-        S.deployer_cli_pw = S.sudo_pw  # reuse sudo password for deployer SSH
+        S.deployer_cli_pw = S.sudo_pw  # reuse sudo password for deployer SSH (single-machine assumption)
         app._go(StepReview())
 
     def handle_back(self, app): app._go(StepDeployerIP())
@@ -1220,6 +1218,7 @@ class StepRootPassword(Step):
     @work(thread=True)
     def _test_pw(self, pw):
         ok = False
+        exc_detail = ""
         try:
             env = os.environ.copy()
             env["SSHPASS"] = pw
@@ -1235,17 +1234,22 @@ class StepRootPassword(Step):
                  f"root@{S.proxmox_address}", "true"],
                 env=env, capture_output=True, timeout=10)
             ok = r.returncode == 0
-        except Exception:
-            pass
+        except Exception as exc:
+            ok = False
+            exc_detail = f"{type(exc).__name__}: {exc}"
 
-        def _show(ok=ok):
+        def _show(ok=ok, exc_detail=exc_detail):
             self.query_one("#spin-rootpw").display = False
             if ok:
                 self.query_one("#e-rootpw", Label).update("")
                 self.app._go(StepSudoPassword())
             else:
-                self.query_one("#e-rootpw", Label).update(
-                    "✗ could not authenticate — check password or server access")
+                msg = "✗ could not authenticate"
+                if exc_detail:
+                    msg += f" — {exc_detail}"
+                else:
+                    msg += " — check password or server access"
+                self.query_one("#e-rootpw", Label).update(msg)
         self.app.call_from_thread(_show)
 
     def handle_back(self, app): app._go(StepNode())
@@ -1284,47 +1288,32 @@ class StepSudoPassword(Step):
     @work(thread=True)
     def _test_sudo(self, pw):
         ok = False
+        exc_detail = ""
         try:
             r = subprocess.run(
                 ["sudo", "-S", "-k", "true"],
                 input=pw + "\n", capture_output=True, text=True, timeout=5)
             ok = r.returncode == 0
-        except Exception:
-            pass
+        except Exception as exc:
+            ok = False
+            exc_detail = f"{type(exc).__name__}: {exc}"
 
-        def _show(ok=ok):
+        def _show(ok=ok, exc_detail=exc_detail):
             self.query_one("#spin-sudopw").display = False
             if ok:
                 self.query_one("#e-sudopw", Label).update("")
                 self.app._go(StepProxmoxCheck())
             else:
-                self.query_one("#e-sudopw", Label).update(
-                    "✗ sudo authentication failed — check password")
+                msg = "✗ sudo authentication failed"
+                if exc_detail:
+                    msg += f" — {exc_detail}"
+                else:
+                    msg += " — check password"
+                self.query_one("#e-sudopw", Label).update(msg)
         self.app.call_from_thread(_show)
 
     def handle_back(self, app): app._go(StepRootPassword())
 
-
-class StepDeployerPassword(Step):
-    STEP_NUM = 4
-
-    def compose(self) -> ComposeResult:
-        yield Label("◆  deployer-cli SSH password", classes="title")
-        yield Rule()
-        yield Static(
-            f"  SSH password for {S.deployer_user}@{S.deployer_ip}.\n\n"
-            "  The deployer-cli is a remote machine. Ansible needs SSH access.\n"
-            "  Leave empty if SSH key access is already configured.",
-            classes="muted")
-        yield Static("")
-        yield Input(password=True, placeholder="leave empty to skip", id="i-clipw")
-        yield Static("  Ctrl+P to reveal / hide", classes="muted")
-
-    def handle_next(self, app):
-        S.deployer_cli_pw = self.query_one("#i-clipw", Input).value
-        app._go(StepReview())
-
-    def handle_back(self, app): app._go(StepDeployerUser())
 
 
 # ── step 5 — review & confirm ─────────────────────────────────────────────────
