@@ -1156,6 +1156,8 @@ _r42_catalog_try() {
     local element_abs_path
     element_abs_path=$(_r42_catalog_resolve_path "$catalog_path") || return 1
     local element_name="${element_abs_path##*/}"
+
+    _r42_print_section "pre-flight"
     _r42_print_step "resolved element : ${element_abs_path}"
 
     # 2. Verify active scenario is catalog_try
@@ -1213,8 +1215,9 @@ _r42_catalog_try() {
     vm_ssh="r42.${vm_name}"
 
     # 5. Confirmation prompt
-    _r42_print_section "catalog-try : $catalog_path"
-    _r42_print_step "Element       : $element_abs_path"
+    _r42_print_section "summary"
+    _r42_print_step "Element       : ${element_name}"
+    _r42_print_step "Catalog path  : ${catalog_path}"
     _r42_print_step "Mode          : $ct_mode"
     if [[ "$ct_mode" == "service" && -n "$ct_port" ]]; then
         _r42_print_step "Smoke check   : curl http://${vm_ip}:${ct_port}${ct_endpoint}  (timeout ${ct_init_timeout}s)"
