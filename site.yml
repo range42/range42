@@ -5,7 +5,9 @@
 # Orchestrates the full deployment pipeline in sequence:
 #   1. Generate credentials (localhost)
 #   2. Configure Proxmox (SSH + API)
-#   3. Deploy deployer-cli (bootstrap + workspace)
+#   2b. Provision apt mirror VM (no-op when apt_mirror_enabled is false)
+#   4. Install apt-cacher-ng on the mirror VM (no-op when apt_mirror_enabled is false)
+#   3. Deploy deployer-cli (bootstrap + workspace — probes apt mirror port 3142)
 #
 # Usage:
 #   ansible-playbook site.yml \
@@ -31,5 +33,5 @@
 - import_playbook: playbooks/01_generate_credentials.yml
 - import_playbook: playbooks/02_configure_proxmox.yml
 - import_playbook: playbooks/02b_apt_mirror_vm.yml
-- import_playbook: playbooks/03_deploy_deployer_cli.yml
 - import_playbook: playbooks/04_configure_apt_mirror.yml
+- import_playbook: playbooks/03_deploy_deployer_cli.yml
