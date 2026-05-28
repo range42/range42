@@ -6,6 +6,10 @@
 # Runs from localhost after 02_configure_proxmox.yml (root SSH key is loaded).
 #
 # What this playbook does:
+#   0. If template apt_mirror_vm_template_id is missing on Proxmox:
+#        a. Download Debian Trixie genericcloud qcow2 (if not already present)
+#        b. Create VM, import disk, configure scsi/cloudinit/boot/serial
+#        c. Convert to template
 #   1. Clone template apt_mirror_vm_template_id → apt_mirror_vm_id
 #   2. Set cloud-init (IP, gateway, alice user, SSH key)
 #   3. Start the VM and wait for SSH readiness on port 22
@@ -35,6 +39,11 @@
     _mirror_template_id: "{{ apt_mirror_vm_template_id | default(9301) }}"
     _apt_mirror_gw: "{{ _mirror_vm_ip | regex_replace('^(\\d+\\.\\d+\\.\\d+)\\.\\d+$', '\\1.1') }}"
     _ssh_px: "ssh -o StrictHostKeyChecking=no -o BatchMode=yes -i {{ _root_key_path }} root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}"
+    _mirror_template_name: "{{ apt_mirror_vm_template_name | default('template-vm-small-debian-trixie') }}"
+    _mirror_cloud_img: "debian-13-genericcloud-amd64.qcow2"
+    _mirror_cloud_img_url: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
+    _mirror_cloud_img_path: "/var/lib/vz/template/iso/debian-13-genericcloud-amd64.qcow2"
+    _mirror_disk_size: "{{ apt_mirror_vm_disk_size | default('32G') }}"
 
   pre_tasks:
     - name: APT MIRROR VM - SKIP PLAY (apt_mirror_enabled is false)
@@ -75,17 +84,73 @@
       register: _mirror_template_check
       changed_when: false
 
-    - name: APT MIRROR VM - TEMPLATE NOT FOUND (deferred)
-      ansible.builtin.debug:
-        msg: >-
-          Template {{ _mirror_template_id }} does not exist on Proxmox yet.
-          The apt-mirror VM ({{ _mirror_vm_id }}) will be provisioned on the next
-          run of site.yml after the template is created by the scenario
-          (_init_lab → main.yml).
+    - name: APT MIRROR VM - DOWNLOAD DEBIAN TRIXIE CLOUD IMAGE (if not present)
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "test -f {{ _mirror_cloud_img_path }} ||
+        (wget -q -O {{ _mirror_cloud_img_path }}.tmp {{ _mirror_cloud_img_url }}
+        && mv {{ _mirror_cloud_img_path }}.tmp {{ _mirror_cloud_img_path }})"
       when: _mirror_template_check.stdout | trim == 'not_exists'
+      changed_when: true
+      async: 600
+      poll: 10
 
-    - name: APT MIRROR VM - DEFER (template missing)
-      ansible.builtin.meta: end_play
+    - name: APT MIRROR VM - CREATE TEMPLATE VM {{ _mirror_template_id }}
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "qm create {{ _mirror_template_id }}
+        --name {{ _mirror_template_name }}
+        --memory 4096 --cores 1 --sockets 1 --cpu host
+        --net0 virtio,bridge=vmbr140"
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+      changed_when: true
+
+    - name: APT MIRROR VM - PRE-RESIZE CLOUD IMAGE TO {{ _mirror_disk_size }}
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "qemu-img resize --shrink {{ _mirror_cloud_img_path }} {{ _mirror_disk_size }}"
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+      changed_when: true
+
+    - name: APT MIRROR VM - IMPORT CLOUD DISK TO TEMPLATE VM
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "qm disk import {{ _mirror_template_id }}
+        {{ _mirror_cloud_img_path }}
+        {{ infrastructure_proxmox_dest_vm_storage_name }}"
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+      changed_when: true
+
+    - name: APT MIRROR VM - CONFIGURE TEMPLATE DISK, CLOUD-INIT, BOOT, AND SERIAL
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "qm set {{ _mirror_template_id }}
+        --scsihw virtio-scsi-pci
+        --scsi0 {{ infrastructure_proxmox_dest_vm_storage_name }}:vm-{{ _mirror_template_id }}-disk-0
+        --ide2 {{ infrastructure_proxmox_dest_vm_storage_name }}:cloudinit,media=cdrom
+        --boot c --bootdisk scsi0
+        --serial0 socket --vga serial0"
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+      changed_when: true
+
+    - name: APT MIRROR VM - CONVERT VM {{ _mirror_template_id }} TO TEMPLATE
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "qm template {{ _mirror_template_id }}"
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+      changed_when: true
+
+    - name: APT MIRROR VM - TAG TEMPLATE {{ _mirror_template_id }} AS 'template'
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "pvesh set /nodes/{{ proxmox_node }}/qemu/{{ _mirror_template_id }}/config
+        --tags template 2>/dev/null || true"
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+      changed_when: true
+
+    - name: APT MIRROR VM - TEMPLATE {{ _mirror_template_id }} READY
+      ansible.builtin.debug:
+        msg: "Template {{ _mirror_template_id }} ({{ _mirror_template_name }}) created on Proxmox"
       when: _mirror_template_check.stdout | trim == 'not_exists'
 
     - name: APT MIRROR VM - CHECK IF VM {{ _mirror_vm_id }} ALREADY EXISTS
