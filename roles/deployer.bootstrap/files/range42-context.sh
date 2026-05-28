@@ -1278,13 +1278,17 @@ _r42_catalog_try() {
     fi
     _r42_print_check "element deployed on ${vm_ssh}:${remote_dir}"
 
-    # 12. Print VM IP for inspection
-    _r42_print_section "done"
-    _r42_print_step "Test VM kept up for inspection :"
-    _r42_print_step "  range42-context ssh ${vm_ssh}"
-    _r42_print_step "  IP : ${vm_ip}"
-    _r42_print_step "  Element deployed at : ${remote_dir}  (on the VM)"
-    _r42_print_step "Re-run with : range42-context catalog-try ${catalog_path}  (will overwrite)"
+    # 12. Final summary - mirror the intro layout (section + aligned key:value).
+    _r42_print_section "done - one usage VM ready"
+    _r42_print_step "Element       : ${element_name}"
+    _r42_print_step "Catalog path  : ${catalog_path}"
+    _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip})"
+    _r42_print_step "Deployed at   : ${remote_dir}  (on the VM)"
+
+    _r42_print_section "next steps"
+    _r42_print_step "deploy again  : range42-context catalog-try ${catalog_path}"
+    _r42_print_step "connect to VM : range42-context ssh ${vm_ssh}"
+    _r42_print_step "                (alt : ssh ${vm_ssh})"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
