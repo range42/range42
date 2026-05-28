@@ -132,7 +132,7 @@
       when: _mirror_template_check.stdout | trim == 'not_exists'
       changed_when: true
 
-    - name: APT MIRROR VM - CONFIGURE TEMPLATE DISK, CLOUD-INIT, BOOT, AND SERIAL
+    - name: APT MIRROR VM - CONFIGURE TEMPLATE DISK, CLOUD-INIT, BOOT, AND VGA
       ansible.builtin.shell: >
         {{ _ssh_px }}
         "qm set {{ _mirror_template_id }}
@@ -140,7 +140,7 @@
         --scsi0 {{ infrastructure_proxmox_dest_vm_storage_name }}:vm-{{ _mirror_template_id }}-disk-0
         --ide2 {{ infrastructure_proxmox_dest_vm_storage_name }}:cloudinit,media=cdrom
         --boot c --bootdisk scsi0
-        --serial0 socket --vga serial0"
+        --vga std"
       when: _mirror_template_check.stdout | trim == 'not_exists'
       changed_when: true
 
