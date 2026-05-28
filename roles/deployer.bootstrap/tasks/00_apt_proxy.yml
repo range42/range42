@@ -1,27 +1,10 @@
 ---
-# deployer bootstrap - configure apt proxy on the deployer-cli (optional)
+# deployer bootstrap - ensure no apt proxy is set on the deployer-cli
 #
-# Sets /etc/apt/apt.conf.d/00range42-proxy if apt_proxy_url is non-empty AND
-# the mirror is directly reachable from the deployer.
-# Removes it otherwise (idempotent, supports unsetting).
+# apt_proxy_url / the apt-mirror VM are for lab VMs provisioned inside Proxmox.
+# The deployer-cli always uses direct internet for its own apt operations.
 #
-# Design: the apt-mirror VM lives on the vmbr142 admin zone (192.168.142.0/24).
-# The deployer reaches Proxmox VMs via a jump box — there is no direct IP route
-# from the deployer to that subnet. apt traffic is raw TCP and cannot go through
-# an SSH tunnel, so if the deployer cannot reach the mirror directly it falls
-# back to direct internet for its own apt operations.
-# Lab VMs (provisioned by range42-playbooks) are configured separately to use
-# the apt-mirror proxy via their own network routes.
-#
-# The probe runs nc via SSH to Proxmox (jump box) — Proxmox has a direct route
-# to the vmbr142 admin zone so it can reach the mirror even though the deployer
-# cannot. apt traffic is still raw TCP from the deployer; if the mirror is
-# reachable from Proxmox's perspective the apt proxy is configured normally.
-#   - reachable  → configure proxy normally
-#   - unreachable → skip proxy, warn, fall back to direct apt
-# Re-running deployer.bootstrap after the mirror VM is up picks it up.
-#
-# Must run BEFORE 01_packages.yml so apt-get installs use the proxy.
+# Must run BEFORE 01_packages.yml.
 
 - name: DEPLOYER BOOTSTRAP - REMOVE STALE APT MIRROR ROUTE SCRIPT (if-up.d cleanup)
   ansible.builtin.file:
@@ -29,61 +12,8 @@
     state: absent
   become: true
 
-- name: DEPLOYER BOOTSTRAP - PROBE APT MIRROR REACHABILITY VIA PROXMOX (skip if mirror disabled)
-  ansible.builtin.shell: >
-    ssh -o StrictHostKeyChecking=no -o BatchMode=yes
-    -i {{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root
-    root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
-    "nc -z -w5 {{ apt_mirror_vm_ip | default('192.168.142.50') }} {{ apt_mirror_port | default(3142) | int }}
-    && echo reachable || echo unreachable"
-  register: _apt_mirror_probe
-  changed_when: false
-  failed_when: false
-  when:
-    - apt_mirror_enabled | default(false) | bool
-    - apt_proxy_url is defined and (apt_proxy_url | length) > 0
-
-- name: DEPLOYER BOOTSTRAP - RESOLVE MIRROR REACHABILITY FLAG
-  ansible.builtin.set_fact:
-    _apt_mirror_unreachable: >-
-      {{
-        (_apt_mirror_probe is defined)
-        and not (_apt_mirror_probe.skipped | default(false))
-        and (
-          (_apt_mirror_probe.failed | default(false))
-          or ('unreachable' in (_apt_mirror_probe.stdout | default('')))
-        )
-      }}
-
-- name: DEPLOYER BOOTSTRAP - WARN APT MIRROR NOT REACHABLE (using direct apt)
-  ansible.builtin.debug:
-    msg: >-
-      APT mirror at {{ apt_proxy_url }} is not reachable yet (mirror VM not deployed).
-      Skipping proxy — apt will use direct internet for this bootstrap.
-      Re-run site.yml or deployer.bootstrap after deploying the apt mirror VM.
-  when: _apt_mirror_unreachable | bool
-
-- name: DEPLOYER BOOTSTRAP - CONFIGURE APT PROXY (apt_proxy_url is set and reachable)
-  ansible.builtin.copy:
-    content: |
-      Acquire::http::Proxy "{{ apt_proxy_url }}";
-    dest: /etc/apt/apt.conf.d/00range42-proxy
-    owner: root
-    group: root
-    mode: "0644"
-  become: true
-  when:
-    - apt_proxy_url is defined and (apt_proxy_url | length) > 0
-    - not (_apt_mirror_unreachable | default(false) | bool)
-  # NOTE: only HTTP is proxified. apt-cacher-ng (and most local apt caches) don't
-  # pass-through HTTPS by default — setting an https proxy on a non-HTTPS-capable
-  # cacher breaks `apt update` for sources using https://. HTTPS goes DIRECT.
-
-- name: DEPLOYER BOOTSTRAP - REMOVE APT PROXY (apt_proxy_url is empty/unset or mirror unreachable)
+- name: DEPLOYER BOOTSTRAP - ENSURE NO APT PROXY ON DEPLOYER (direct internet only)
   ansible.builtin.file:
     path: /etc/apt/apt.conf.d/00range42-proxy
     state: absent
   become: true
-  when: >-
-    (apt_proxy_url is not defined or (apt_proxy_url | length) == 0)
-    or (_apt_mirror_unreachable | default(false) | bool)
