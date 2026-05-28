@@ -68,6 +68,26 @@
     SSH_AUTH_SOCK: "{{ _ssh_auth_sock | default(lookup('env', 'SSH_AUTH_SOCK')) }}"
 
   tasks:
+    - name: APT MIRROR VM - CHECK IF TEMPLATE {{ _mirror_template_id }} EXISTS
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "qm list | awk '{print \$1}' | grep -qx {{ _mirror_template_id }} && echo exists || echo not_exists"
+      register: _mirror_template_check
+      changed_when: false
+
+    - name: APT MIRROR VM - TEMPLATE NOT FOUND (deferred)
+      ansible.builtin.debug:
+        msg: >-
+          Template {{ _mirror_template_id }} does not exist on Proxmox yet.
+          The apt-mirror VM ({{ _mirror_vm_id }}) will be provisioned on the next
+          run of site.yml after the template is created by the scenario
+          (_init_lab → main.yml).
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+
+    - name: APT MIRROR VM - DEFER (template missing)
+      ansible.builtin.meta: end_play
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+
     - name: APT MIRROR VM - CHECK IF VM {{ _mirror_vm_id }} ALREADY EXISTS
       ansible.builtin.shell: >
         {{ _ssh_px }}
