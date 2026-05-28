@@ -1,8 +1,15 @@
 ---
-# deployer bootstrap - ensure no apt proxy is set on the deployer-cli
+# deployer bootstrap - apt proxy cleanup + apt-mirror health probe
 #
-# apt_proxy_url / the apt-mirror VM are for lab VMs provisioned inside Proxmox.
 # The deployer-cli always uses direct internet for its own apt operations.
+# apt_proxy_url and the apt-mirror VM are for lab VMs inside Proxmox only.
+#
+# The probe here is informational only: it tells the operator whether the
+# apt-mirror is reachable from Proxmox so lab VMs will be able to use it.
+# The result never drives proxy configuration on the deployer.
+#
+# Probe runs via SSH to Proxmox (jump box) — Proxmox has a direct route to
+# the vmbr142 admin zone where the mirror lives; the deployer does not.
 #
 # Must run BEFORE 01_packages.yml.
 
@@ -17,3 +24,41 @@
     path: /etc/apt/apt.conf.d/00range42-proxy
     state: absent
   become: true
+
+- name: DEPLOYER BOOTSTRAP - PROBE APT MIRROR HEALTH VIA PROXMOX (skip if mirror disabled)
+  ansible.builtin.shell: >
+    ssh -o StrictHostKeyChecking=no -o BatchMode=yes
+    -i {{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root
+    root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "nc -z -w5 {{ apt_mirror_vm_ip | default('192.168.142.50') }} {{ apt_mirror_port | default(3142) | int }}
+    && echo reachable || echo unreachable"
+  register: _apt_mirror_probe
+  changed_when: false
+  failed_when: false
+  when:
+    - apt_mirror_enabled | default(false) | bool
+
+- name: DEPLOYER BOOTSTRAP - APT MIRROR HEALTHY (lab VMs can use proxy)
+  ansible.builtin.debug:
+    msg: >-
+      APT mirror at {{ apt_mirror_vm_ip | default('192.168.142.50') }}:{{ apt_mirror_port | default(3142) }}
+      is reachable from Proxmox — lab VMs will be able to use {{ apt_proxy_url }}.
+  when:
+    - apt_mirror_enabled | default(false) | bool
+    - _apt_mirror_probe is defined
+    - not (_apt_mirror_probe.skipped | default(false))
+    - "'reachable' in (_apt_mirror_probe.stdout | default(''))"
+
+- name: DEPLOYER BOOTSTRAP - APT MIRROR NOT REACHABLE (lab VMs will use direct internet)
+  ansible.builtin.debug:
+    msg: >-
+      APT mirror at {{ apt_mirror_vm_ip | default('192.168.142.50') }}:{{ apt_mirror_port | default(3142) }}
+      is NOT reachable from Proxmox. Lab VMs will fall back to direct internet until the mirror is up.
+      Re-run site.yml after deploying the apt mirror VM.
+  when:
+    - apt_mirror_enabled | default(false) | bool
+    - _apt_mirror_probe is defined
+    - not (_apt_mirror_probe.skipped | default(false))
+    - >-
+      (_apt_mirror_probe.failed | default(false))
+      or ('unreachable' in (_apt_mirror_probe.stdout | default('')))
