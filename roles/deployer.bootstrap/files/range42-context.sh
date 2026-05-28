@@ -331,6 +331,21 @@ _r42_use() {
         _r42_print_warning "sourced_range42.sh not found in $config_dir"
     fi
 
+    #### mirror the .zshrc workspace block : add devkit to PATH + gdk alias.
+    #### These two lines live in the per-workspace block of .zshrc (see role
+    #### workspace.credentials/tasks/03_deploy_sourced_env.yml) so they fire on a
+    #### fresh shell. Without mirroring them here, `range42-context use` from an
+    #### already-loaded shell would leave devkit out of PATH until the user spawns
+    #### a new zsh — confusing UX.
+    if [[ -n "$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR" ]]; then
+        case ":$PATH:" in
+            *":$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR:"*) ;;
+            *) export PATH="$PATH:$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR" ;;
+        esac
+        alias gdk="cd $RANGE42_ANSIBLE_ROLES__DEVKITS_DIR"
+        _r42_print_step "devkit added to PATH (idempotent) + gdk alias defined"
+    fi
+
     #### update secrets symlinks in git repos to point to the active workspace
 
     local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
@@ -340,10 +355,16 @@ _r42_use() {
     if [[ -d "${git_dir%/}/range42-ansible_roles-debug-devkit" ]]; then
         ln -sfn "$config_dir/secrets" "$devkit_secrets"
         _r42_print_step "updated secrets symlink in devkit → $target"
+    else
+        _r42_print_warning "range42-ansible_roles-debug-devkit not found at ${git_dir%/}/range42-ansible_roles-debug-devkit"
+        _r42_print_warning "  -> devkit scripts (proxmox_vm.*.sh) will not work in this shell"
     fi
     if [[ -d "${git_dir%/}/range42-playbooks/scenarios/${scenario}" ]]; then
         ln -sfn "$config_dir/secrets" "$playbooks_secrets"
         _r42_print_step "updated secrets symlink in playbooks → $target"
+    else
+        _r42_print_warning "scenario '${scenario}' not found in range42-playbooks (${git_dir%/}/range42-playbooks/scenarios/${scenario})"
+        _r42_print_warning "  -> ansible-playbook calls will fail ; verify the scenario name or pull range42-playbooks"
     fi
 
     #### flush known_hosts for the target workspace (avoid stale host keys on multi-infra)
