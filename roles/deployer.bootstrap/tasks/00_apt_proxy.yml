@@ -13,12 +13,6 @@
 #
 # Must run BEFORE 01_packages.yml.
 
-- name: DEPLOYER BOOTSTRAP - ENSURE NO APT PROXY ON DEPLOYER (direct internet only)
-  ansible.builtin.file:
-    path: /etc/apt/apt.conf.d/00range42-proxy
-    state: absent
-  become: true
-
 - name: DEPLOYER BOOTSTRAP - PROBE APT MIRROR HEALTH VIA PROXMOX (skip if mirror disabled)
   ansible.builtin.shell: >
     ssh -o StrictHostKeyChecking=no -o BatchMode=yes
