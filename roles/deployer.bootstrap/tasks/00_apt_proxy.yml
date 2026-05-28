@@ -13,10 +13,13 @@
 # Lab VMs (provisioned by range42-playbooks) are configured separately to use
 # the apt-mirror proxy via their own network routes.
 #
-# The probe uses a direct TCP check — same path that apt would use.
+# The probe runs nc via SSH to Proxmox (jump box) — Proxmox has a direct route
+# to the vmbr142 admin zone so it can reach the mirror even though the deployer
+# cannot. apt traffic is still raw TCP from the deployer; if the mirror is
+# reachable from Proxmox's perspective the apt proxy is configured normally.
 #   - reachable  → configure proxy normally
 #   - unreachable → skip proxy, warn, fall back to direct apt
-# Re-running deployer.bootstrap after the network path is available picks it up.
+# Re-running deployer.bootstrap after the mirror VM is up picks it up.
 #
 # Must run BEFORE 01_packages.yml so apt-get installs use the proxy.
 
@@ -26,17 +29,19 @@
     state: absent
   become: true
 
-- name: DEPLOYER BOOTSTRAP - PROBE APT MIRROR REACHABILITY (skip if mirror disabled)
-  ansible.builtin.wait_for:
-    host: "{{ apt_mirror_vm_ip | default('192.168.142.50') }}"
-    port: "{{ apt_mirror_port | default(3142) | int }}"
-    timeout: 5
-    state: started
+- name: DEPLOYER BOOTSTRAP - PROBE APT MIRROR REACHABILITY VIA PROXMOX (skip if mirror disabled)
+  ansible.builtin.shell: >
+    ssh -o StrictHostKeyChecking=no -o BatchMode=yes
+    -i {{ INFRASTRUCTURE__AUTO_GENERATED__SSH_KEYS_DIR_LOCAL }}/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root
+    root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "nc -z -w5 {{ apt_mirror_vm_ip | default('192.168.142.50') }} {{ apt_mirror_port | default(3142) | int }}
+    && echo reachable || echo unreachable"
   register: _apt_mirror_probe
+  changed_when: false
+  failed_when: false
   when:
     - apt_mirror_enabled | default(false) | bool
     - apt_proxy_url is defined and (apt_proxy_url | length) > 0
-  ignore_errors: true
 
 - name: DEPLOYER BOOTSTRAP - RESOLVE MIRROR REACHABILITY FLAG
   ansible.builtin.set_fact:
@@ -44,7 +49,10 @@
       {{
         (_apt_mirror_probe is defined)
         and not (_apt_mirror_probe.skipped | default(false))
-        and (_apt_mirror_probe.failed | default(false))
+        and (
+          (_apt_mirror_probe.failed | default(false))
+          or ('unreachable' in (_apt_mirror_probe.stdout | default('')))
+        )
       }}
 
 - name: DEPLOYER BOOTSTRAP - WARN APT MIRROR NOT REACHABLE (using direct apt)
