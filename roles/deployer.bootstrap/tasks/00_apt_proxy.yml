@@ -13,12 +13,6 @@
 #
 # Must run BEFORE 01_packages.yml.
 
-- name: DEPLOYER BOOTSTRAP - REMOVE STALE APT MIRROR ROUTE SCRIPT (if-up.d cleanup)
-  ansible.builtin.file:
-    path: /etc/network/if-up.d/r42-apt-mirror-route
-    state: absent
-  become: true
-
 - name: DEPLOYER BOOTSTRAP - ENSURE NO APT PROXY ON DEPLOYER (direct internet only)
   ansible.builtin.file:
     path: /etc/apt/apt.conf.d/00range42-proxy
