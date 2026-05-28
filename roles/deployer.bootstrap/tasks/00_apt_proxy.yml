@@ -1,48 +1,30 @@
 ---
 # deployer bootstrap - configure apt proxy on the deployer-cli (optional)
 #
-# Sets /etc/apt/apt.conf.d/00range42-proxy if apt_proxy_url is non-empty.
+# Sets /etc/apt/apt.conf.d/00range42-proxy if apt_proxy_url is non-empty AND
+# the mirror is directly reachable from the deployer.
 # Removes it otherwise (idempotent, supports unsetting).
 #
-# When apt_mirror_enabled is true the proxy points to the local mirror VM.
-# The deployer may not have a direct network route to the mirror (e.g. mirror
-# is on vmbr142 admin zone, deployer on a different subnet). When Proxmox is
-# reachable from the same network as the deployer and has ip_forward=1, a
-# static route through Proxmox lets the deployer reach the mirror directly.
-# The probe uses a direct TCP check — same path that apt will use.
+# Design: the apt-mirror VM lives on the vmbr142 admin zone (192.168.142.0/24).
+# The deployer reaches Proxmox VMs via a jump box — there is no direct IP route
+# from the deployer to that subnet. apt traffic is raw TCP and cannot go through
+# an SSH tunnel, so if the deployer cannot reach the mirror directly it falls
+# back to direct internet for its own apt operations.
+# Lab VMs (provisioned by range42-playbooks) are configured separately to use
+# the apt-mirror proxy via their own network routes.
+#
+# The probe uses a direct TCP check — same path that apt would use.
 #   - reachable  → configure proxy normally
 #   - unreachable → skip proxy, warn, fall back to direct apt
-# Re-running deployer.bootstrap after the mirror VM is deployed will pick it up.
+# Re-running deployer.bootstrap after the network path is available picks it up.
 #
 # Must run BEFORE 01_packages.yml so apt-get installs use the proxy.
 
-- name: DEPLOYER BOOTSTRAP - ADD STATIC ROUTE TO APT MIRROR NETWORK VIA PROXMOX
-  ansible.builtin.command: >
-    ip route replace
-    {{ apt_mirror_vm_ip | default('192.168.142.50') | regex_replace('^(\\d+\\.\\d+\\.\\d+)\\.\\d+$', '\\1.0') }}/24
-    via {{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+- name: DEPLOYER BOOTSTRAP - REMOVE STALE APT MIRROR ROUTE SCRIPT (if-up.d cleanup)
+  ansible.builtin.file:
+    path: /etc/network/if-up.d/r42-apt-mirror-route
+    state: absent
   become: true
-  when:
-    - apt_mirror_enabled | default(false) | bool
-    - apt_proxy_url is defined and (apt_proxy_url | length) > 0
-  register: _apt_mirror_route
-  changed_when: _apt_mirror_route.rc == 0
-  failed_when: false
-
-- name: DEPLOYER BOOTSTRAP - PERSIST APT MIRROR ROUTE (if-up.d)
-  ansible.builtin.copy:
-    content: |
-      #!/bin/sh
-      # range42 — static route to apt-mirror admin zone via Proxmox
-      ip route replace {{ apt_mirror_vm_ip | default('192.168.142.50') | regex_replace('^(\\d+\\.\\d+\\.\\d+)\\.\\d+$', '\\1.0') }}/24 via {{ INFRASTRUCTURE_PROXMOX_ADDRESS }} || true
-    dest: /etc/network/if-up.d/r42-apt-mirror-route
-    mode: "0755"
-    owner: root
-    group: root
-  become: true
-  when:
-    - apt_mirror_enabled | default(false) | bool
-    - apt_proxy_url is defined and (apt_proxy_url | length) > 0
 
 - name: DEPLOYER BOOTSTRAP - PROBE APT MIRROR REACHABILITY (skip if mirror disabled)
   ansible.builtin.wait_for:
