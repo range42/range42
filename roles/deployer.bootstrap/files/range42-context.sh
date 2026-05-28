@@ -201,7 +201,13 @@ _r42_flush_known_hosts() {
         return 0
     fi
 
-    local manifest="$(readlink -f "$scenario_link")/manifest/scenario_vms.json"
+    local scenario_target
+    if [[ -n "$ZSH_VERSION" ]]; then
+        scenario_target="${scenario_link:A}"
+    else
+        scenario_target=$(readlink -f "$scenario_link") || return 0
+    fi
+    local manifest="${scenario_target}/manifest/scenario_vms.json"
     if [[ ! -f "$manifest" ]]; then
         # fallback : workspace/scenario without manifest yet — silently skip
         return 0
@@ -612,21 +618,10 @@ _r42_ssh() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_deploy() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local setup_script="$(readlink -f "$scenario_dir")/${scenario_name}.setup.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local setup_script="${scenario_target}/${scenario_name}.setup.sh"
 
     if [[ ! -f "$setup_script" ]]; then
         _r42_print_fail "setup script not found: $setup_script"
@@ -638,7 +633,7 @@ _r42_deploy() {
     _r42_print_step "running: $setup_script"
     echo ""
 
-    cd "$(dirname "$setup_script")" && bash "$setup_script"
+    cd "$scenario_target" && bash "$setup_script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -646,21 +641,10 @@ _r42_deploy() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_deploy_vms() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local script="$(readlink -f "$scenario_dir")/${scenario_name}.setup_vms_only.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local script="${scenario_target}/${scenario_name}.setup_vms_only.sh"
 
     if [[ ! -f "$script" ]]; then
         _r42_print_fail "script not found: $script"
@@ -672,7 +656,7 @@ _r42_deploy_vms() {
     _r42_print_step "running: $script"
     echo ""
 
-    cd "$(dirname "$script")" && bash "$script"
+    cd "$scenario_target" && bash "$script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -680,21 +664,10 @@ _r42_deploy_vms() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_delete() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local delete_script="$(readlink -f "$scenario_dir")/${scenario_name}.delete_all.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local delete_script="${scenario_target}/${scenario_name}.delete_all.sh"
 
     if [[ ! -f "$delete_script" ]]; then
         _r42_print_fail "script not found: $delete_script"
@@ -706,7 +679,7 @@ _r42_delete() {
     _r42_print_step "running: $delete_script"
     echo ""
 
-    cd "$(dirname "$delete_script")" && bash "$delete_script"
+    cd "$scenario_target" && bash "$delete_script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -714,21 +687,10 @@ _r42_delete() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_reset() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local reset_script="$(readlink -f "$scenario_dir")/${scenario_name}.reset.setup.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local reset_script="${scenario_target}/${scenario_name}.reset.setup.sh"
 
     if [[ ! -f "$reset_script" ]]; then
         _r42_print_fail "script not found: $reset_script"
@@ -740,7 +702,7 @@ _r42_reset() {
     _r42_print_step "running: $reset_script"
     echo ""
 
-    cd "$(dirname "$reset_script")" && bash "$reset_script"
+    cd "$scenario_target" && bash "$reset_script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -748,21 +710,10 @@ _r42_reset() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_delete_vms() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local script="$(readlink -f "$scenario_dir")/${scenario_name}.delete_vms_only.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local script="${scenario_target}/${scenario_name}.delete_vms_only.sh"
 
     if [[ ! -f "$script" ]]; then
         _r42_print_fail "script not found: $script"
@@ -773,45 +724,65 @@ _r42_delete_vms() {
     _r42_print_step "running: $script"
     echo ""
 
-    cd "$(dirname "$script")" && bash "$script"
+    cd "$scenario_target" && bash "$script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# helpers — scenario manifest discovery
+# helpers — scenario directory / manifest / name discovery
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-# Resolve the manifest path for the active scenario.
-# Echoes the path on stdout, returns 0 on success, 1 on failure.
-_r42_active_scenario_manifest() {
+# Resolve the absolute directory of the active scenario (target of the
+# $RANGE42_ACTIVE_CONFIG_DIR/scenario symlink).
+# Echoes the path on stdout ; errors go to stderr ; returns 0/1.
+#
+# Uses zsh native ${var:A} when available — no external readlink dep, which has
+# proved unreliable inside some freshly-sourced function call chains on the deployer.
+# Falls back to readlink -f for bash callers.
+_r42_active_scenario_dir() {
     local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
     if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace" >&2
+        _r42_print_fail "no active workspace (RANGE42_ACTIVE_CONFIG_DIR is empty)" >&2
         return 1
     fi
-
     local scenario_dir="$config_dir/scenario"
     if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found" >&2
+        _r42_print_fail "scenario symlink not found: $scenario_dir" >&2
         return 1
     fi
+    local target
+    if [[ -n "$ZSH_VERSION" ]]; then
+        target="${scenario_dir:A}"
+    else
+        target=$(readlink -f "$scenario_dir") || {
+            _r42_print_fail "readlink -f failed on $scenario_dir" >&2
+            return 1
+        }
+    fi
+    if [[ -z "$target" ]]; then
+        _r42_print_fail "resolved scenario target is empty for $scenario_dir" >&2
+        return 1
+    fi
+    echo "$target"
+}
 
-    local manifest="$(readlink -f "$scenario_dir")/manifest/scenario_vms.json"
+# Echo the manifest path for the active scenario.
+_r42_active_scenario_manifest() {
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local manifest="${scenario_target}/manifest/scenario_vms.json"
     if [[ ! -f "$manifest" ]]; then
         _r42_print_fail "manifest not found: $manifest" >&2
         _r42_print_warning "this scenario has no manifest yet (only blank_scenario_2_subnets has one for now)" >&2
         return 1
     fi
-
     echo "$manifest"
 }
 
-# Echo the active scenario name (basename of the symlink target).
+# Echo the active scenario name (final path component of the symlink target).
 _r42_active_scenario_name() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    [[ -z "$config_dir" ]] && return 1
-    local scenario_dir="$config_dir/scenario"
-    [[ ! -L "$scenario_dir" ]] && return 1
-    basename "$(readlink -f "$scenario_dir")"
+    local target
+    target=$(_r42_active_scenario_dir) || return 1
+    echo "${target##*/}"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -1022,9 +993,11 @@ _r42_catalog_resolve_path() {
         return 1
     fi
 
-    local catalog_root="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42-catalog"
+    # Anchor on RANGE42_INVENTORY (set by the scenario env) so the resolver is not
+    # restricted to a single catalog subtree. Falls back to $HOME/range42/range42-catalog.
+    local catalog_root="${RANGE42_INVENTORY:-$HOME/range42/range42-catalog}"
     if [[ ! -d "$catalog_root" ]]; then
-        _r42_print_fail "range42-catalog not found at $catalog_root" >&2
+        _r42_print_fail "range42-catalog not found at $catalog_root (set RANGE42_INVENTORY)" >&2
         return 1
     fi
 
@@ -1073,7 +1046,11 @@ _r42_catalog_resolve_path() {
     fi
 
     # Single layer match - construct the full target path
-    local full_path="${matches[0]}"
+    # Note: zsh arrays are 1-indexed, bash 0-indexed. Iterate to grab the first
+    # element in a shell-agnostic way (we know matches has exactly 1 element here).
+    local full_path=""
+    local _m
+    for _m in "${matches[@]}"; do full_path="$_m"; break; done
     if [[ -n "$rest" ]]; then
         full_path="${full_path}/${rest}"
     fi
@@ -1143,8 +1120,12 @@ _r42_catalog_try_yml_get() {
 #
 # Requires : active scenario = catalog_try (range42-context use <codename> catalog_try first).
 _r42_catalog_try() {
-    local path="$1"
-    if [[ -z "$path" ]]; then
+    # IMPORTANT : do NOT name this local var "path" — zsh ties $PATH (string) to
+    # $path (array). Declaring `local path="$1"` silently overwrites PATH in this
+    # function's scope, breaking every external command (jq, ssh, basename, bash...).
+    # See : zsh manual, typeset -T (tied parameters).
+    local catalog_path="$1"
+    if [[ -z "$catalog_path" ]]; then
         _r42_print_fail "usage: range42-context catalog-try <path>"
         echo "  example : range42-context catalog-try docker/_ctf/hello" >&2
         return 1
@@ -1152,22 +1133,25 @@ _r42_catalog_try() {
 
     # 1. Resolve logical path to absolute catalog element dir
     local element_abs_path
-    element_abs_path=$(_r42_catalog_resolve_path "$path") || return 1
-    local element_name
-    element_name=$(basename "$element_abs_path")
+    element_abs_path=$(_r42_catalog_resolve_path "$catalog_path") || return 1
+    local element_name="${element_abs_path##*/}"
+    _r42_print_step "resolved element : ${element_abs_path}"
 
     # 2. Verify active scenario is catalog_try
     local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    _r42_print_step "active config dir : ${config_dir:-<empty>}"
     if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
+        _r42_print_fail "no active workspace (RANGE42_ACTIVE_CONFIG_DIR is empty)"
         echo "  Switch with : range42-context use <codename> catalog_try" >&2
         return 1
     fi
     local active_scenario
-    active_scenario=$(_r42_active_scenario_name 2>/dev/null) || {
-        _r42_print_fail "could not resolve active scenario"
+    active_scenario=$(_r42_active_scenario_name) || {
+        _r42_print_fail "could not resolve active scenario (see error above)"
+        echo "  Tried : ${config_dir}/scenario" >&2
         return 1
     }
+    _r42_print_step "active scenario  : ${active_scenario}"
     if [[ "$active_scenario" != "catalog_try" ]]; then
         _r42_print_fail "active scenario is '$active_scenario', not 'catalog_try'"
         echo "  Switch with : range42-context use <codename> catalog_try" >&2
@@ -1208,7 +1192,7 @@ _r42_catalog_try() {
     vm_ssh="r42.${vm_name}"
 
     # 5. Confirmation prompt
-    _r42_print_section "catalog-try : $path"
+    _r42_print_section "catalog-try : $catalog_path"
     _r42_print_step "Element       : $element_abs_path"
     _r42_print_step "Mode          : $ct_mode"
     if [[ "$ct_mode" == "service" && -n "$ct_port" ]]; then
@@ -1220,7 +1204,9 @@ _r42_catalog_try() {
     fi
     _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip}, VMID ${vm_id})"
     _r42_print_warning "This will DESTROY VM ${vm_id} and redeploy it fresh."
-    read -r -p "  Continue ? [y/N] " response
+    # Portable prompt (bash `read -p` is not zsh-compatible : -p means coprocess in zsh)
+    printf '  Continue ? [y/N] '
+    read -r response
     if [[ "$response" != "y" && "$response" != "Y" ]]; then
         echo "  Aborted."
         return 1
@@ -1237,106 +1223,47 @@ _r42_catalog_try() {
     _r42_print_section "redeploying test VM"
     _r42_deploy_vms || { _r42_print_fail "deploy_vms failed" ; return 1 ; }
 
-    # 9. rsync element to the VM
-    _r42_print_section "rsync element to test VM"
+    # 9-11. Deploy element to VM (copy + run + smoke) via Ansible playbook.
+    # The playbook handles file transfer (ansible.builtin.copy / SFTP), docker
+    # compose / make execution (become:true, no shell sudo), and the smoke check
+    # (oneshot exit_signature grep / service HTTP polling via uri / L1 docker ps).
+    # All visible in PLAY RECAP, debuggable as standard Ansible tasks.
+    _r42_print_section "deploy element to test VM (copy + run + smoke)"
     local remote_dir="/home/alice/catalog-try-element"
-    if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "rm -rf ${remote_dir} && mkdir -p ${remote_dir}" ; then
-        _r42_print_fail "cannot reach test VM via SSH (${vm_ssh})"
+    local scenario_dir
+    scenario_dir=$(_r42_active_scenario_dir) || return 1
+    local deploy_script="${scenario_dir}/catalog_try.element_deploy.sh"
+    if [[ ! -f "$deploy_script" ]]; then
+        _r42_print_fail "deploy script not found: ${deploy_script}"
+        _r42_print_step "expected file from catalog_try scenario - pull latest range42-playbooks ?"
         return 1
     fi
-    if ! rsync -a --delete "${element_abs_path}/" "${vm_ssh}:${remote_dir}/" ; then
-        _r42_print_fail "rsync of element failed"
+    local use_makefile="false"
+    [[ -f "${element_abs_path}/Makefile" ]] && use_makefile="true"
+    if ! (
+        cd "$scenario_dir" && \
+        CATALOG_TRY_ELEMENT_SRC="$element_abs_path" \
+        CATALOG_TRY_MODE="$ct_mode" \
+        CATALOG_TRY_USE_MAKEFILE="$use_makefile" \
+        CATALOG_TRY_VM_IP="$vm_ip" \
+        CATALOG_TRY_EXIT_SIGNATURE="$ct_exit_signature" \
+        CATALOG_TRY_PORT="$ct_port" \
+        CATALOG_TRY_ENDPOINT="$ct_endpoint" \
+        CATALOG_TRY_INIT_TIMEOUT="$ct_init_timeout" \
+            bash "$deploy_script"
+    ) ; then
+        _r42_print_fail "element deploy failed (see playbook output above)"
         return 1
     fi
-    _r42_print_check "element rsynced to ${vm_ssh}:${remote_dir}"
-
-    # 10. Run the element on the VM
-    _r42_print_section "running element on test VM"
-    local run_cmd
-    if [[ -f "${element_abs_path}/Makefile" ]]; then
-        # C.21 : Makefile wins if present
-        _r42_print_step "Makefile detected -> running 'make up'"
-        run_cmd="cd ${remote_dir} && make up"
-    elif [[ "$ct_mode" == "oneshot" ]]; then
-        _r42_print_step "oneshot mode -> docker compose up (no -d, captures output)"
-        run_cmd="cd ${remote_dir} && docker compose up --abort-on-container-exit"
-    else
-        _r42_print_step "service mode -> docker compose up -d (detached)"
-        run_cmd="cd ${remote_dir} && docker compose up -d"
-    fi
-    local run_log="/tmp/catalog-try-${element_name}-run.log"
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "$run_cmd" 2>&1 | tee "$run_log"
-    local ssh_rc=${PIPESTATUS[0]}
-    if [[ "$ssh_rc" -ne 0 ]]; then
-        _r42_print_fail "run failed (ssh exit ${ssh_rc}) - log saved at ${run_log}"
-        return 1
-    fi
-
-    # 11. Smoke check based on mode + contract
-    _r42_print_section "smoke check"
-    if [[ "$ct_mode" == "oneshot" ]]; then
-        if [[ -n "$ct_exit_signature" ]]; then
-            local logs
-            logs=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "cd ${remote_dir} && docker compose logs 2>&1")
-            if echo "$logs" | grep -q "$ct_exit_signature" ; then
-                _r42_print_check "PASS : signature '${ct_exit_signature}' found in container output"
-            else
-                _r42_print_fail "FAIL : signature '${ct_exit_signature}' NOT found in output"
-                echo "----- container logs -----" >&2
-                echo "$logs" >&2
-                echo "--------------------------" >&2
-                return 1
-            fi
-        else
-            _r42_print_check "L1 PASS : container ran without runtime error (no exit_signature declared)"
-        fi
-    else
-        # service mode
-        if [[ -n "$ct_port" ]]; then
-            local url="http://${vm_ip}:${ct_port}${ct_endpoint}"
-            _r42_print_step "polling ${url}  (max ${ct_init_timeout}s)"
-            local elapsed=0
-            local step=5
-            local ok=false
-            while [[ "$elapsed" -lt "$ct_init_timeout" ]]; do
-                if curl -fsS --max-time 5 "$url" >/dev/null 2>&1 ; then
-                    ok=true
-                    break
-                fi
-                sleep "$step"
-                elapsed=$((elapsed + step))
-                printf "    waited %ds / %ds ...\n" "$elapsed" "$ct_init_timeout"
-            done
-            if $ok ; then
-                _r42_print_check "PASS : ${url} responded 200 OK after ${elapsed}s"
-            else
-                _r42_print_fail "FAIL : ${url} not reachable within ${ct_init_timeout}s"
-                echo "----- compose logs (tail 50) -----" >&2
-                ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "cd ${remote_dir} && docker compose logs --tail 50" >&2
-                echo "----------------------------------" >&2
-                return 1
-            fi
-        else
-            # L1 fallback : check docker ps shows at least one container
-            local ps_out
-            ps_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$vm_ssh" "docker ps --format '{{.Names}} {{.Status}}'")
-            if [[ -n "$ps_out" ]] ; then
-                _r42_print_check "L1 PASS : container(s) running"
-                echo "$ps_out"
-            else
-                _r42_print_fail "L1 FAIL : no container visible in docker ps"
-                return 1
-            fi
-        fi
-    fi
+    _r42_print_check "element deployed on ${vm_ssh}:${remote_dir}"
 
     # 12. Print VM IP for inspection
     _r42_print_section "done"
     _r42_print_step "Test VM kept up for inspection :"
     _r42_print_step "  range42-context ssh ${vm_ssh}"
     _r42_print_step "  IP : ${vm_ip}"
-    _r42_print_step "  Element rsynced at : ${remote_dir}  (on the VM)"
-    _r42_print_step "Re-run with : range42-context catalog-try ${path}  (will overwrite)"
+    _r42_print_step "  Element deployed at : ${remote_dir}  (on the VM)"
+    _r42_print_step "Re-run with : range42-context catalog-try ${catalog_path}  (will overwrite)"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
