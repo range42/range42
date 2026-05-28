@@ -43,6 +43,7 @@
     _mirror_cloud_img: "debian-13-genericcloud-amd64.qcow2"
     _mirror_cloud_img_url: "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
     _mirror_cloud_img_path: "/var/lib/vz/template/iso/debian-13-genericcloud-amd64.qcow2"
+    _mirror_cloud_img_sums_url: "{{ _mirror_cloud_img_url | regex_replace('/[^/]+$', '/SHA512SUMS') }}"
     _mirror_disk_size: "{{ apt_mirror_vm_disk_size | default('32G') }}"
 
   pre_tasks:
@@ -94,6 +95,16 @@
       changed_when: true
       async: 600
       poll: 10
+
+    - name: APT MIRROR VM - VERIFY CLOUD IMAGE SHA512 CHECKSUM
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "cd /var/lib/vz/template/iso &&
+        wget -q -O /tmp/r42_trixie_SHA512SUMS {{ _mirror_cloud_img_sums_url }} &&
+        sha512sum --check --ignore-missing /tmp/r42_trixie_SHA512SUMS ;
+        RET=$? ; rm -f /tmp/r42_trixie_SHA512SUMS ; exit $RET"
+      when: _mirror_template_check.stdout | trim == 'not_exists'
+      changed_when: false
 
     - name: APT MIRROR VM - CREATE TEMPLATE VM {{ _mirror_template_id }}
       ansible.builtin.shell: >
