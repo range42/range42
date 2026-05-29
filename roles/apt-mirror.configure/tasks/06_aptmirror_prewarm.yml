@@ -1,7 +1,21 @@
 ---
 - name: APT MIRROR CONFIGURE - RUN APT-MIRROR (PREWARM)
-  ansible.builtin.shell: apt-mirror
+  ansible.builtin.command: apt-mirror
   become: true
   async: 28800
   poll: 60
+  register: apt_mirror_prewarm_result
+  failed_when: false
   when: apt_mirror_prewarm | default(false) | bool
+
+- name: APT MIRROR CONFIGURE - REPORT PREWARM RESULT
+  ansible.builtin.debug:
+    msg: >-
+      apt-mirror prewarm finished.
+      rc={{ apt_mirror_prewarm_result.rc | default('n/a') }}
+      stdout={{ apt_mirror_prewarm_result.stdout | default('') | trim }}
+      stderr={{ apt_mirror_prewarm_result.stderr | default('') | trim }}
+      msg={{ apt_mirror_prewarm_result.msg | default('') }}
+  when:
+    - apt_mirror_prewarm | default(false) | bool
+    - apt_mirror_prewarm_result is defined

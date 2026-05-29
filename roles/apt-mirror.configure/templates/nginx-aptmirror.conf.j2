@@ -5,8 +5,16 @@ server {
     server_name _;
 
     # Root maps directly to the mirrored upstream paths.
-    # apt-mirror stores content as: <mirror_root>/mirror/<upstream-host>/<path>
-    # so http://this-host/deb.debian.org/debian/... resolves correctly.
+    # apt-mirror stores content preserving the upstream hostname directory structure:
+    #   <apt_mirror_root>/mirror/<upstream-host>/<path>
+    # e.g. /var/spool/apt-mirror/mirror/deb.debian.org/debian/pool/main/...
+    #
+    # Clients request:  http://this-host/deb.debian.org/debian/pool/main/...
+    # nginx resolves:   <root>/deb.debian.org/debian/pool/main/...
+    #
+    # DO NOT flatten root to {{ apt_mirror_root }}/mirror/deb.debian.org — that
+    # would break multi-distribution mirrors (Debian + Ubuntu share the same root).
+    # The /mirror sub-directory is intentional; do not remove it.
     root {{ apt_mirror_root }}/mirror;
 
     autoindex on;

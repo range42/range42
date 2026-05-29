@@ -4,7 +4,16 @@ Port: {{ apt_cacher_port }}
 BindAddress: {{ apt_cacher_bind_address }}
 ReportPage: acng-report.html
 
+{# NOTE: When apt_mirror_airgapped is true the airgapped task chain (tasks/04-07)
+   installs apt-mirror + nginx and never installs or starts apt-cacher-ng,
+   so this config file is never written in that mode.
+   The OfflineMode block below is therefore dead code as of today.
+   It is kept here as a placeholder for a future hybrid mode in which
+   apt-cacher-ng would sit in front of a local apt-mirror and serve
+   cached packages without reaching the internet. #}
 {% if apt_mirror_airgapped | default(false) | bool %}
+{# Reserved for future hybrid mode — apt-cacher-ng is not active in pure
+   airgapped deployments (tasks 04-07 use nginx instead). #}
 OfflineMode: 1
 {% else %}
 {% if apt_cacher_passthrough | bool %}
