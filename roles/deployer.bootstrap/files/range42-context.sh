@@ -634,7 +634,7 @@ _r42_provision_apt_mirror() {
     # Pass vars explicitly — vars_file contains Jinja2 expressions that
     # cause Ansible to reject -e @file loading silently.
     local proxmox_addr storage_name net_bridge
-    local apt_mirror_vm_id apt_mirror_vm_ip apt_mirror_vm_template_id apt_mirror_port apt_mirror_airgapped
+    local apt_mirror_vm_id apt_mirror_vm_ip apt_mirror_vm_template_id apt_mirror_port apt_mirror_airgapped apt_mirror_vm_disk_size
     proxmox_addr=$(grep "^INFRASTRUCTURE_PROXMOX_ADDRESS:" "$vars_file" | awk '{print $2}' | tr -d '"')
     proxmox_node=$(grep "^proxmox_node:" "$vars_file" | awk '{print $2}' | tr -d '"')
     storage_name=$(grep "^infrastructure_proxmox_dest_vm_storage_name:" "$vars_file" | awk '{print $2}' | tr -d '"')
@@ -644,6 +644,7 @@ _r42_provision_apt_mirror() {
     apt_mirror_vm_template_id=$(grep "^apt_mirror_vm_template_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
     apt_mirror_port=$(grep "^apt_mirror_port:" "$vars_file" | awk '{print $2}' | tr -d '"')
     apt_mirror_airgapped=$(grep "^apt_mirror_airgapped:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_vm_disk_size=$(grep "^apt_mirror_vm_disk_size:" "$vars_file" | awk '{print $2}' | tr -d '"')
 
     local _args=(-i "$inventory" --vault-password-file "$vault_pass"
                  -e "_credentials_dir=${config_dir}"
@@ -658,7 +659,8 @@ _r42_provision_apt_mirror() {
                  -e "apt_mirror_vm_id=${apt_mirror_vm_id:-1050}"
                  -e "apt_mirror_vm_ip=${apt_mirror_vm_ip:-192.168.142.50}"
                  -e "apt_mirror_vm_template_id=${apt_mirror_vm_template_id:-9301}"
-                 -e "apt_mirror_port=${apt_mirror_port:-3142}")
+                 -e "apt_mirror_port=${apt_mirror_port:-3142}"
+                 -e "apt_mirror_vm_disk_size=${apt_mirror_vm_disk_size:-200G}")
 
     _r42_print_step "provisioning apt-mirror VM (02b_apt_mirror_vm.yml)..."
     ansible-playbook "${_args[@]}" "${playbooks_dir}/02b_apt_mirror_vm.yml" || {
