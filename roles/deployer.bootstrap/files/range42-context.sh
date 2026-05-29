@@ -1140,8 +1140,17 @@ _r42_catalog_try_yml_get() {
 # Output is meant for the operator to discover what's runnable. Logical paths
 # (with the NN_*_layer/ prefix stripped) are ready to copy-paste into a
 # `range42-context catalog-try <path>` invocation.
+#
+# Optional args : two logical-path prefixes to scope the listing.
+#   $1 = include_prefix : if set, keep only elements whose rel_path starts with it
+#   $2 = exclude_prefix : if set, drop elements whose rel_path starts with it
+# Both empty = list everything. Used by the dispatch to split admin vs non-admin
+# without changing the underlying scan logic.
 _r42_catalog_try_list() {
     hash -r 2>/dev/null || true
+
+    local include_prefix="${1:-}"
+    local exclude_prefix="${2:-}"
 
     local catalog_root="${RANGE42_INVENTORY:-$HOME/range42/range42-catalog}"
     if [[ ! -d "$catalog_root" ]]; then
@@ -1150,7 +1159,17 @@ _r42_catalog_try_list() {
         return 1
     fi
 
-    _r42_print_section "catalog elements compatible with catalog-try"
+    local scope_label=""
+    if [[ -n "$include_prefix" ]]; then
+        scope_label="only ${include_prefix}"
+    elif [[ -n "$exclude_prefix" ]]; then
+        scope_label="excluding ${exclude_prefix}"
+    fi
+    if [[ -n "$scope_label" ]]; then
+        _r42_print_section "catalog elements compatible with catalog-try  (${scope_label})"
+    else
+        _r42_print_section "catalog elements compatible with catalog-try"
+    fi
     _r42_print_step "catalog root : $catalog_root"
     echo ""
 
@@ -1178,6 +1197,9 @@ _r42_catalog_try_list() {
             if [[ -f "$elem/compose.yml" ]] || [[ -f "$elem/docker-compose.yml" ]] || [[ -f "$elem/Makefile" ]]; then
                 # logical path : strip the layer dir prefix
                 rel_path="${elem#${layer}/}"
+                # Scope filters : include-prefix (positive) + exclude-prefix (negative).
+                [[ -n "$include_prefix" && "$rel_path" != "$include_prefix"* ]] && continue
+                [[ -n "$exclude_prefix" && "$rel_path" == "$exclude_prefix"* ]] && continue
                 if [[ -f "$elem/catalog_try.yml" ]]; then
                     printf "    ${L2_COLOR}[L2]${COLOR_RESET}  %s\n" "$rel_path"
                     count_l2=$((count_l2 + 1))
@@ -1191,9 +1213,13 @@ _r42_catalog_try_list() {
 
     echo ""
     if [[ $((count_l1 + count_l2)) -eq 0 ]]; then
-        _r42_print_warning "no deployable elements found under ${catalog_root}"
-        _r42_print_step "expected at least one directory containing compose.yml, docker-compose.yml, or Makefile"
-        _r42_print_step "verify the catalog is properly cloned : ls -la ${catalog_root}"
+        if [[ -n "$scope_label" ]]; then
+            _r42_print_warning "no deployable elements matched the scope (${scope_label}) under ${catalog_root}"
+        else
+            _r42_print_warning "no deployable elements found under ${catalog_root}"
+            _r42_print_step "expected at least one directory containing compose.yml, docker-compose.yml, or Makefile"
+            _r42_print_step "verify the catalog is properly cloned : ls -la ${catalog_root}"
+        fi
         return 1
     fi
 
@@ -1206,6 +1232,11 @@ _r42_catalog_try_list() {
     printf "    ${L1_COLOR}[L1]${COLOR_RESET}  no contract              - best-effort fallback (docker ps -a, any container)\n"
     echo ""
     _r42_print_step "run any : range42-context catalog-try <logical_path>"
+}
+
+# Convenience : list only admin-scoped docker elements (docker/admin/*).
+_r42_catalog_try_list_admin() {
+    _r42_catalog_try_list "docker/admin/" ""
 }
 
 
@@ -1670,7 +1701,8 @@ _r42_help() {
     echo ""
     printf "  ${C}catalog-try (one usage VM for single catalog element validation)${R}\n"
     printf "    ${N}catalog-try${R} <path>             ${D}deploy + smoke-check a catalog element (e.g. docker/_ctf/hello)${R}\n"
-    printf "    ${N}catalog-try-list${R}               ${D}list catalog elements compatible with catalog-try (L1/L2)${R}\n"
+    printf "    ${N}catalog-try-list${R}               ${D}list catalog-try elements (L1/L2) excluding docker/admin/*${R}\n"
+    printf "    ${N}catalog-try-list-admin${R}         ${D}list catalog-try elements (L1/L2) under docker/admin/* only${R}\n"
     echo ""
 }
 
@@ -1709,7 +1741,8 @@ range42-context() {
         cd)             _r42_cd "$@" ;;
         debug)          _r42_debug ;;
         catalog-try)         _r42_catalog_try "$@" ;;
-        catalog-try-list)    _r42_catalog_try_list ;;
+        catalog-try-list)        _r42_catalog_try_list "" "docker/admin/" ;;
+        catalog-try-list-admin)  _r42_catalog_try_list_admin ;;
         help|--help|-h) _r42_help ;;
         *)
             _r42_print_fail "unknown command: $cmd"
