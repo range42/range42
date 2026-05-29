@@ -1,0 +1,24 @@
+---
+- name: APT MIRROR CONFIGURE - CREATE MIRROR ROOT DIRECTORY
+  ansible.builtin.file:
+    path: "{{ apt_mirror_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: APT MIRROR CONFIGURE - CREATE MIRROR CONTENT DIRECTORY
+  ansible.builtin.file:
+    path: "{{ apt_mirror_root }}/mirror"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: APT MIRROR CONFIGURE - WRITE MIRROR.LIST
+  ansible.builtin.template:
+    src: mirror.list.j2
+    dest: /etc/apt/mirror.list
+    owner: root
+    group: root
+    mode: "0644"

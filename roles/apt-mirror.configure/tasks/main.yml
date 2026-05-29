@@ -1,5 +1,26 @@
 ---
+# apt-cacher-ng proxy mode (default)
 - import_tasks: 00_install.yml
+  when: not apt_mirror_airgapped | default(false) | bool
+
 - import_tasks: 01_configure.yml
+  when: not apt_mirror_airgapped | default(false) | bool
+
 - import_tasks: 02_service.yml
+  when: not apt_mirror_airgapped | default(false) | bool
+
 - import_tasks: 03_firewall.yml
+  when: not apt_mirror_airgapped | default(false) | bool
+
+# apt-mirror full-mirror airgapped mode
+- import_tasks: 04_aptmirror_install.yml
+  when: apt_mirror_airgapped | default(false) | bool
+
+- import_tasks: 05_aptmirror_configure.yml
+  when: apt_mirror_airgapped | default(false) | bool
+
+- import_tasks: 06_aptmirror_prewarm.yml
+  when: apt_mirror_airgapped | default(false) | bool
+
+- import_tasks: 07_aptmirror_serve.yml
+  when: apt_mirror_airgapped | default(false) | bool

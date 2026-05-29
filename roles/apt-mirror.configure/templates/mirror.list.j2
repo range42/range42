@@ -1,0 +1,82 @@
+########################################
+# apt-mirror configuration
+# Managed by Ansible — do not edit manually
+########################################
+
+set base_path    {{ apt_mirror_root }}
+set mirror_path  $base_path/mirror
+set skel_path    $base_path/skel
+set var_path     $base_path/var
+set postmirror_script $var_path/postmirror.sh
+set defaultarch  amd64
+set nthreads     {{ apt_mirror_threads }}
+set _tilde 0
+
+########################################
+# Debian stable (Trixie / 13)
+########################################
+{% if apt_mirror_debian_stable | default(true) | bool %}
+deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+
+deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+deb-src http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+{% endif %}
+
+########################################
+# Debian security
+########################################
+{% if apt_mirror_security | default(true) | bool %}
+deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+deb-src http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+{% endif %}
+
+########################################
+# Debian backports
+########################################
+{% if apt_mirror_backports | default(false) | bool %}
+deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware
+deb-src http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware
+{% endif %}
+
+########################################
+# Ubuntu 22.04 LTS (Jammy)
+########################################
+{% if apt_mirror_ubuntu_2204 | default(false) | bool %}
+deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+
+deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
+
+deb http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
+deb-src http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
+{% endif %}
+
+########################################
+# Ubuntu 24.04 LTS (Noble)
+########################################
+{% if apt_mirror_ubuntu_2404 | default(false) | bool %}
+deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+
+deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+deb-src http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+
+deb http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+deb-src http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+{% endif %}
+
+{% if apt_mirror_debian_stable | default(true) | bool %}
+clean http://deb.debian.org/debian
+{% endif %}
+{% if apt_mirror_security | default(true) | bool %}
+clean http://security.debian.org/debian-security
+{% endif %}
+{% if apt_mirror_backports | default(false) | bool %}
+clean http://deb.debian.org/debian
+{% endif %}
+{% if (apt_mirror_ubuntu_2204 | default(false) | bool) or (apt_mirror_ubuntu_2404 | default(false) | bool) %}
+clean http://archive.ubuntu.com/ubuntu
+clean http://security.ubuntu.com/ubuntu
+{% endif %}

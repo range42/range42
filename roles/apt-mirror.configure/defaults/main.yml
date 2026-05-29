@@ -4,3 +4,17 @@ apt_cacher_passthrough: "{{ apt_mirror_fallback | default(true) | bool }}"
 apt_cacher_cache_dir: /var/cache/apt-cacher-ng
 apt_cacher_log_dir: /var/log/apt-cacher-ng
 apt_cacher_bind_address: "0.0.0.0"
+
+# Airgapped full-mirror mode
+apt_mirror_airgapped: false
+apt_mirror_http_port: 80
+apt_mirror_root: /var/spool/apt-mirror
+apt_mirror_threads: 20
+apt_mirror_prewarm: false
+
+# Which suites to mirror (airgapped mode)
+apt_mirror_debian_stable: true
+apt_mirror_ubuntu_2204: false
+apt_mirror_ubuntu_2404: false
+apt_mirror_security: true
+apt_mirror_backports: false

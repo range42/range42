@@ -1,0 +1,31 @@
+---
+- name: APT MIRROR CONFIGURE - WRITE NGINX APT-MIRROR CONFIG
+  ansible.builtin.template:
+    src: nginx-aptmirror.conf.j2
+    dest: /etc/nginx/conf.d/apt-mirror.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart nginx
+
+- name: APT MIRROR CONFIGURE - ENABLE AND START NGINX
+  ansible.builtin.systemd:
+    name: nginx
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: APT MIRROR CONFIGURE - CHECK UFW STATUS (AIRGAPPED)
+  ansible.builtin.command: ufw status
+  register: _ufw_status_airgapped
+  changed_when: false
+  failed_when: false
+
+- name: APT MIRROR CONFIGURE - OPEN PORT {{ apt_mirror_http_port }}/TCP (UFW)
+  community.general.ufw:
+    rule: allow
+    port: "{{ apt_mirror_http_port | string }}"
+    proto: tcp
+  when:
+    - _ufw_status_airgapped.rc == 0
+    - "'inactive' not in _ufw_status_airgapped.stdout"

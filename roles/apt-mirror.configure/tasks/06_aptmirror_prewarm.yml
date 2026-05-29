@@ -1,0 +1,7 @@
+---
+- name: APT MIRROR CONFIGURE - RUN APT-MIRROR (PREWARM)
+  ansible.builtin.shell: apt-mirror
+  become: true
+  async: 28800
+  poll: 60
+  when: apt_mirror_prewarm | default(false) | bool

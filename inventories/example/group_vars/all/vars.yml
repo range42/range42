@@ -208,6 +208,7 @@ apt_mirror_ubuntu_2204: true
 apt_mirror_ubuntu_2404: true
 apt_mirror_backports: false
 apt_mirror_security: false
+apt_mirror_vm_disk_size: "200G"
 
 
 #### PASSWORD FORMAT ####

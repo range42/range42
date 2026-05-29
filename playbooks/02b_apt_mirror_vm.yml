@@ -119,7 +119,7 @@
     - name: APT MIRROR VM - PRE-RESIZE CLOUD IMAGE TO {{ _mirror_disk_size }}
       ansible.builtin.shell: >
         {{ _ssh_px }}
-        "qemu-img resize --shrink {{ _mirror_cloud_img_path }} {{ _mirror_disk_size }}"
+        "qemu-img resize {{ _mirror_cloud_img_path }} {{ _mirror_disk_size }}"
       when: _mirror_template_check.stdout | trim == 'not_exists'
       changed_when: true
 
