@@ -608,6 +608,79 @@ _r42_ssh() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# _r42_ensure_apt_mirror_running — check apt-mirror VM and start it if stopped
+#
+# Reads apt_mirror_enabled / apt_mirror_vm_id / apt_mirror_vm_ip and
+# INFRASTRUCTURE_PROXMOX_ADDRESS from the codename inventory vars.yml.
+# SSH jump goes through root@proxmox (deployer has no direct route to vmbr142).
+# No-op when apt_mirror_enabled is false or vars/key are missing.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_ensure_apt_mirror_running() {
+    local workspace="${RANGE42_ACTIVE_WORKSPACE:-}"
+    local codename="${RANGE42_INFRASTRUCTURE_CODENAME:-}"
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+
+    [[ -z "$workspace" || -z "$codename" ]] && return 0
+
+    local vars_file="${git_dir%/}/range42/inventories/${codename}/group_vars/all/vars.yml"
+    if [[ ! -f "$vars_file" ]]; then
+        _r42_print_warning "apt-mirror check: vars.yml not found ($vars_file) — skipping"
+        return 0
+    fi
+
+    local apt_mirror_enabled
+    apt_mirror_enabled=$(grep "^apt_mirror_enabled:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    [[ "$apt_mirror_enabled" != "true" ]] && return 0
+
+    local vm_id vm_ip proxmox_addr
+    vm_id=$(grep "^apt_mirror_vm_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    vm_ip=$(grep "^apt_mirror_vm_ip:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    proxmox_addr=$(grep "^INFRASTRUCTURE_PROXMOX_ADDRESS:" "$vars_file" | awk '{print $2}' | tr -d '"')
+
+    if [[ -z "$vm_id" || -z "$proxmox_addr" ]]; then
+        _r42_print_warning "apt-mirror check: apt_mirror_vm_id or INFRASTRUCTURE_PROXMOX_ADDRESS missing — skipping"
+        return 0
+    fi
+
+    local root_key="$HOME/.ssh/range42/${workspace}/jump_keys/px.${workspace}-ssh_cli.root"
+    if [[ ! -f "$root_key" ]]; then
+        _r42_print_warning "apt-mirror check: root key not found ($root_key) — skipping"
+        return 0
+    fi
+
+    _r42_print_section "apt-mirror VM check"
+
+    local _px="ssh -i ${root_key} -o StrictHostKeyChecking=no -o BatchMode=yes root@${proxmox_addr}"
+
+    local vm_status
+    vm_status=$(${=_px} "qm status ${vm_id} 2>&1" 2>&1)
+
+    if [[ "$vm_status" == *"does not exist"* || "$vm_status" == *"No such"* ]]; then
+        _r42_print_warning "apt-mirror VM ${vm_id} not found on Proxmox — skipping"
+        return 0
+    fi
+
+    if echo "$vm_status" | grep -q "status: running"; then
+        _r42_print_check "apt-mirror VM ${vm_id} is running (${vm_ip})"
+        return 0
+    fi
+
+    _r42_print_step "apt-mirror VM ${vm_id} is stopped — starting..."
+    ${=_px} "qm start ${vm_id}" 2>&1
+
+    _r42_print_step "waiting for SSH on ${vm_ip}:22 (via Proxmox, up to 120s)..."
+    local result
+    result=$(${=_px} "timeout 120 bash -c 'sleep 5; until nc -z -w2 ${vm_ip} 22 2>/dev/null; do sleep 3; done && echo ready' 2>/dev/null || echo timeout" 2>&1)
+
+    if [[ "$result" == *"timeout"* ]]; then
+        _r42_print_warning "apt-mirror VM ${vm_id} did not become reachable within 120s — proceeding anyway"
+    else
+        _r42_print_check "apt-mirror VM ${vm_id} is ready at ${vm_ip}:22"
+    fi
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context deploy — run scenario setup script
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -633,6 +706,7 @@ _r42_deploy() {
         return 1
     fi
 
+    _r42_ensure_apt_mirror_running
     _r42_print_section "deploying scenario"
     _r42_flush_known_hosts "${RANGE42_ACTIVE_WORKSPACE:-}"
     _r42_print_step "running: $setup_script"
@@ -667,6 +741,7 @@ _r42_deploy_vms() {
         return 1
     fi
 
+    _r42_ensure_apt_mirror_running
     _r42_print_section "deploying VMs only (skip templates)"
     _r42_flush_known_hosts "${RANGE42_ACTIVE_WORKSPACE:-}"
     _r42_print_step "running: $script"
