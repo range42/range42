@@ -608,7 +608,46 @@ _r42_ssh() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# _r42_ensure_apt_mirror_running — check apt-mirror VM and start it if stopped
+# _r42_provision_apt_mirror — create + configure the apt-mirror VM via Ansible
+#
+# Runs 02b_apt_mirror_vm.yml (Proxmox VM clone) then 04_configure_apt_mirror.yml
+# (apt-cacher-ng install) from range42/playbooks/ using the active workspace
+# inventory and credentials. Called by _r42_ensure_apt_mirror_running when the
+# VM does not exist yet.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_provision_apt_mirror() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+    local inventory="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR:-}/inventory_default.yml"
+    local vault_pass="${RANGE42_VAULT_PASSWORD_FILE:-}"
+    local playbooks_dir="${git_dir%/}/range42/playbooks"
+
+    if [[ -z "$config_dir" || ! -f "$inventory" || ! -f "$vault_pass" || ! -d "$playbooks_dir" ]]; then
+        _r42_print_fail "apt-mirror provision: missing config_dir, inventory, vault pass, or playbooks dir"
+        return 1
+    fi
+
+    local _args=(-i "$inventory" --vault-password-file "$vault_pass" -e "_credentials_dir=${config_dir}")
+
+    _r42_print_step "provisioning apt-mirror VM (02b_apt_mirror_vm.yml)..."
+    ansible-playbook "${_args[@]}" "${playbooks_dir}/02b_apt_mirror_vm.yml" || {
+        _r42_print_fail "apt-mirror VM creation failed"
+        return 1
+    }
+
+    _r42_print_step "configuring apt-mirror (04_configure_apt_mirror.yml)..."
+    ansible-playbook "${_args[@]}" "${playbooks_dir}/04_configure_apt_mirror.yml" || {
+        _r42_print_fail "apt-mirror configuration failed"
+        return 1
+    }
+
+    _r42_print_check "apt-mirror VM provisioned and configured"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# _r42_ensure_apt_mirror_running — ensure apt-mirror VM exists, is running,
+# and is reachable. Provisions it from scratch if it does not exist yet.
 #
 # Reads apt_mirror_enabled / apt_mirror_vm_id / apt_mirror_vm_ip and
 # INFRASTRUCTURE_PROXMOX_ADDRESS from the codename inventory vars.yml.
@@ -657,7 +696,8 @@ _r42_ensure_apt_mirror_running() {
     vm_status=$(${=_px} "qm status ${vm_id} 2>&1" 2>&1)
 
     if [[ "$vm_status" == *"does not exist"* || "$vm_status" == *"No such"* ]]; then
-        _r42_print_warning "apt-mirror VM ${vm_id} not found on Proxmox — skipping"
+        _r42_print_step "apt-mirror VM ${vm_id} not found — provisioning from scratch..."
+        _r42_provision_apt_mirror || return 1
         return 0
     fi
 
@@ -1068,6 +1108,27 @@ _r42_delete_everything() {
     for ip in "${all_ips[@]}"; do
         ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$ip" >/dev/null 2>&1 && echo "  - $ip"
     done
+
+    # --- apt-mirror VM (managed outside scenario manifests) ---
+    local codename="${RANGE42_INFRASTRUCTURE_CODENAME:-}"
+    if [[ -n "$codename" ]]; then
+        local vars_file="${git_dir%/}/range42/inventories/${codename}/group_vars/all/vars.yml"
+        if [[ -f "$vars_file" ]]; then
+            local mirror_enabled mirror_vm_id mirror_vm_ip
+            mirror_enabled=$(grep "^apt_mirror_enabled:" "$vars_file" | awk '{print $2}' | tr -d '"')
+            mirror_vm_id=$(grep "^apt_mirror_vm_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
+            mirror_vm_ip=$(grep "^apt_mirror_vm_ip:" "$vars_file" | awk '{print $2}' | tr -d '"')
+
+            if [[ "$mirror_enabled" == "true" && -n "$mirror_vm_id" ]]; then
+                echo ""
+                _r42_print_step "stopping and deleting apt-mirror VM ${mirror_vm_id} (${mirror_vm_ip})..."
+                printf '{"vm_id": %s}\n' "$mirror_vm_id" | proxmox_vm.vm_id.stop_force.to.jsons.sh || true
+                printf '{"vm_id": %s}\n' "$mirror_vm_id" | proxmox_vm.vm_id.delete.to.jsons.sh || true
+                [[ -n "$mirror_vm_ip" ]] && ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$mirror_vm_ip" >/dev/null 2>&1
+                _r42_print_check "apt-mirror VM ${mirror_vm_id} deleted"
+            fi
+        fi
+    fi
 
     echo ""
     _r42_print_check "cross-scenario nuke complete"

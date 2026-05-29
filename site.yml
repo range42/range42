@@ -32,6 +32,4 @@
 
 - import_playbook: playbooks/01_generate_credentials.yml
 - import_playbook: playbooks/02_configure_proxmox.yml
-- import_playbook: playbooks/02b_apt_mirror_vm.yml
-- import_playbook: playbooks/04_configure_apt_mirror.yml
 - import_playbook: playbooks/03_deploy_deployer_cli.yml
