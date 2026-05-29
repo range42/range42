@@ -524,7 +524,7 @@ class StepAptMirror(Step):
         yield Horizontal(
             Switch(value=S.apt_mirror_airgapped, id="sw-airgapped",
                    disabled=not S.apt_mirror_enabled),
-            Static("  Air-gapped mode — aptly full mirror (~200 GB)", classes="muted"),
+            Static("  Air-gapped mode — apt-mirror full local mirror (~200 GB, needs 200G disk)", classes="muted"),
         )
         yield Horizontal(
             Switch(value=S.apt_mirror_prewarm, id="sw-prewarm",
@@ -1482,15 +1482,18 @@ class StepDeploy(Step):
         ]:
             sed_f(vars_, old, new)
 
-        # apt mirror feature vars
+        # apt mirror feature vars — use regex so re-runs work regardless of current value
         if S.apt_mirror_enabled:
-            for old, new in [
-                ('apt_mirror_enabled: false',    'apt_mirror_enabled: true'),
-                ('apt_mirror_airgapped: false',  f'apt_mirror_airgapped: {str(S.apt_mirror_airgapped).lower()}'),
-                ('apt_mirror_prewarm: false',    f'apt_mirror_prewarm: {str(S.apt_mirror_prewarm).lower()}'),
-                ('apt_mirror_persistent: false', f'apt_mirror_persistent: {str(S.apt_mirror_persistent).lower()}'),
+            import re as _re
+            _vc = vars_.read_text()
+            for key, val in [
+                ('apt_mirror_enabled',    'true'),
+                ('apt_mirror_airgapped',  str(S.apt_mirror_airgapped).lower()),
+                ('apt_mirror_prewarm',    str(S.apt_mirror_prewarm).lower()),
+                ('apt_mirror_persistent', str(S.apt_mirror_persistent).lower()),
             ]:
-                sed_f(vars_, old, new)
+                _vc = _re.sub(rf'^{key}: (true|false)', f'{key}: {val}', _vc, flags=_re.MULTILINE)
+            vars_.write_text(_vc)
             # ensure VM-identity vars exist (old inventories may predate the template addition)
             vc = vars_.read_text()
             missing = []
