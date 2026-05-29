@@ -4,6 +4,10 @@ Port: {{ apt_cacher_port }}
 BindAddress: {{ apt_cacher_bind_address }}
 ReportPage: acng-report.html
 
+{% if apt_mirror_airgapped | default(false) | bool %}
+OfflineMode: 1
+{% else %}
 {% if apt_cacher_passthrough | bool %}
 PassThroughPattern: .*
+{% endif %}
 {% endif %}
