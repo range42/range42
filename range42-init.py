@@ -1473,12 +1473,6 @@ class StepDeploy(Step):
              f'DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/{S.deployer_user}/range42.config"'),
             ('ssh_client__dst_config_dir: "/home/your_deployer_cli_username/.ssh"',
              f'ssh_client__dst_config_dir: "/home/{S.deployer_user}/.ssh"'),
-            # if local mirror enabled, use its fixed IP as the apt proxy
-            ('apt_proxy_url: ""', 'apt_proxy_url: "{}"'.format(
-                f"http://{_APT_MIRROR_DEFAULT_IP}:3142"
-                if S.apt_mirror_enabled and not S.apt_proxy_url
-                else S.apt_proxy_url
-            )),
         ]:
             sed_f(vars_, old, new)
 
@@ -1486,6 +1480,17 @@ class StepDeploy(Step):
         if S.apt_mirror_enabled:
             import re as _re
             _vc = vars_.read_text()
+            # apt_proxy_url: always set to the local mirror URL with the correct port for the mode.
+            # Port 3142 = apt-cacher-ng (online/caching), port 80 = nginx (airgapped full-mirror).
+            # Only override empty or previously-set mirror-IP values; leave user-provided proxies untouched.
+            _mirror_port = 80 if S.apt_mirror_airgapped else 3142
+            _mirror_url  = f"http://{_APT_MIRROR_DEFAULT_IP}:{_mirror_port}"
+            _vc = _re.sub(
+                rf'^apt_proxy_url: "(?:|http://{_re.escape(_APT_MIRROR_DEFAULT_IP)}:\d+)"',
+                f'apt_proxy_url: "{_mirror_url}"',
+                _vc,
+                flags=_re.MULTILINE,
+            )
             for key, val in [
                 ('apt_mirror_enabled',    'true'),
                 ('apt_mirror_airgapped',  str(S.apt_mirror_airgapped).lower()),
