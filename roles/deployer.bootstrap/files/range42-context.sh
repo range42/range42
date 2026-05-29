@@ -631,11 +631,23 @@ _r42_provision_apt_mirror() {
         return 1
     fi
 
+    # Pass apt_mirror_* vars explicitly — vars_file may contain Jinja2
+    # expressions that cause Ansible to silently reject -e @file loading.
+    local apt_mirror_vm_id apt_mirror_vm_ip apt_mirror_vm_template_id apt_mirror_port
+    apt_mirror_vm_id=$(grep "^apt_mirror_vm_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_vm_ip=$(grep "^apt_mirror_vm_ip:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_vm_template_id=$(grep "^apt_mirror_vm_template_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_port=$(grep "^apt_mirror_port:" "$vars_file" | awk '{print $2}' | tr -d '"')
+
     local _args=(-i "$inventory" --vault-password-file "$vault_pass"
                  -e "_credentials_dir=${config_dir}"
                  -e "INFRASTRUCTURE_CODENAME=${codename}"
-                 -e "INFRASTRUCTURE_SCENARIO=${scenario}")
-    [[ -f "$vars_file" ]] && _args+=(-e "@${vars_file}")
+                 -e "INFRASTRUCTURE_SCENARIO=${scenario}"
+                 -e "apt_mirror_enabled=true"
+                 -e "apt_mirror_vm_id=${apt_mirror_vm_id:-1050}"
+                 -e "apt_mirror_vm_ip=${apt_mirror_vm_ip:-192.168.142.50}"
+                 -e "apt_mirror_vm_template_id=${apt_mirror_vm_template_id:-9301}"
+                 -e "apt_mirror_port=${apt_mirror_port:-3142}")
 
     _r42_print_step "provisioning apt-mirror VM (02b_apt_mirror_vm.yml)..."
     ansible-playbook "${_args[@]}" "${playbooks_dir}/02b_apt_mirror_vm.yml" || {
