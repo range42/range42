@@ -618,17 +618,24 @@ _r42_ssh() {
 
 _r42_provision_apt_mirror() {
     local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    local codename="${RANGE42_INFRASTRUCTURE_CODENAME:-}"
+    local scenario="${RANGE42_INFRASTRUCTURE_LAB:-}"
     local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
     local inventory="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR:-}/inventory_default.yml"
     local vault_pass="${RANGE42_VAULT_PASSWORD_FILE:-}"
     local playbooks_dir="${git_dir%/}/range42/playbooks"
+    local vars_file="${git_dir%/}/range42/inventories/${codename}/group_vars/all/vars.yml"
 
-    if [[ -z "$config_dir" || ! -f "$inventory" || ! -f "$vault_pass" || ! -d "$playbooks_dir" ]]; then
-        _r42_print_fail "apt-mirror provision: missing config_dir, inventory, vault pass, or playbooks dir"
+    if [[ -z "$config_dir" || -z "$codename" || -z "$scenario" || ! -f "$inventory" || ! -f "$vault_pass" || ! -d "$playbooks_dir" ]]; then
+        _r42_print_fail "apt-mirror provision: missing workspace context, inventory, vault pass, or playbooks dir"
         return 1
     fi
 
-    local _args=(-i "$inventory" --vault-password-file "$vault_pass" -e "_credentials_dir=${config_dir}")
+    local _args=(-i "$inventory" --vault-password-file "$vault_pass"
+                 -e "_credentials_dir=${config_dir}"
+                 -e "INFRASTRUCTURE_CODENAME=${codename}"
+                 -e "INFRASTRUCTURE_SCENARIO=${scenario}")
+    [[ -f "$vars_file" ]] && _args+=(-e "@${vars_file}")
 
     _r42_print_step "provisioning apt-mirror VM (02b_apt_mirror_vm.yml)..."
     ansible-playbook "${_args[@]}" "${playbooks_dir}/02b_apt_mirror_vm.yml" || {
