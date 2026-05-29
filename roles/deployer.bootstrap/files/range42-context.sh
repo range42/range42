@@ -1132,6 +1132,83 @@ _r42_catalog_try_yml_get() {
     fi
 }
 
+# List all catalog elements that can be run via `range42-context catalog-try`.
+# Scans range42-catalog/NN_*_layer/.../ for directories that look deployable
+# (compose.yml / docker-compose.yml / Makefile) and marks those carrying a
+# `catalog_try.yml` contract as L2 (strict smoke) vs L1 (default fallback).
+#
+# Output is meant for the operator to discover what's runnable. Logical paths
+# (with the NN_*_layer/ prefix stripped) are ready to copy-paste into a
+# `range42-context catalog-try <path>` invocation.
+_r42_catalog_try_list() {
+    hash -r 2>/dev/null || true
+
+    local catalog_root="${RANGE42_INVENTORY:-$HOME/range42/range42-catalog}"
+    if [[ ! -d "$catalog_root" ]]; then
+        _r42_print_fail "range42-catalog not found at $catalog_root"
+        _r42_print_step "set RANGE42_INVENTORY or activate a workspace : range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    _r42_print_section "catalog elements compatible with catalog-try"
+    _r42_print_step "catalog root : $catalog_root"
+    echo ""
+
+    # color codes : L2 = green (strict contract, "good"), L1 = yellow (fallback,
+    # "ok but best-effort"). Plain reset at the end of each marker.
+    local L2_COLOR='\033[1;32m'
+    local L1_COLOR='\033[1;33m'
+    local COLOR_RESET='\033[0m'
+
+    local layer_re='^[0-9]+_.*_layer$'
+    local count_l1=0 count_l2=0
+    local layer layer_name elem rel_path
+
+    for layer in "$catalog_root"/*/; do
+        layer="${layer%/}"
+        layer_name="${layer##*/}"
+        [[ "$layer_name" =~ $layer_re ]] || continue
+
+        # Find all dirs under this layer that look deployable. Use `find -type d`
+        # then check for compose/Makefile presence per dir (simple, no trickery).
+        # `-not -path '*/roles/*'` filters out ansible-role internals (e.g.
+        # 02_ansible_layer/admin/roles/.../files) that may contain a compose.yml
+        # as a template but are not catalog-try-deployable elements.
+        while IFS= read -r elem; do
+            if [[ -f "$elem/compose.yml" ]] || [[ -f "$elem/docker-compose.yml" ]] || [[ -f "$elem/Makefile" ]]; then
+                # logical path : strip the layer dir prefix
+                rel_path="${elem#${layer}/}"
+                if [[ -f "$elem/catalog_try.yml" ]]; then
+                    printf "    ${L2_COLOR}[L2]${COLOR_RESET}  %s\n" "$rel_path"
+                    count_l2=$((count_l2 + 1))
+                else
+                    printf "    ${L1_COLOR}[L1]${COLOR_RESET}  %s\n" "$rel_path"
+                    count_l1=$((count_l1 + 1))
+                fi
+            fi
+        done < <(find "$layer" -mindepth 1 -type d -not -path '*/roles/*' 2>/dev/null | sort)
+    done
+
+    echo ""
+    if [[ $((count_l1 + count_l2)) -eq 0 ]]; then
+        _r42_print_warning "no deployable elements found under ${catalog_root}"
+        _r42_print_step "expected at least one directory containing compose.yml, docker-compose.yml, or Makefile"
+        _r42_print_step "verify the catalog is properly cloned : ls -la ${catalog_root}"
+        return 1
+    fi
+
+    # Counts with inline color markers matching the L2/L1 colors above.
+    printf "    \033[34m➜\033[0m %d deployable elements  (${L2_COLOR}L2${COLOR_RESET}: %d, ${L1_COLOR}L1${COLOR_RESET}: %d)\n" \
+        "$((count_l1 + count_l2))" "$count_l2" "$count_l1"
+
+    _r42_print_section "legend"
+    printf "    ${L2_COLOR}[L2]${COLOR_RESET}  catalog_try.yml present  - strict smoke check (signature grep or HTTP poll)\n"
+    printf "    ${L1_COLOR}[L1]${COLOR_RESET}  no contract              - best-effort fallback (docker ps -a, any container)\n"
+    echo ""
+    _r42_print_step "run any : range42-context catalog-try <logical_path>"
+}
+
+
 # Main orchestrator : `range42-context catalog-try <path>`.
 # Overwrites the catalog_try test VM, deploys a single catalog element on it,
 # and runs a smoke check based on the element's optional catalog_try.yml.
@@ -1160,25 +1237,190 @@ _r42_catalog_try() {
     _r42_print_section "pre-flight"
     _r42_print_step "resolved element : ${element_abs_path}"
 
-    # 2. Verify active scenario is catalog_try
+    # 2. Verify (and if needed, auto-switch to) a catalog_try workspace
+    #
+    # Auto-switch policy (strict same-codename) :
+    #   - active workspace IS catalog_try   -> continue
+    #   - active workspace IS NOT catalog_try but <codename>-catalog_try exists for
+    #     the SAME codename                 -> prompt, then auto `range42-context use`
+    #   - active workspace IS NOT catalog_try and <codename>-catalog_try is absent
+    #                                       -> fail loud + suggest bootstrap (no
+    #                                          auto-switch to OTHER codenames'
+    #                                          catalog_try workspaces : the inventory,
+    #                                          vault, and ssh config wouldn't match)
     local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    local active_scenario=""
     _r42_print_step "active config dir : ${config_dir:-<empty>}"
+
+    # Stale env var recovery : if RANGE42_ACTIVE_CONFIG_DIR points to a dir
+    # that no longer exists (e.g. the operator moved or deleted ~/range42.config
+    # after the env was set, without re-sourcing the shell), treat as "no active
+    # workspace" and fall through to the auto-detection logic below. Saves the
+    # operator from having to manually `exec zsh` first.
+    if [[ -n "$config_dir" ]] && [[ ! -d "$config_dir" ]]; then
+        _r42_print_warning "RANGE42_ACTIVE_CONFIG_DIR points to a non-existent dir : ${config_dir}"
+        _r42_print_step "(stale env var ; treating as no active workspace)"
+        config_dir=""
+    fi
+
     if [[ -z "$config_dir" ]]; then
         _r42_print_fail "no active workspace (RANGE42_ACTIVE_CONFIG_DIR is empty)"
-        echo "  Switch with : range42-context use <codename> catalog_try" >&2
-        return 1
+
+        # Enumerate any catalog_try workspaces present locally — the auto-switch
+        # decision below is keyed on how many we find.
+        # zsh's default `nomatch` errors out on unmatched globs ; we enable
+        # null_glob locally so an empty match expands to nothing instead.
+        # `setopt local_options null_glob` is zsh-specific ; bash has no `setopt`
+        # so the redirect + `|| true` makes the call safe (bash treats unmatched
+        # globs as literal by default, which the `-d` check below filters out).
+        setopt local_options null_glob 2>/dev/null || true
+        local _ct_workspaces=() _ws_dir
+        for _ws_dir in "$HOME/range42.config/"*-catalog_try ; do
+            [[ -d "$_ws_dir" ]] || continue
+            _ct_workspaces+=("${_ws_dir##*/}")
+        done
+
+        if [[ ${#_ct_workspaces[@]} -eq 1 ]]; then
+            # Exactly one catalog_try workspace exists : safe to offer auto-activate.
+            local target_workspace=""
+            local _ws
+            for _ws in "${_ct_workspaces[@]}"; do target_workspace="$_ws"; break; done
+            local active_codename="${target_workspace%-catalog_try}"
+            _r42_print_step "found exactly one catalog_try workspace : ${target_workspace}"
+            printf "  activate %s and continue ? [Y/n] " "$target_workspace"
+            local switch_reply
+            read -r switch_reply
+            if [[ "$switch_reply" != "" && "$switch_reply" != "y" && "$switch_reply" != "Y" ]]; then
+                echo "  Aborted."
+                return 1
+            fi
+            _r42_use "$active_codename" "catalog_try" || return 1
+            # Refresh local state. active_scenario is intentionally set to the
+            # constant : we know what we just activated, and the next check
+            # `[[ -z "$active_scenario" ]]` below skips the redundant lookup.
+            config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+            active_scenario="catalog_try"
+
+        elif [[ ${#_ct_workspaces[@]} -gt 1 ]]; then
+            # Multiple catalog_try workspaces : would have to pick a codename ;
+            # refuse to guess (different codenames carry different Proxmox,
+            # inventory, vault — wrong pick = subtle breakage).
+            local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+            _r42_print_step "multiple catalog_try workspaces exist (cannot auto-pick) :"
+            local _ws
+            for _ws in "${_ct_workspaces[@]}" ; do
+                printf "      %s\n" "$_ws" >&2
+            done
+            _r42_print_step "activate one : range42-context use <codename> catalog_try"
+            _r42_print_step "then re-run  : range42-context catalog-try ${_q_path}"
+            return 1
+
+        elif [[ -d "$HOME/range42.config" ]] && [[ -n "$(ls -A "$HOME/range42.config" 2>/dev/null)" ]]; then
+            # Some workspaces exist, but none for catalog_try : list + suggest
+            # either activating an existing one or bootstrapping a catalog_try one.
+            local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+            _r42_print_step "available workspaces in ~/range42.config/ (none are catalog_try) :"
+            ls "$HOME/range42.config/" | sed 's/^/      /' >&2
+            _r42_print_step "options :"
+            _r42_print_step "  1) activate an existing : range42-context use <codename> <scenario>"
+            _r42_print_step "  2) bootstrap a new catalog_try : python3 ${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42/range42-init.py --catalog-try ${_q_path}"
+            return 1
+
+        else
+            # No workspaces at all : auto-launch the wizard with the catalog path
+            # threaded through. The 2s wait gives the operator a chance to Ctrl+C
+            # if the auto-bootstrap is not desired.
+            _r42_print_step "no infrastructure configured yet (~/range42.config is empty)"
+            local wizard_path="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42/range42-init.py"
+            if [[ ! -f "$wizard_path" ]]; then
+                # Wizard not present : fall back to manual suggestion (with
+                # defensive single-quote escape on catalog_path).
+                local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+                _r42_print_fail "wizard not found at ${wizard_path}"
+                _r42_print_step "clone range42 first, then run manually :"
+                _r42_print_step "  cd ${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42 && python3 range42-init.py --catalog-try ${_q_path}"
+                return 1
+            fi
+            echo ""
+            echo ""
+            _r42_print_step "launching wizard for first configuration ..."
+            _r42_print_step "  (Ctrl+C now to abort)"
+            echo ""
+            echo ""
+            sleep 2
+            python3 "$wizard_path" --catalog-try "$catalog_path"
+            return $?
+        fi
     fi
-    local active_scenario
-    active_scenario=$(_r42_active_scenario_name) || {
-        _r42_print_fail "could not resolve active scenario (see error above)"
-        echo "  Tried : ${config_dir}/scenario" >&2
-        return 1
-    }
+
+    # Resolve active scenario unless we already set it (in the auto-activate path above).
+    if [[ -z "$active_scenario" ]]; then
+        active_scenario=$(_r42_active_scenario_name) || {
+            local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+            _r42_print_fail "could not resolve active scenario (see error above)"
+            echo "  Tried : ${config_dir}/scenario" >&2
+            _r42_print_step "workspace appears corrupted ; re-bootstrap with the same element :"
+            _r42_print_step "  cd ${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42 && python3 range42-init.py --catalog-try ${_q_path}"
+            return 1
+        }
+    fi
     _r42_print_step "active scenario  : ${active_scenario}"
+
     if [[ "$active_scenario" != "catalog_try" ]]; then
-        _r42_print_fail "active scenario is '$active_scenario', not 'catalog_try'"
-        echo "  Switch with : range42-context use <codename> catalog_try" >&2
-        return 1
+        # Derive codename from the active workspace name. Workspace dir is
+        # named "<codename>-<scenario>" (codenames may contain hyphens, so we
+        # strip the trailing "-${active_scenario}" rather than splitting).
+        local active_workspace="${config_dir##*/}"
+        local active_codename="${active_workspace%-${active_scenario}}"
+        local target_workspace="${active_codename}-catalog_try"
+        local target_dir="$HOME/range42.config/${target_workspace}"
+
+        if [[ -d "$target_dir" ]]; then
+            _r42_print_warning "active scenario is '${active_scenario}', not 'catalog_try'"
+            _r42_print_step "found existing workspace : ${target_workspace}"
+            # %s format to defuse any % in $target_workspace (defensive ;
+            # codenames are normally sanitized by the wizard).
+            printf "  switch to %s and continue ? [Y/n] " "$target_workspace"
+            local switch_reply
+            read -r switch_reply
+            if [[ "$switch_reply" != "" && "$switch_reply" != "y" && "$switch_reply" != "Y" ]]; then
+                echo "  Aborted."
+                return 1
+            fi
+            _r42_use "$active_codename" "catalog_try" || return 1
+            # refresh local vars after the switch (config_dir + scenario changed)
+            config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+            active_scenario="catalog_try"
+        else
+            # Defensive quote (same idiom as the "no workspace" branch above) :
+            # protect catalog_path against shell-meta leaking into copy-paste suggestions.
+            local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+            _r42_print_fail "active scenario is '${active_scenario}', and no catalog_try workspace exists for codename '${active_codename}'"
+            _r42_print_step "options :"
+            _r42_print_step "  1) bootstrap a catalog_try workspace via the wizard :"
+            _r42_print_step "     cd ${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42 && python3 range42-init.py --catalog-try ${_q_path}"
+            _r42_print_step "  2) if you already created a catalog_try workspace, activate + re-run :"
+            _r42_print_step "     range42-context use ${active_codename} catalog_try"
+            _r42_print_step "     range42-context catalog-try ${_q_path}"
+            # Info-only listing of catalog_try workspaces on OTHER codenames.
+            # Never auto-switch to those (Proxmox API + inventory + vault would
+            # mismatch the active infra context).
+            # zsh `nomatch` would error on no-match : null_glob locally (no-op
+            # in bash thanks to redirect + || true).
+            setopt local_options null_glob 2>/dev/null || true
+            local _other_ws _other_list=""
+            for _other_ws in "$HOME/range42.config/"*-catalog_try ; do
+                [[ -d "$_other_ws" ]] || continue
+                local _other_name="${_other_ws##*/}"
+                [[ "$_other_name" == "${target_workspace}" ]] && continue
+                _other_list+="      ${_other_name}"$'\n'
+            done
+            if [[ -n "$_other_list" ]]; then
+                _r42_print_warning "other catalog_try workspaces exist on different codenames (NOT auto-switched, mixing codenames is unsafe) :"
+                printf "%s" "$_other_list" >&2
+            fi
+            return 1
+        fi
     fi
 
     # 3. Read optional catalog_try.yml for smoke check config (defaults if missing)
@@ -1282,11 +1524,32 @@ _r42_catalog_try() {
     _r42_print_check "element deployed on ${vm_ssh}:${remote_dir}"
 
     # 12. Final summary - mirror the intro layout (section + aligned key:value).
+    #
+    # NB on the smoke check line below : if we reached this point, the Ansible
+    # smoke task returned 0 (the wrapper would have exited non-zero otherwise
+    # and we'd never get here). So `✓ PASS` is implicit ; we just surface the
+    # mode (L2 strict / L1 fallback) for the operator's situational awareness.
+    # The L2/L1 detection mirrors the playbook's `when:` predicates exactly.
+    local _smoke_label _smoke_color_open
+    if [[ "$ct_mode" == "service" && -n "$ct_port" ]]; then
+        _smoke_label="L2 service HTTP poll (port ${ct_port}${ct_endpoint})"
+        _smoke_color_open='\033[1;32m'
+    elif [[ "$ct_mode" == "oneshot" && -n "$ct_exit_signature" ]]; then
+        _smoke_label="L2 oneshot signature grep"
+        _smoke_color_open='\033[1;32m'
+    else
+        _smoke_label="L1 fallback (docker ps -a, any container)"
+        _smoke_color_open='\033[1;33m'
+    fi
+
     _r42_print_section "done - one usage VM ready"
     _r42_print_step "Element       : ${element_name}"
     _r42_print_step "Catalog path  : ${catalog_path}"
     _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip})"
     _r42_print_step "Deployed at   : ${remote_dir}  (on the VM)"
+    # Smoke check line : colored L?-label (green=L2, yellow=L1) + green ✓ PASS.
+    # %s for the label defuses any format-meta in $ct_port / $ct_exit_signature.
+    printf "    \033[34m➜\033[0m Smoke check   : ${_smoke_color_open}%s\033[0m  \033[1;32m✓ PASS\033[0m\n" "$_smoke_label"
 
     _r42_print_section "next steps"
     _r42_print_step "deploy again  : range42-context catalog-try ${catalog_path}"
@@ -1405,6 +1668,10 @@ _r42_help() {
     printf "    ${N}debug${R}                          ${D}toggle verbose output (show/hide skipped tasks)${R}\n"
     printf "    ${N}help${R}                           ${D}show this help${R}\n"
     echo ""
+    printf "  ${C}catalog-try (one usage VM for single catalog element validation)${R}\n"
+    printf "    ${N}catalog-try${R} <path>             ${D}deploy + smoke-check a catalog element (e.g. docker/_ctf/hello)${R}\n"
+    printf "    ${N}catalog-try-list${R}               ${D}list catalog elements compatible with catalog-try (L1/L2)${R}\n"
+    echo ""
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -1441,7 +1708,8 @@ range42-context() {
         ssh)            _r42_ssh "$@" ;;
         cd)             _r42_cd "$@" ;;
         debug)          _r42_debug ;;
-        catalog-try)    _r42_catalog_try "$@" ;;
+        catalog-try)         _r42_catalog_try "$@" ;;
+        catalog-try-list)    _r42_catalog_try_list ;;
         help|--help|-h) _r42_help ;;
         *)
             _r42_print_fail "unknown command: $cmd"
