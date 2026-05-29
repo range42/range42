@@ -631,9 +631,14 @@ _r42_provision_apt_mirror() {
         return 1
     fi
 
-    # Pass apt_mirror_* vars explicitly — vars_file may contain Jinja2
-    # expressions that cause Ansible to silently reject -e @file loading.
+    # Pass vars explicitly — vars_file contains Jinja2 expressions that
+    # cause Ansible to reject -e @file loading silently.
+    local proxmox_addr storage_name net_bridge
     local apt_mirror_vm_id apt_mirror_vm_ip apt_mirror_vm_template_id apt_mirror_port
+    proxmox_addr=$(grep "^INFRASTRUCTURE_PROXMOX_ADDRESS:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    proxmox_node=$(grep "^proxmox_node:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    storage_name=$(grep "^infrastructure_proxmox_dest_vm_storage_name:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    net_bridge=$(grep "^vm_net_virtio_bridge:" "$vars_file" | awk '{print $2}' | tr -d '"')
     apt_mirror_vm_id=$(grep "^apt_mirror_vm_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
     apt_mirror_vm_ip=$(grep "^apt_mirror_vm_ip:" "$vars_file" | awk '{print $2}' | tr -d '"')
     apt_mirror_vm_template_id=$(grep "^apt_mirror_vm_template_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
@@ -643,6 +648,10 @@ _r42_provision_apt_mirror() {
                  -e "_credentials_dir=${config_dir}"
                  -e "INFRASTRUCTURE_CODENAME=${codename}"
                  -e "INFRASTRUCTURE_SCENARIO=${scenario}"
+                 -e "INFRASTRUCTURE_PROXMOX_ADDRESS=${proxmox_addr}"
+                 -e "proxmox_node=${proxmox_node:-pve}"
+                 -e "infrastructure_proxmox_dest_vm_storage_name=${storage_name:-local-lvm}"
+                 -e "vm_net_virtio_bridge=${net_bridge:-vmbr142}"
                  -e "apt_mirror_enabled=true"
                  -e "apt_mirror_vm_id=${apt_mirror_vm_id:-1050}"
                  -e "apt_mirror_vm_ip=${apt_mirror_vm_ip:-192.168.142.50}"
