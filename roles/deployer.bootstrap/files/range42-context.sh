@@ -706,25 +706,28 @@ _r42_provision_apt_mirror() {
     local proxmox_addr storage_name net_bridge
     local apt_mirror_vm_id apt_mirror_vm_ip apt_mirror_vm_template_id apt_mirror_port apt_mirror_airgapped apt_mirror_vm_disk_size
     local apt_mirror_prewarm apt_mirror_include_sources apt_mirror_debian_stable apt_mirror_ubuntu_2204 apt_mirror_ubuntu_2404
-    local apt_mirror_security apt_mirror_backports apt_mirror_threads
-    proxmox_addr=$(grep "^INFRASTRUCTURE_PROXMOX_ADDRESS:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    proxmox_node=$(grep "^proxmox_node:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    storage_name=$(grep "^infrastructure_proxmox_dest_vm_storage_name:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    net_bridge=$(grep "^vm_net_virtio_bridge:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_vm_id=$(grep "^apt_mirror_vm_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_vm_ip=$(grep "^apt_mirror_vm_ip:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_vm_template_id=$(grep "^apt_mirror_vm_template_id:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_port=$(grep "^apt_mirror_port:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_airgapped=$(grep "^apt_mirror_airgapped:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_vm_disk_size=$(grep "^apt_mirror_vm_disk_size:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_prewarm=$(grep "^apt_mirror_prewarm:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_include_sources=$(grep "^apt_mirror_include_sources:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_debian_stable=$(grep "^apt_mirror_debian_stable:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_ubuntu_2204=$(grep "^apt_mirror_ubuntu_2204:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_ubuntu_2404=$(grep "^apt_mirror_ubuntu_2404:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_security=$(grep "^apt_mirror_security:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_backports=$(grep "^apt_mirror_backports:" "$vars_file" | awk '{print $2}' | tr -d '"')
-    apt_mirror_threads=$(grep "^apt_mirror_threads:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    local apt_mirror_security apt_mirror_backports apt_mirror_threads apt_mirror_ubuntu_components
+    # _yaml_val: extract YAML scalar value after "key:", stripping quotes and preserving spaces
+    _yaml_val() { grep "^${1}:" "$vars_file" | sed "s/^${1}:[[:space:]]*//" | tr -d '"' | tr -d "'"; }
+    proxmox_addr=$(_yaml_val INFRASTRUCTURE_PROXMOX_ADDRESS)
+    proxmox_node=$(_yaml_val proxmox_node)
+    storage_name=$(_yaml_val infrastructure_proxmox_dest_vm_storage_name)
+    net_bridge=$(_yaml_val vm_net_virtio_bridge)
+    apt_mirror_vm_id=$(_yaml_val apt_mirror_vm_id)
+    apt_mirror_vm_ip=$(_yaml_val apt_mirror_vm_ip)
+    apt_mirror_vm_template_id=$(_yaml_val apt_mirror_vm_template_id)
+    apt_mirror_port=$(_yaml_val apt_mirror_port)
+    apt_mirror_airgapped=$(_yaml_val apt_mirror_airgapped)
+    apt_mirror_vm_disk_size=$(_yaml_val apt_mirror_vm_disk_size)
+    apt_mirror_prewarm=$(_yaml_val apt_mirror_prewarm)
+    apt_mirror_include_sources=$(_yaml_val apt_mirror_include_sources)
+    apt_mirror_debian_stable=$(_yaml_val apt_mirror_debian_stable)
+    apt_mirror_ubuntu_2204=$(_yaml_val apt_mirror_ubuntu_2204)
+    apt_mirror_ubuntu_2404=$(_yaml_val apt_mirror_ubuntu_2404)
+    apt_mirror_security=$(_yaml_val apt_mirror_security)
+    apt_mirror_backports=$(_yaml_val apt_mirror_backports)
+    apt_mirror_threads=$(_yaml_val apt_mirror_threads)
+    apt_mirror_ubuntu_components=$(_yaml_val apt_mirror_ubuntu_components)
 
     local _args=(-i "$inventory" --vault-password-file "$vault_pass"
                  -e "_credentials_dir=${config_dir}"
@@ -748,7 +751,8 @@ _r42_provision_apt_mirror() {
                  -e "apt_mirror_ubuntu_2404=${apt_mirror_ubuntu_2404:-false}"
                  -e "apt_mirror_security=${apt_mirror_security:-false}"
                  -e "apt_mirror_backports=${apt_mirror_backports:-false}"
-                 -e "apt_mirror_threads=${apt_mirror_threads:-20}")
+                 -e "apt_mirror_threads=${apt_mirror_threads:-20}"
+                 -e "{\"apt_mirror_ubuntu_components\": \"${apt_mirror_ubuntu_components:-main restricted}\"}")
 
     _r42_print_step "provisioning apt-mirror VM (02b_apt_mirror_vm.yml)..."
     ansible-playbook "${_args[@]}" "${playbooks_dir}/02b_apt_mirror_vm.yml" || {
