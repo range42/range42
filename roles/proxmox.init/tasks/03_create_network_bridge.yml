@@ -90,7 +90,8 @@
     "echo 1 > /proc/sys/net/ipv4/ip_forward &&
     (grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf &&
     sed -i 's/^#*net.ipv4.ip_forward=.*/net.ipv4.ip_forward=1/' /etc/sysctl.conf ||
-    echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf)"
+    echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf) &&
+    echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-range42-forward.conf"
   changed_when: false
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####

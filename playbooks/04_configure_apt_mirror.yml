@@ -1,6 +1,6 @@
 ---
 ################################################################################
-# 04 — Configure apt mirror VM (apt-cacher-ng)
+# 04 — Configure apt mirror VM
 #
 # No-op when apt_mirror_enabled is false.
 #
@@ -9,9 +9,14 @@
 #   connect. SSH jumps through root@proxmox via ProxyCommand because the VM
 #   is on a private network (192.168.142.x).
 #
-# Play 04b (apt_mirror_dynamic): install apt-cacher-ng as a native system
-#   package and enable the service via the apt-mirror.configure role.
+# Play 04b (apt_mirror_dynamic): install and configure the mirror software
+#   (apt-cacher-ng in proxy mode, apt-mirror+nginx in airgapped mode).
 #   Runs with become:true (requires alice sudo access from cloud-init).
+#
+# Play 04c (localhost / Proxmox): ensure ip_forward is on and an iptables
+#   FORWARD rule allows all lab subnets (192.168.0.0/16) to reach the
+#   apt-mirror VM on the HTTP port. Saves rules via iptables-persistent.
+#   Without this, lab VMs cannot reach the mirror across bridges.
 #
 # Requires: 02b_apt_mirror_vm.yml completed (VM is running, SSH is up).
 # Requires: 01_generate_credentials.yml completed (alice key exists).
@@ -57,3 +62,44 @@
 
   roles:
     - apt-mirror.configure
+
+- name: 04c apt mirror - configure Proxmox forwarding so lab VMs can reach the mirror
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    _root_key_path: "{{ playbook_dir }}/../config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
+    _mirror_ip: "{{ apt_mirror_vm_ip | default('192.168.142.50') }}"
+    _mirror_port: "{{ apt_mirror_http_port | default(80) if apt_mirror_airgapped | default(false) | bool else apt_mirror_port | default(3142) }}"
+    _comment: "r42: lab to apt-mirror"
+
+  tasks:
+    - name: APT MIRROR PROXMOX FWD - SKIP (apt_mirror_enabled is false)
+      ansible.builtin.meta: end_play
+      when: not apt_mirror_enabled | default(false) | bool
+
+    - name: APT MIRROR PROXMOX FWD - ensure ip_forward is enabled
+      ansible.builtin.shell: >
+        ssh -i {{ _root_key_path }} -o StrictHostKeyChecking=no -o BatchMode=yes
+        root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+        "sysctl -w net.ipv4.ip_forward=1 &&
+        echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-range42-forward.conf"
+      changed_when: false
+
+    - name: APT MIRROR PROXMOX FWD - add FORWARD rule (idempotent)
+      ansible.builtin.shell: >
+        ssh -i {{ _root_key_path }} -o StrictHostKeyChecking=no -o BatchMode=yes
+        root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+        "iptables -C FORWARD -d {{ _mirror_ip }}/32 -p tcp --dport {{ _mirror_port }}
+        -m comment --comment '{{ _comment }}' -j ACCEPT 2>/dev/null ||
+        iptables -I FORWARD 2 -d {{ _mirror_ip }}/32 -p tcp --dport {{ _mirror_port }}
+        -m comment --comment '{{ _comment }}' -j ACCEPT"
+      changed_when: false
+
+    - name: APT MIRROR PROXMOX FWD - persist rules via iptables-persistent
+      ansible.builtin.shell: >
+        ssh -i {{ _root_key_path }} -o StrictHostKeyChecking=no -o BatchMode=yes
+        root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+        "iptables-save > /etc/iptables/rules.v4"
+      changed_when: false
