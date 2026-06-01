@@ -8,6 +8,12 @@
     mode: "0644"
   notify: restart nginx
 
+- name: APT MIRROR CONFIGURE - DISABLE DEFAULT NGINX SITE (conflicts on port 80)
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: restart nginx
+
 - name: APT MIRROR CONFIGURE - ENABLE AND START NGINX
   ansible.builtin.systemd:
     name: nginx
