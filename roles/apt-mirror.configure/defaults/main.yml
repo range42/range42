@@ -20,3 +20,6 @@ apt_mirror_security: true
 apt_mirror_backports: false
 # Include source packages — roughly doubles disk usage; off by default
 apt_mirror_include_sources: false
+# Ubuntu components to mirror — universe alone is ~80-100 GB; default to main+restricted
+# Set to "main restricted universe" or "main restricted universe multiverse" for full mirror
+apt_mirror_ubuntu_components: "main restricted"
