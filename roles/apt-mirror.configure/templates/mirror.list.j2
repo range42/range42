@@ -17,10 +17,14 @@ set _tilde 0
 ########################################
 {% if apt_mirror_debian_stable | default(true) | bool %}
 deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+{% endif %}
 
 deb http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+{% endif %}
 {% endif %}
 
 ########################################
@@ -28,7 +32,9 @@ deb-src http://deb.debian.org/debian trixie-updates main contrib non-free non-fr
 ########################################
 {% if apt_mirror_security | default(true) | bool %}
 deb http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+{% endif %}
 {% endif %}
 
 ########################################
@@ -36,7 +42,9 @@ deb-src http://security.debian.org/debian-security trixie-security main contrib 
 ########################################
 {% if apt_mirror_backports | default(false) | bool %}
 deb http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware
+{% endif %}
 {% endif %}
 
 ########################################
@@ -44,13 +52,19 @@ deb-src http://deb.debian.org/debian trixie-backports main contrib non-free non-
 ########################################
 {% if apt_mirror_ubuntu_2204 | default(false) | bool %}
 deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+{% endif %}
 
 deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
+{% endif %}
 
 deb http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
+{% endif %}
 {% endif %}
 
 ########################################
@@ -58,13 +72,19 @@ deb-src http://security.ubuntu.com/ubuntu jammy-security main restricted univers
 ########################################
 {% if apt_mirror_ubuntu_2404 | default(false) | bool %}
 deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+{% endif %}
 
 deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+{% endif %}
 
 deb http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+{% if apt_mirror_include_sources | default(false) | bool %}
 deb-src http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+{% endif %}
 {% endif %}
 
 {% if apt_mirror_debian_stable | default(true) | bool %}

@@ -608,12 +608,79 @@ _r42_ssh() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# _r42_update_apt_mirror_distros_from_scenarios — compute the union of OS
+# distros needed across ALL scenario manifests and write the result back into
+# vars.yml.  Called by _r42_provision_apt_mirror before the playbook runs.
+#
+# Reads scenarios/<name>/manifest/scenario_vms.json, looks at each template's
+# "os" field, and maps:
+#   ubuntu-2404 → apt_mirror_ubuntu_2404: true
+#   ubuntu-2204 → apt_mirror_ubuntu_2204: true
+#   debian-*    → apt_mirror_debian_stable: true
+#
+# Flags for distros absent from ALL manifests are set to false, so the mirror
+# stays minimal and won't fill the thin pool with unused content.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_update_apt_mirror_distros_from_scenarios() {
+    local git_dir="$1"
+    local vars_file="$2"
+    local scenarios_dir="${git_dir%/}/range42-playbooks/scenarios"
+
+    [[ ! -d "$scenarios_dir" ]] && return 0
+    command -v python3 &>/dev/null || return 0
+
+    local computed
+    computed=$(python3 - "${scenarios_dir}" << 'PYEOF'
+import json, sys
+from pathlib import Path
+
+scenarios_dir = Path(sys.argv[1])
+manifests = list(scenarios_dir.glob("*/manifest/scenario_vms.json"))
+
+oses = set()
+for m in manifests:
+    try:
+        d = json.loads(m.read_text())
+        for t in d.get("templates", []):
+            os_val = t.get("os", "")
+            if os_val:
+                oses.add(os_val)
+    except Exception:
+        pass
+
+ubuntu_2404  = "ubuntu-2404" in oses
+ubuntu_2204  = "ubuntu-2204" in oses
+debian_stable = any(o.startswith("debian") for o in oses)
+
+print(f"apt_mirror_ubuntu_2404={'true' if ubuntu_2404 else 'false'}")
+print(f"apt_mirror_ubuntu_2204={'true' if ubuntu_2204 else 'false'}")
+print(f"apt_mirror_debian_stable={'true' if debian_stable else 'false'}")
+PYEOF
+    ) || return 0
+
+    local changed=false
+    while IFS='=' read -r key value; do
+        [[ -z "$key" ]] && continue
+        local current
+        current=$(grep "^${key}:" "$vars_file" | awk '{print $2}' | tr -d '"' | tr -d ' ')
+        if [[ "$current" != "$value" ]]; then
+            sed -i "s/^${key}:.*/${key}: ${value}/" "$vars_file"
+            _r42_print_step "apt-mirror distro: ${key} → ${value}"
+            changed=true
+        fi
+    done <<< "$computed"
+
+    [[ "$changed" == "true" ]] && _r42_print_check "vars.yml updated with distros required by scenarios"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # _r42_provision_apt_mirror — create + configure the apt-mirror VM via Ansible
 #
 # Runs 02b_apt_mirror_vm.yml (Proxmox VM clone) then 04_configure_apt_mirror.yml
-# (apt-cacher-ng install) from range42/playbooks/ using the active workspace
-# inventory and credentials. Called by _r42_ensure_apt_mirror_running when the
-# VM does not exist yet.
+# from range42/playbooks/ using the active workspace inventory and credentials.
+# Called by _r42_ensure_apt_mirror_running when the VM does not exist yet or
+# when its configuration is stale.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_provision_apt_mirror() {
@@ -631,10 +698,15 @@ _r42_provision_apt_mirror() {
         return 1
     fi
 
+    # Sync distro flags in vars.yml with what the scenario manifests actually need
+    _r42_update_apt_mirror_distros_from_scenarios "$git_dir" "$vars_file"
+
     # Pass vars explicitly — vars_file contains Jinja2 expressions that
     # cause Ansible to reject -e @file loading silently.
     local proxmox_addr storage_name net_bridge
     local apt_mirror_vm_id apt_mirror_vm_ip apt_mirror_vm_template_id apt_mirror_port apt_mirror_airgapped apt_mirror_vm_disk_size
+    local apt_mirror_prewarm apt_mirror_include_sources apt_mirror_debian_stable apt_mirror_ubuntu_2204 apt_mirror_ubuntu_2404
+    local apt_mirror_security apt_mirror_backports apt_mirror_threads
     proxmox_addr=$(grep "^INFRASTRUCTURE_PROXMOX_ADDRESS:" "$vars_file" | awk '{print $2}' | tr -d '"')
     proxmox_node=$(grep "^proxmox_node:" "$vars_file" | awk '{print $2}' | tr -d '"')
     storage_name=$(grep "^infrastructure_proxmox_dest_vm_storage_name:" "$vars_file" | awk '{print $2}' | tr -d '"')
@@ -645,6 +717,14 @@ _r42_provision_apt_mirror() {
     apt_mirror_port=$(grep "^apt_mirror_port:" "$vars_file" | awk '{print $2}' | tr -d '"')
     apt_mirror_airgapped=$(grep "^apt_mirror_airgapped:" "$vars_file" | awk '{print $2}' | tr -d '"')
     apt_mirror_vm_disk_size=$(grep "^apt_mirror_vm_disk_size:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_prewarm=$(grep "^apt_mirror_prewarm:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_include_sources=$(grep "^apt_mirror_include_sources:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_debian_stable=$(grep "^apt_mirror_debian_stable:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_ubuntu_2204=$(grep "^apt_mirror_ubuntu_2204:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_ubuntu_2404=$(grep "^apt_mirror_ubuntu_2404:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_security=$(grep "^apt_mirror_security:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_backports=$(grep "^apt_mirror_backports:" "$vars_file" | awk '{print $2}' | tr -d '"')
+    apt_mirror_threads=$(grep "^apt_mirror_threads:" "$vars_file" | awk '{print $2}' | tr -d '"')
 
     local _args=(-i "$inventory" --vault-password-file "$vault_pass"
                  -e "_credentials_dir=${config_dir}"
@@ -660,7 +740,15 @@ _r42_provision_apt_mirror() {
                  -e "apt_mirror_vm_ip=${apt_mirror_vm_ip:-192.168.142.50}"
                  -e "apt_mirror_vm_template_id=${apt_mirror_vm_template_id:-9301}"
                  -e "apt_mirror_port=${apt_mirror_port:-3142}"
-                 -e "apt_mirror_vm_disk_size=${apt_mirror_vm_disk_size:-200G}")
+                 -e "apt_mirror_vm_disk_size=${apt_mirror_vm_disk_size:-200G}"
+                 -e "apt_mirror_prewarm=${apt_mirror_prewarm:-false}"
+                 -e "apt_mirror_include_sources=${apt_mirror_include_sources:-false}"
+                 -e "apt_mirror_debian_stable=${apt_mirror_debian_stable:-true}"
+                 -e "apt_mirror_ubuntu_2204=${apt_mirror_ubuntu_2204:-false}"
+                 -e "apt_mirror_ubuntu_2404=${apt_mirror_ubuntu_2404:-false}"
+                 -e "apt_mirror_security=${apt_mirror_security:-false}"
+                 -e "apt_mirror_backports=${apt_mirror_backports:-false}"
+                 -e "apt_mirror_threads=${apt_mirror_threads:-20}")
 
     _r42_print_step "provisioning apt-mirror VM (02b_apt_mirror_vm.yml)..."
     ansible-playbook "${_args[@]}" "${playbooks_dir}/02b_apt_mirror_vm.yml" || {
@@ -714,11 +802,16 @@ _r42_ensure_apt_mirror_running() {
         return 0
     fi
 
+    local apt_mirror_airgapped
+    apt_mirror_airgapped=$(grep "^apt_mirror_airgapped:" "$vars_file" | awk '{print $2}' | tr -d '"')
+
     local root_key="$HOME/.ssh/range42/${workspace}/jump_keys/px.${workspace}-ssh_cli.root"
     if [[ ! -f "$root_key" ]]; then
         _r42_print_warning "apt-mirror check: root key not found ($root_key) — skipping"
         return 0
     fi
+
+    local alice_key="$HOME/.ssh/range42/${workspace}/backend_keys/r42.${workspace}-deployer-key_alice"
 
     _r42_print_section "apt-mirror VM check"
 
@@ -733,22 +826,37 @@ _r42_ensure_apt_mirror_running() {
         return 0
     fi
 
-    if echo "$vm_status" | grep -q "status: running"; then
+    # Start the VM first if stopped so we can check its configuration state
+    if ! echo "$vm_status" | grep -q "status: running"; then
+        _r42_print_step "apt-mirror VM ${vm_id} is stopped — starting..."
+        ${=_px} "qm start ${vm_id}" 2>&1
+
+        _r42_print_step "waiting for SSH on ${vm_ip}:22 (via Proxmox, up to 120s)..."
+        local result
+        result=$(${=_px} "timeout 120 bash -c 'sleep 5; until nc -z -w2 ${vm_ip} 22 2>/dev/null; do sleep 3; done && echo ready' 2>/dev/null || echo timeout" 2>&1)
+
+        if [[ "$result" == *"timeout"* ]]; then
+            _r42_print_warning "apt-mirror VM ${vm_id} did not become reachable within 120s — proceeding anyway"
+            return 0
+        fi
+        _r42_print_check "apt-mirror VM ${vm_id} is ready at ${vm_ip}:22"
+    else
         _r42_print_check "apt-mirror VM ${vm_id} is running (${vm_ip})"
-        return 0
     fi
 
-    _r42_print_step "apt-mirror VM ${vm_id} is stopped — starting..."
-    ${=_px} "qm start ${vm_id}" 2>&1
-
-    _r42_print_step "waiting for SSH on ${vm_ip}:22 (via Proxmox, up to 120s)..."
-    local result
-    result=$(${=_px} "timeout 120 bash -c 'sleep 5; until nc -z -w2 ${vm_ip} 22 2>/dev/null; do sleep 3; done && echo ready' 2>/dev/null || echo timeout" 2>&1)
-
-    if [[ "$result" == *"timeout"* ]]; then
-        _r42_print_warning "apt-mirror VM ${vm_id} did not become reachable within 120s — proceeding anyway"
-    else
-        _r42_print_check "apt-mirror VM ${vm_id} is ready at ${vm_ip}:22"
+    # Detect configuration mismatch: airgapped mode requires /etc/apt/mirror.list.
+    # If absent the VM was provisioned in proxy mode or was never configured —
+    # reprovision so apt-mirror + nginx get installed.
+    if [[ "$apt_mirror_airgapped" == "true" ]] && [[ -f "$alice_key" ]]; then
+        local _ssh_vm="ssh -i ${alice_key} -o StrictHostKeyChecking=no -o BatchMode=yes \
+            -o ProxyCommand='ssh -i ${root_key} -o StrictHostKeyChecking=no -o BatchMode=yes -W %h:%p root@${proxmox_addr}' \
+            alice@${vm_ip}"
+        local mirror_list_check
+        mirror_list_check=$(eval "${_ssh_vm}" "test -f /etc/apt/mirror.list && echo present || echo absent" 2>/dev/null || echo absent)
+        if [[ "$mirror_list_check" == "absent" ]]; then
+            _r42_print_warning "apt-mirror VM ${vm_id}: airgapped mode but /etc/apt/mirror.list missing — reprovisioning..."
+            _r42_provision_apt_mirror || return 1
+        fi
     fi
 }
 

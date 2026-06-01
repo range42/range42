@@ -18,3 +18,5 @@ apt_mirror_ubuntu_2204: false
 apt_mirror_ubuntu_2404: false
 apt_mirror_security: true
 apt_mirror_backports: false
+# Include source packages — roughly doubles disk usage; off by default
+apt_mirror_include_sources: false

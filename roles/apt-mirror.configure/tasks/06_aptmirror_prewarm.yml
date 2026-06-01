@@ -1,21 +1,18 @@
 ---
-- name: APT MIRROR CONFIGURE - RUN APT-MIRROR (PREWARM)
+- name: APT MIRROR CONFIGURE - RUN APT-MIRROR (PREWARM — background, fire-and-forget)
   ansible.builtin.command: apt-mirror
   become: true
-  async: 28800
-  poll: 60
-  register: apt_mirror_prewarm_result
-  failed_when: false
+  async: 86400
+  poll: 0
+  register: apt_mirror_prewarm_job
   when: apt_mirror_prewarm | default(false) | bool
 
-- name: APT MIRROR CONFIGURE - REPORT PREWARM RESULT
+- name: APT MIRROR CONFIGURE - REPORT PREWARM LAUNCHED
   ansible.builtin.debug:
     msg: >-
-      apt-mirror prewarm finished.
-      rc={{ apt_mirror_prewarm_result.rc | default('n/a') }}
-      stdout={{ apt_mirror_prewarm_result.stdout | default('') | trim }}
-      stderr={{ apt_mirror_prewarm_result.stderr | default('') | trim }}
-      msg={{ apt_mirror_prewarm_result.msg | default('') }}
+      apt-mirror prewarm started in background (job {{ apt_mirror_prewarm_job.ansible_job_id | default('n/a') }}).
+      Mirror will be available once /var/spool/apt-mirror/mirror/ is populated.
+      The scenario deploy will wait at the mirror-ready gate before configuring clients.
   when:
     - apt_mirror_prewarm | default(false) | bool
-    - apt_mirror_prewarm_result is defined
+    - apt_mirror_prewarm_job is defined
