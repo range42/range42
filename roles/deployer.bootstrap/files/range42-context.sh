@@ -625,18 +625,26 @@ _r42_ssh() {
 _r42_update_apt_mirror_distros_from_scenarios() {
     local git_dir="$1"
     local vars_file="$2"
+    local active_scenario="$3"
     local scenarios_dir="${git_dir%/}/range42-playbooks/scenarios"
 
     [[ ! -d "$scenarios_dir" ]] && return 0
     command -v python3 &>/dev/null || return 0
 
     local computed
-    computed=$(python3 - "${scenarios_dir}" << 'PYEOF'
+    computed=$(python3 - "${scenarios_dir}" "${active_scenario:-}" << 'PYEOF'
 import json, sys
 from pathlib import Path
 
 scenarios_dir = Path(sys.argv[1])
-manifests = list(scenarios_dir.glob("*/manifest/scenario_vms.json"))
+active_scenario = sys.argv[2] if len(sys.argv) > 2 else ""
+
+# Only read the active scenario's manifest; fall back to all if unknown.
+if active_scenario:
+    manifests = [scenarios_dir / active_scenario / "manifest" / "scenario_vms.json"]
+    manifests = [m for m in manifests if m.exists()]
+else:
+    manifests = list(scenarios_dir.glob("*/manifest/scenario_vms.json"))
 
 oses = set()
 for m in manifests:
@@ -698,8 +706,8 @@ _r42_provision_apt_mirror() {
         return 1
     fi
 
-    # Sync distro flags in vars.yml with what the scenario manifests actually need
-    _r42_update_apt_mirror_distros_from_scenarios "$git_dir" "$vars_file"
+    # Sync distro flags in vars.yml with what the active scenario manifest needs
+    _r42_update_apt_mirror_distros_from_scenarios "$git_dir" "$vars_file" "$scenario"
 
     # Pass vars explicitly — vars_file contains Jinja2 expressions that
     # cause Ansible to reject -e @file loading silently.
