@@ -215,11 +215,14 @@ class _S:
     nat_interface   = "vmbr0"
     nat_bridges     = {f"vmbr{i}": True for i in range(140, 152)}
     apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
-    apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
-    apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
-    apt_mirror_prewarm    = _load_wizard_cache().get("apt_mirror_prewarm", False)
-    apt_mirror_persistent = _load_wizard_cache().get("apt_mirror_persistent", False)
-    apt_mirror_vm_ip      = _APT_MIRROR_DEFAULT_IP
+    apt_mirror_enabled         = _load_wizard_cache().get("apt_mirror_enabled", False)
+    apt_mirror_airgapped       = _load_wizard_cache().get("apt_mirror_airgapped", False)
+    apt_mirror_prewarm         = _load_wizard_cache().get("apt_mirror_prewarm", False)
+    apt_mirror_persistent      = _load_wizard_cache().get("apt_mirror_persistent", False)
+    apt_mirror_debian_security = _load_wizard_cache().get("apt_mirror_debian_security", True)
+    apt_mirror_ubuntu_2204     = _load_wizard_cache().get("apt_mirror_ubuntu_2204", False)
+    apt_mirror_ubuntu_2404     = _load_wizard_cache().get("apt_mirror_ubuntu_2404", False)
+    apt_mirror_vm_ip           = _APT_MIRROR_DEFAULT_IP
 S = _S()
 
 
@@ -290,10 +293,13 @@ def prefill(name):
     def ex_bool(k):
         m = re.search(rf'^{k}:\s*(true|false)', txt, re.M)
         return m.group(1) == "true" if m else False
-    S.apt_mirror_enabled    = ex_bool("apt_mirror_enabled")
-    S.apt_mirror_airgapped  = ex_bool("apt_mirror_airgapped")
-    S.apt_mirror_prewarm    = ex_bool("apt_mirror_prewarm")
-    S.apt_mirror_persistent = ex_bool("apt_mirror_persistent")
+    S.apt_mirror_enabled         = ex_bool("apt_mirror_enabled")
+    S.apt_mirror_airgapped       = ex_bool("apt_mirror_airgapped")
+    S.apt_mirror_prewarm         = ex_bool("apt_mirror_prewarm")
+    S.apt_mirror_persistent      = ex_bool("apt_mirror_persistent")
+    S.apt_mirror_debian_security = ex_bool("apt_mirror_security")
+    S.apt_mirror_ubuntu_2204     = ex_bool("apt_mirror_ubuntu_2204")
+    S.apt_mirror_ubuntu_2404     = ex_bool("apt_mirror_ubuntu_2404")
     for d in (INVENTORIES / name / "group_vars").iterdir():
         if d.name != "all": S.scenario = d.name; break
 
@@ -524,7 +530,7 @@ class StepAptMirror(Step):
         yield Horizontal(
             Switch(value=S.apt_mirror_airgapped, id="sw-airgapped",
                    disabled=not S.apt_mirror_enabled),
-            Static("  Air-gapped mode — apt-mirror full local mirror (~200 GB, needs 200G disk)", classes="muted"),
+            Static("  Air-gapped mode — apt-mirror full local mirror (needs 500G+ disk)", classes="muted"),
         )
         yield Horizontal(
             Switch(value=S.apt_mirror_prewarm, id="sw-prewarm",
@@ -536,24 +542,48 @@ class StepAptMirror(Step):
                    disabled=not S.apt_mirror_enabled),
             Static("  Persist cache between exercises", classes="muted"),
         )
+        yield Rule()
+        yield Static("  Distros to mirror (airgapped mode — select what your VMs need):", classes="muted")
+        yield Horizontal(
+            Switch(value=S.apt_mirror_debian_security, id="sw-security",
+                   disabled=not S.apt_mirror_enabled),
+            Static("  Debian security updates (~5 GB)", classes="muted"),
+        )
+        yield Horizontal(
+            Switch(value=S.apt_mirror_ubuntu_2204, id="sw-ubuntu-2204",
+                   disabled=not S.apt_mirror_enabled),
+            Static("  Ubuntu 22.04 LTS (Jammy) — adds ~200 GB", classes="muted"),
+        )
+        yield Horizontal(
+            Switch(value=S.apt_mirror_ubuntu_2404, id="sw-ubuntu-2404",
+                   disabled=not S.apt_mirror_enabled),
+            Static("  Ubuntu 24.04 LTS (Noble) — adds ~200 GB", classes="muted"),
+        )
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         if event.control.id != "sw-mirror-enabled":
             return
         enabled = event.value
-        for sw_id in ("sw-airgapped", "sw-prewarm", "sw-persistent"):
+        for sw_id in ("sw-airgapped", "sw-prewarm", "sw-persistent",
+                      "sw-security", "sw-ubuntu-2204", "sw-ubuntu-2404"):
             self.query_one(f"#{sw_id}", Switch).disabled = not enabled
 
     def handle_next(self, app):
-        S.apt_mirror_enabled    = self.query_one("#sw-mirror-enabled", Switch).value
-        S.apt_mirror_airgapped  = self.query_one("#sw-airgapped",      Switch).value
-        S.apt_mirror_prewarm    = self.query_one("#sw-prewarm",        Switch).value
-        S.apt_mirror_persistent = self.query_one("#sw-persistent",     Switch).value
+        S.apt_mirror_enabled         = self.query_one("#sw-mirror-enabled", Switch).value
+        S.apt_mirror_airgapped       = self.query_one("#sw-airgapped",      Switch).value
+        S.apt_mirror_prewarm         = self.query_one("#sw-prewarm",        Switch).value
+        S.apt_mirror_persistent      = self.query_one("#sw-persistent",     Switch).value
+        S.apt_mirror_debian_security = self.query_one("#sw-security",       Switch).value
+        S.apt_mirror_ubuntu_2204     = self.query_one("#sw-ubuntu-2204",    Switch).value
+        S.apt_mirror_ubuntu_2404     = self.query_one("#sw-ubuntu-2404",    Switch).value
         _save_wizard_cache({
-            "apt_mirror_enabled":    S.apt_mirror_enabled,
-            "apt_mirror_airgapped":  S.apt_mirror_airgapped,
-            "apt_mirror_prewarm":    S.apt_mirror_prewarm,
-            "apt_mirror_persistent": S.apt_mirror_persistent,
+            "apt_mirror_enabled":         S.apt_mirror_enabled,
+            "apt_mirror_airgapped":       S.apt_mirror_airgapped,
+            "apt_mirror_prewarm":         S.apt_mirror_prewarm,
+            "apt_mirror_persistent":      S.apt_mirror_persistent,
+            "apt_mirror_debian_security": S.apt_mirror_debian_security,
+            "apt_mirror_ubuntu_2204":     S.apt_mirror_ubuntu_2204,
+            "apt_mirror_ubuntu_2404":     S.apt_mirror_ubuntu_2404,
         })
         app._go(StepPreflight())
 
@@ -1496,6 +1526,9 @@ class StepDeploy(Step):
                 ('apt_mirror_airgapped',  str(S.apt_mirror_airgapped).lower()),
                 ('apt_mirror_prewarm',    str(S.apt_mirror_prewarm).lower()),
                 ('apt_mirror_persistent', str(S.apt_mirror_persistent).lower()),
+                ('apt_mirror_security',   str(S.apt_mirror_debian_security).lower()),
+                ('apt_mirror_ubuntu_2204', str(S.apt_mirror_ubuntu_2204).lower()),
+                ('apt_mirror_ubuntu_2404', str(S.apt_mirror_ubuntu_2404).lower()),
             ]:
                 _vc = _re.sub(rf'^{key}: (true|false)', f'{key}: {val}', _vc, flags=_re.MULTILINE)
             vars_.write_text(_vc)
@@ -1507,7 +1540,7 @@ class StepDeploy(Step):
             if 'apt_mirror_vm_id:' not in vc:
                 missing.append('apt_mirror_vm_id: 1050')
             if 'apt_mirror_vm_template_id:' not in vc:
-                missing.append('apt_mirror_vm_template_id: 9221')
+                missing.append('apt_mirror_vm_template_id: 9301')
             if missing:
                 with open(vars_, 'a') as _f:
                     _f.write('\n# injected by wizard (apt mirror VM identity)\n')
