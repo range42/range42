@@ -304,7 +304,7 @@ def _mirror_distros_from_manifest(scenario_name: str) -> dict:
     corresponding mirror flag.  Falls back to Debian-only on any error.
     """
     manifest = PLAYBOOKS_DIR / "scenarios" / scenario_name / "manifest" / "scenario_vms.json"
-    _debian_only = {"debian_stable": True, "security": True,
+    _debian_only = {"debian_stable": True, "security": True, "backports": True,
                     "ubuntu_2204": False, "ubuntu_2404": False}
     if not manifest.exists():
         return _debian_only
@@ -316,6 +316,7 @@ def _mirror_distros_from_manifest(scenario_name: str) -> dict:
         return {
             "debian_stable": has_debian,
             "security":      has_debian,
+            "backports":     has_debian,  # Debian cloud images always include backports
             "ubuntu_2204":   "ubuntu-2204" in os_list,
             "ubuntu_2404":   "ubuntu-2404" in os_list,
         }
@@ -1529,6 +1530,7 @@ class StepDeploy(Step):
                 ('apt_mirror_persistent', str(S.apt_mirror_persistent).lower()),
                 ('apt_mirror_debian_stable', str(_distros["debian_stable"]).lower()),
                 ('apt_mirror_security',      str(_distros["security"]).lower()),
+                ('apt_mirror_backports',     str(_distros["backports"]).lower()),
                 ('apt_mirror_ubuntu_2204',   str(_distros["ubuntu_2204"]).lower()),
                 ('apt_mirror_ubuntu_2404',   str(_distros["ubuntu_2404"]).lower()),
             ]:
