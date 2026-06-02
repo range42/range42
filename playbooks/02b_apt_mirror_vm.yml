@@ -186,6 +186,17 @@
       when: "'not_exists' in _mirror_vm_check.stdout"
       changed_when: true
 
+    - name: APT MIRROR VM - WAIT FOR CLONE LOCK TO CLEAR
+      ansible.builtin.shell: >
+        {{ _ssh_px }}
+        "timeout 300 bash -c
+        'until ! qm config {{ _mirror_vm_id }} 2>/dev/null | grep -q \"^lock:\"; do sleep 3; done && echo ready'
+        || echo timeout"
+      register: _clone_lock_wait
+      when: "'not_exists' in _mirror_vm_check.stdout"
+      changed_when: false
+      failed_when: "'timeout' in _clone_lock_wait.stdout"
+
     - name: APT MIRROR VM - UPLOAD ALICE PUBLIC KEY TO PROXMOX
       ansible.builtin.shell: >-
         scp -o StrictHostKeyChecking=no -o BatchMode=yes
