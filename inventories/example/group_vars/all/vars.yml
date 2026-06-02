@@ -208,11 +208,11 @@ apt_mirror_prewarm: false
 apt_mirror_persistent: false
 apt_mirror_fallback: true
 apt_mirror_debian_stable: true
-apt_mirror_ubuntu_2204: true
-apt_mirror_ubuntu_2404: true
+apt_mirror_ubuntu_2204: false
+apt_mirror_ubuntu_2404: false
 apt_mirror_backports: false
-apt_mirror_security: false
-apt_mirror_vm_disk_size: "200G"
+apt_mirror_security: true
+apt_mirror_vm_disk_size: "500G"
 
 
 #### PASSWORD FORMAT ####
