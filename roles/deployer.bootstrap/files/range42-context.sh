@@ -865,6 +865,28 @@ _r42_snapshot() {
     echo ""
     _r42_print_check "snapshot created: $snap_name"
     echo "  revert with: range42-context revert $snap_name"
+    echo "  list snapshots with: range42-context snapshot-list"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context snapshot-list — list snapshots of all VMs of the active scenario
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_snapshot_list() {
+    local manifest scenario_name
+    manifest=$(_r42_active_scenario_manifest) || return 1
+    scenario_name=$(_r42_active_scenario_name) || return 1
+
+    _r42_print_section "list snapshots of scenario VMs"
+    _r42_print_step "scenario : $scenario_name"
+    echo ""
+
+    jq -c '.vms[] | {vm_id: .vm_id}' "$manifest" \
+        | proxmox_snapshot_vm.vm_id.list_snapshot.to.jsons.sh
+
+    echo ""
+    _r42_print_check "snapshot listing done"
+    echo "  revert with: range42-context revert <snapshot_name>"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -1690,6 +1712,7 @@ _r42_help() {
     printf "    ${N}pause${R}                          ${D}pause all scenario VMs${R}\n"
     printf "    ${N}resume${R}                         ${D}resume all paused scenario VMs${R}\n"
     printf "    ${N}snapshot${R} [name]                ${D}snapshot all scenario VMs (auto-named if not provided)${R}\n"
+    printf "    ${N}snapshot-list${R}                  ${D}list snapshots of all scenario VMs${R}\n"
     printf "    ${N}revert${R} <name>                  ${D}revert all scenario VMs to a snapshot${R}\n"
     echo ""
     printf "  ${C}info${R}\n"
@@ -1733,6 +1756,7 @@ range42-context() {
         pause)              _r42_pause ;;
         resume)             _r42_resume ;;
         snapshot)           _r42_snapshot "$@" ;;
+        snapshot-list)      _r42_snapshot_list ;;
         revert)             _r42_revert "$@" ;;
         ssh-reload)     _r42_ssh_reload ;;
         inventory|inv)  _r42_inventory ;;
