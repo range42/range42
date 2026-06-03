@@ -20,8 +20,9 @@
 #   │       ├── r42.CODENAME-SCENARIO-student-key_bob (+.pub)
 #   │       └── additional.students/
 #   │           └── r42.CODENAME-SCENARIO-student-key_bob_{1..N} (+.pub)
-#   ├── passwords.env         ← passphrases and passwords (plaintext reference)
-#   └── summary.txt           ← full recap: paths, passwords, config locations
+#   └── summary.txt           ← workspace orientation : paths + SSH hosts
+#                                (secrets moved to the ansible vault ; see
+#                                 `range42-context show-vault` on the deployer-cli)
 #
 # Variables consumed:
 #   - INFRASTRUCTURE_CODENAME       (required)
@@ -37,6 +38,8 @@
 - import_tasks: ./01_generate_passwords.yml
 - import_tasks: ./02_generate_ssh_keys.yml
 - import_tasks: ./03_generate_student_extra_keys.yml
-- import_tasks: ./04_write_passwords_env.yml
+# COMMENT BLOCK BEFORE CHORE-DELETE :
+# passwords.env generation disabled - secrets now live in the ansible vault.
+# - import_tasks: ./04_write_passwords_env.yml
 - import_tasks: ./05_export_pubkeys_as_facts.yml
 - import_tasks: ./06_write_summary.yml

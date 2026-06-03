@@ -131,8 +131,9 @@ A zsh function available on the deployer-cli. Central tool for managing workspac
 
 | Command | What it does |
 |---------|-------------|
-| `range42-context inventory` | show the Ansible inventory tree |
-| `range42-context passwords` | show generated credentials (summary.txt) |
+| `range42-context show-vault` | show ansible vault contents (decrypted on the fly) |
+| `range42-context show-config` | show workspace orientation (paths + SSH hosts) |
+| `range42-context show-inventory` | show the Ansible inventory tree |
 | `range42-context ssh <pattern>` | quick SSH to a VM by partial name (e.g. `ssh wazuh`) |
 | `range42-context help` | show all commands |
 

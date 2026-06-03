@@ -499,10 +499,10 @@ _r42_use() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context inventory — show ansible inventory tree
+# range42-context show-inventory — show ansible inventory tree
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_inventory() {
+_r42_show_inventory() {
 
     local inventory_dir="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR:-}"
 
@@ -644,31 +644,86 @@ _r42_status() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context passwords — show generated credentials
+# COMMENT BLOCK BEFORE CHORE-DELETE :
+# `range42-context passwords` removed - replaced by `show-vault` (secrets via
+# ansible-vault view) + `show-config` (non-secret orientation via summary.txt).
+# Function body kept commented for short-term rollback ; delete entirely in a
+# follow-up chore.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_passwords() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+# _r42_passwords() {
+#     local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+#
+#     if [[ -z "$config_dir" ]]; then
+#         _r42_print_fail "no active workspace"
+#         return 1
+#     fi
+#
+#     # try summary.txt first, then passwords.env
+#     local summary="$config_dir/summary.txt"
+#     local passwords="$config_dir/passwords.env"
+#
+#     if [[ -f "$summary" ]]; then
+#         _r42_print_section "credentials summary"
+#         cat "$summary"
+#     elif [[ -f "$passwords" ]]; then
+#         _r42_print_section "passwords"
+#         cat "$passwords"
+#     else
+#         _r42_print_fail "no summary.txt or passwords.env found in $config_dir"
+#         _r42_print_warning "credentials may not have been generated yet"
+#     fi
+# }
 
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context show-vault — show ansible vault contents (decrypted on the fly)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_show_vault() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
     if [[ -z "$config_dir" ]]; then
         _r42_print_fail "no active workspace"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
         return 1
     fi
 
-    # try summary.txt first, then passwords.env
-    local summary="$config_dir/summary.txt"
-    local passwords="$config_dir/passwords.env"
+    local vault_file="${config_dir%/}/secrets/default_vault.yml"
+    local vault_pass_file="${RANGE42_VAULT_PASSWORD_FILE:-${config_dir%/}/secrets/vault_pass.txt}"
 
-    if [[ -f "$summary" ]]; then
-        _r42_print_section "credentials summary"
-        cat "$summary"
-    elif [[ -f "$passwords" ]]; then
-        _r42_print_section "passwords"
-        cat "$passwords"
-    else
-        _r42_print_fail "no summary.txt or passwords.env found in $config_dir"
-        _r42_print_warning "credentials may not have been generated yet"
+    if [[ ! -f "$vault_file" ]]; then
+        _r42_print_fail "vault file not found: $vault_file"
+        return 1
     fi
+    if [[ ! -f "$vault_pass_file" ]]; then
+        _r42_print_fail "vault password file not found: $vault_pass_file"
+        return 1
+    fi
+
+    _r42_print_section "ansible vault (credentials + SSH passphrases) — ${RANGE42_ACTIVE_WORKSPACE:-unknown}"
+    ansible-vault view "$vault_file" --vault-password-file "$vault_pass_file"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context show-config — show workspace orientation (paths + SSH hosts)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_show_config() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    local summary="${config_dir%/}/summary.txt"
+    if [[ ! -f "$summary" ]]; then
+        _r42_print_fail "summary.txt not found in $config_dir"
+        _r42_print_warning "workspace may not have been fully deployed yet"
+        return 1
+    fi
+
+    _r42_print_section "workspace config summary — ${RANGE42_ACTIVE_WORKSPACE:-unknown}"
+    cat "$summary"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -1805,8 +1860,9 @@ _r42_help() {
     printf "    ${N}revert${R} <name>                  ${D}revert all scenario VMs to a snapshot${R}\n"
     echo ""
     printf "  ${C}info${R}\n"
-    printf "    ${N}inventory${R}                      ${D}show ansible inventory tree${R}\n"
-    printf "    ${N}passwords${R}                      ${D}show generated credentials${R}\n"
+    printf "    ${N}show-vault${R}                     ${D}show ansible vault contents (decrypted on the fly)${R}\n"
+    printf "    ${N}show-config${R}                    ${D}show workspace orientation (paths + SSH hosts)${R}\n"
+    printf "    ${N}show-inventory${R}                 ${D}show ansible inventory tree${R}\n"
     printf "    ${N}ssh${R} <pattern>                  ${D}quick ssh to a VM by name${R}\n"
     printf "    ${N}debug${R}                          ${D}toggle verbose output (show/hide skipped tasks)${R}\n"
     printf "    ${N}help${R}                           ${D}show this help${R}\n"
@@ -1848,8 +1904,9 @@ range42-context() {
         snapshot-list)      _r42_snapshot_list ;;
         revert)             _r42_revert "$@" ;;
         ssh-reload)     _r42_ssh_reload ;;
-        inventory|inv)  _r42_inventory ;;
-        passwords|pw)   _r42_passwords ;;
+        show-vault)     _r42_show_vault ;;
+        show-config)    _r42_show_config ;;
+        show-inventory) _r42_show_inventory ;;
         ssh)            _r42_ssh "$@" ;;
         cd)             _r42_cd "$@" ;;
         debug)          _r42_debug ;;
