@@ -22,7 +22,7 @@
     comment: "r42 student (user) - bob [extra {{ item }}] {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
     passphrase: "{{ (context_ssh_keys_use_passphrase | default('YES') | upper == 'YES') | ternary(generated_student_extra_passphrase, omit) }}"
     mode: "0600"
-    regenerate: full_idempotence
+    regenerate: always
   loop: "{{ range(1, student_additional_keys_count + 1) | list }}"
   when:
     - context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
