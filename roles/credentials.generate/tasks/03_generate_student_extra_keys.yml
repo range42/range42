@@ -7,8 +7,13 @@
   when:
     - context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
     - context_ssh_keys_use_passphrase | default('YES') | upper == 'YES'
-    - student_additionnal_keys_count | default(0) | int > 0
+    - student_additional_keys_count | default(0) | int > 0
   no_log: true
+
+- name: CREDENTIALS GENERATE - SET EMPTY STUDENT EXTRA PASSPHRASE (FALLBACK)
+  ansible.builtin.set_fact:
+    generated_student_extra_passphrase: ""
+  when: generated_student_extra_passphrase is not defined
 
 - name: CREDENTIALS GENERATE - GENERATE ADDITIONAL STUDENT SSH KEYS
   community.crypto.openssh_keypair:

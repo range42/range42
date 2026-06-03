@@ -224,6 +224,59 @@ _r42_flush_known_hosts() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# helpers for vault-backed SSH key auto-unlock (used by _r42_ssh_reload)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# _r42_yaml_get — extract a top-level scalar field from YAML on stdin via yq.
+# Returns empty string if the field is absent or null.
+# usage : echo "$yaml" | _r42_yaml_get <field_name>
+_r42_yaml_get() {
+    local field="$1"
+    yq -r ".${field} // \"\""
+}
+
+# _r42_passphrase_field_for_key — map an SSH key file path to the YAML field
+# name in the vault that holds its passphrase. Echoes the field name on match,
+# empty otherwise.
+# usage : _r42_passphrase_field_for_key <key_file_path>
+_r42_passphrase_field_for_key() {
+    local keyfile="$1"
+    case "$keyfile" in
+        *ssh_cli.root)       echo "ssh_passphrase_px_root" ;;
+        *ssh_cli.jump_user)  echo "ssh_passphrase_px_jump" ;;
+        *deployer-key_alice) echo "ssh_passphrase_deployer_admin" ;;
+        *student-key_bob_*)  echo "ssh_passphrase_student_user_extra_all" ;;
+        *student-key_bob)    echo "ssh_passphrase_student_user" ;;
+        *)                   echo "" ;;
+    esac
+}
+
+# _r42_ssh_add_with_passphrase — non-interactive ssh-add via SSH_ASKPASS.
+# Creates a one-shot askpass tempfile script that prints $SSH_ASKPASS_PASSWORD,
+# invokes ssh-add with SSH_ASKPASS_REQUIRE=force and stdin from /dev/null so
+# ssh-add cannot fall back to /dev/tty, then cleans up the tempfile.
+# Returns ssh-add's exit code (0 on success, non-zero on bad passphrase / etc).
+# usage : _r42_ssh_add_with_passphrase <key_file_path> <passphrase>
+_r42_ssh_add_with_passphrase() {
+    local keyfile="$1"
+    local passphrase="$2"
+    local askpass_script rc
+
+    askpass_script=$(mktemp -t r42-askpass-XXXXXX.sh) || return 1
+    chmod 700 "$askpass_script"
+    printf '#!/bin/sh\nprintf "%%s" "$SSH_ASKPASS_PASSWORD"\n' > "$askpass_script"
+
+    SSH_ASKPASS="$askpass_script" \
+    SSH_ASKPASS_PASSWORD="$passphrase" \
+    SSH_ASKPASS_REQUIRE=force \
+        ssh-add "$keyfile" </dev/null >/dev/null 2>&1
+    rc=$?
+
+    rm -f "$askpass_script"
+    return $rc
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context ssh-reload — reload SSH keys for active workspace (T45)
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -248,9 +301,25 @@ _r42_ssh_reload() {
         return 1
     }
 
+    # decrypt the vault once for passphrase lookup. On any failure (missing
+    # vault_pass.txt, missing vault file, decrypt error), $vault_content stays
+    # empty and the per-key loop falls back to interactive ssh-add. No abort.
+    local vault_file vault_pass_file vault_content=""
+    vault_file="${RANGE42_CONFIG__ROOT_DIR%/}/secrets/default_vault.yml"
+    vault_pass_file="${RANGE42_VAULT_PASSWORD_FILE:-}"
+
+    if [[ -n "$vault_pass_file" && -f "$vault_pass_file" && -f "$vault_file" ]]; then
+        vault_content=$(ansible-vault view "$vault_file" \
+            --vault-password-file "$vault_pass_file" 2>/dev/null) \
+            || vault_content=""
+    fi
+
+    if [[ -z "$vault_content" && "$verbose" == "-v" ]]; then
+        _r42_print_warning "vault not readable - ssh-add will prompt interactively for passphrase-protected keys"
+    fi
+
     # parse active ssh config for IdentityFile entries
     # FIX P4: trim leading whitespace from IdentityFile paths
-    local key_count=0
     grep '^Include ' "$RANGE42_SSH_CONFIG_FILE" |
         grep 'config_range42' |
         grep -v '^#' |
@@ -263,8 +332,28 @@ _r42_ssh_reload() {
                     if [[ "$verbose" == "-v" ]]; then
                         _r42_print_warning "loading: $identity_file"
                     fi
-                    ssh-add "$identity_file" </dev/tty 2>/dev/null
-                    key_count=$((key_count + 1))
+
+                    # try passphrase lookup from vault first
+                    local field="" passphrase=""
+                    if [[ -n "$vault_content" ]]; then
+                        field=$(_r42_passphrase_field_for_key "$identity_file")
+                        if [[ -n "$field" ]]; then
+                            passphrase=$(echo "$vault_content" | _r42_yaml_get "$field")
+                        fi
+                    fi
+
+                    if [[ -n "$passphrase" ]]; then
+                        # non-interactive via SSH_ASKPASS ; fall back to /dev/tty
+                        # if the vault passphrase does not match the key (desync).
+                        if ! _r42_ssh_add_with_passphrase "$identity_file" "$passphrase"; then
+                            ssh-add "$identity_file" </dev/tty 2>/dev/null
+                        fi
+                    else
+                        # vault unreadable, field absent, or empty passphrase :
+                        # plain ssh-add. Loads unprotected keys silently, prompts
+                        # for protected ones via /dev/tty (legacy behavior).
+                        ssh-add "$identity_file" </dev/tty 2>/dev/null
+                    fi
                 done
         done
 

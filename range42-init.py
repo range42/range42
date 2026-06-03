@@ -1893,8 +1893,7 @@ def post_wizard():
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
-        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario} \\")
-        _print_cmd(f"  -e context_ssh_keys_use_passphrase=NO")
+        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
         return
 
@@ -1949,7 +1948,6 @@ def post_wizard():
          "-i", f"inventories/{S.codename}/hosts.yml",
          "-e", f"@{scenario_vars_file}",
          "-e", f"INFRASTRUCTURE_SCENARIO={S.scenario}",
-         "-e", "context_ssh_keys_use_passphrase=NO",
          *extra],
         cwd=str(SCRIPT_DIR), env=env
     ).returncode
@@ -2028,8 +2026,7 @@ def post_wizard():
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
-        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario} \\")
-        _print_cmd(f"  -e context_ssh_keys_use_passphrase=NO")
+        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
 
 
