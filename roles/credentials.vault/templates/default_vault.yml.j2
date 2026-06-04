@@ -32,19 +32,29 @@ proxmox_default_network_card_interface: "{{ infrastructure_proxmox_default_netwo
 
 
 ###############################################################################
-# 2 - SSH KEY PATHS
+# 2 - SSH KEY PATHS (paths on the host that rendered this vault - the laptop)
 ###############################################################################
 
+ssh_key_px_root: "{{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
+ssh_key_px_jump: "{{ credentials_output_dir }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.jump_user"
 ssh_key_deployer_admin: "{{ credentials_output_dir }}/ssh_keys/backend_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-deployer-key_alice"
 ssh_key_student_user: "{{ credentials_output_dir }}/ssh_keys/student_keys/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob"
+{% for i in range(1, (student_additional_keys_count | default(0) | int) + 1) %}
+ssh_key_student_user_extra_{{ i }}: "{{ credentials_output_dir }}/ssh_keys/student_keys/additional.students/r42.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-student-key_bob_{{ i }}"
+{% endfor %}
 
 
 ###############################################################################
 # 3 - SSH PUBLIC KEY CONTENT
 ###############################################################################
 
+ssh_key_px_root_pub_key: "{{ generated_px_root_pubkey | default('') }}"
+ssh_key_px_jump_pub_key: "{{ generated_px_jump_pubkey | default('') }}"
 ssh_key_deployer_admin_pub_key: "{{ generated_admin_ssh_pubkey }}"
 ssh_key_student_user_pub_key: "{{ generated_trainee_ssh_pubkey }}"
+{% for i in range(1, (student_additional_keys_count | default(0) | int) + 1) %}
+ssh_key_student_user_extra_{{ i }}_pub_key: "{{ (generated_student_extra_pubkeys | default([]))[i-1] | default('') }}"
+{% endfor %}
 
 
 ###############################################################################
@@ -71,3 +81,14 @@ deployer_cli_user_ssh_known_hosts: "/home/{{ DEPLOYER_CLI_USER }}/.ssh/known_hos
 infrastructure_tailscale_authkey: "{{ infrastructure_tailscale_authkey }}"
 infrastructure_tailscale_apikey: "{{ infrastructure_tailscale_apikey }}"
 infrastructure_wazuh_admin_password: "{{ generated_wazuh_password }}"
+
+
+###############################################################################
+# 6 - SSH KEY PASSPHRASES (auto-unlock by range42-context use via SSH_ASKPASS)
+###############################################################################
+
+ssh_passphrase_px_root:                "{{ generated_px_root_passphrase | default('') }}"
+ssh_passphrase_px_jump:                "{{ generated_px_jump_passphrase | default('') }}"
+ssh_passphrase_deployer_admin:         "{{ generated_deployer_passphrase | default('') }}"
+ssh_passphrase_student_user:           "{{ generated_student_passphrase | default('') }}"
+ssh_passphrase_student_user_extra_all: "{{ generated_student_extra_passphrase | default('') }}"

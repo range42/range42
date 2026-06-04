@@ -47,6 +47,7 @@
     comment: "proxmox root {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
     passphrase: "{{ generated_px_root_passphrase | default(omit, true) }}"
     mode: "0600"
+    regenerate: always
   when: context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
   register: ssh_key_px_root
 
@@ -57,6 +58,7 @@
     comment: "proxmox jump {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
     passphrase: "{{ generated_px_jump_passphrase | default(omit, true) }}"
     mode: "0600"
+    regenerate: always
   when: context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
   register: ssh_key_px_jump
 
@@ -67,6 +69,7 @@
     comment: "r42 deployer (admin) - alice {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
     passphrase: "{{ generated_deployer_passphrase | default(omit, true) }}"
     mode: "0600"
+    regenerate: always
   when: context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
   register: ssh_key_alice
 
@@ -77,6 +80,7 @@
     comment: "r42 student (user) - bob {{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}"
     passphrase: "{{ generated_student_passphrase | default(omit, true) }}"
     mode: "0600"
+    regenerate: always
   when: context_auto_generate_ssh_keys | default('YES') | upper == 'YES'
   register: ssh_key_bob
 

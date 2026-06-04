@@ -201,7 +201,13 @@ _r42_flush_known_hosts() {
         return 0
     fi
 
-    local manifest="$(readlink -f "$scenario_link")/manifest/scenario_vms.json"
+    local scenario_target
+    if [[ -n "$ZSH_VERSION" ]]; then
+        scenario_target="${scenario_link:A}"
+    else
+        scenario_target=$(readlink -f "$scenario_link") || return 0
+    fi
+    local manifest="${scenario_target}/manifest/scenario_vms.json"
     if [[ ! -f "$manifest" ]]; then
         # fallback : workspace/scenario without manifest yet — silently skip
         return 0
@@ -215,6 +221,59 @@ _r42_flush_known_hosts() {
     done < <(jq -r '.vms[].ip' "$manifest")
 
     _r42_print_step "flushed known_hosts for $target ($flushed VM IPs)"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# helpers for vault-backed SSH key auto-unlock (used by _r42_ssh_reload)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# _r42_yaml_get — extract a top-level scalar field from YAML on stdin via yq.
+# Returns empty string if the field is absent or null.
+# usage : echo "$yaml" | _r42_yaml_get <field_name>
+_r42_yaml_get() {
+    local field="$1"
+    yq -r ".${field} // \"\""
+}
+
+# _r42_passphrase_field_for_key — map an SSH key file path to the YAML field
+# name in the vault that holds its passphrase. Echoes the field name on match,
+# empty otherwise.
+# usage : _r42_passphrase_field_for_key <key_file_path>
+_r42_passphrase_field_for_key() {
+    local keyfile="$1"
+    case "$keyfile" in
+        *ssh_cli.root)       echo "ssh_passphrase_px_root" ;;
+        *ssh_cli.jump_user)  echo "ssh_passphrase_px_jump" ;;
+        *deployer-key_alice) echo "ssh_passphrase_deployer_admin" ;;
+        *student-key_bob_*)  echo "ssh_passphrase_student_user_extra_all" ;;
+        *student-key_bob)    echo "ssh_passphrase_student_user" ;;
+        *)                   echo "" ;;
+    esac
+}
+
+# _r42_ssh_add_with_passphrase — non-interactive ssh-add via SSH_ASKPASS.
+# Creates a one-shot askpass tempfile script that prints $SSH_ASKPASS_PASSWORD,
+# invokes ssh-add with SSH_ASKPASS_REQUIRE=force and stdin from /dev/null so
+# ssh-add cannot fall back to /dev/tty, then cleans up the tempfile.
+# Returns ssh-add's exit code (0 on success, non-zero on bad passphrase / etc).
+# usage : _r42_ssh_add_with_passphrase <key_file_path> <passphrase>
+_r42_ssh_add_with_passphrase() {
+    local keyfile="$1"
+    local passphrase="$2"
+    local askpass_script rc
+
+    askpass_script=$(mktemp -t r42-askpass-XXXXXX.sh) || return 1
+    chmod 700 "$askpass_script"
+    printf '#!/bin/sh\nprintf "%%s" "$SSH_ASKPASS_PASSWORD"\n' > "$askpass_script"
+
+    SSH_ASKPASS="$askpass_script" \
+    SSH_ASKPASS_PASSWORD="$passphrase" \
+    SSH_ASKPASS_REQUIRE=force \
+        ssh-add "$keyfile" </dev/null >/dev/null 2>&1
+    rc=$?
+
+    rm -f "$askpass_script"
+    return $rc
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -242,9 +301,25 @@ _r42_ssh_reload() {
         return 1
     }
 
+    # decrypt the vault once for passphrase lookup. On any failure (missing
+    # vault_pass.txt, missing vault file, decrypt error), $vault_content stays
+    # empty and the per-key loop falls back to interactive ssh-add. No abort.
+    local vault_file vault_pass_file vault_content=""
+    vault_file="${RANGE42_CONFIG__ROOT_DIR%/}/secrets/default_vault.yml"
+    vault_pass_file="${RANGE42_VAULT_PASSWORD_FILE:-}"
+
+    if [[ -n "$vault_pass_file" && -f "$vault_pass_file" && -f "$vault_file" ]]; then
+        vault_content=$(ansible-vault view "$vault_file" \
+            --vault-password-file "$vault_pass_file" 2>/dev/null) \
+            || vault_content=""
+    fi
+
+    if [[ -z "$vault_content" && "$verbose" == "-v" ]]; then
+        _r42_print_warning "vault not readable - ssh-add will prompt interactively for passphrase-protected keys"
+    fi
+
     # parse active ssh config for IdentityFile entries
     # FIX P4: trim leading whitespace from IdentityFile paths
-    local key_count=0
     grep '^Include ' "$RANGE42_SSH_CONFIG_FILE" |
         grep 'config_range42' |
         grep -v '^#' |
@@ -257,8 +332,28 @@ _r42_ssh_reload() {
                     if [[ "$verbose" == "-v" ]]; then
                         _r42_print_warning "loading: $identity_file"
                     fi
-                    ssh-add "$identity_file" </dev/tty 2>/dev/null
-                    key_count=$((key_count + 1))
+
+                    # try passphrase lookup from vault first
+                    local field="" passphrase=""
+                    if [[ -n "$vault_content" ]]; then
+                        field=$(_r42_passphrase_field_for_key "$identity_file")
+                        if [[ -n "$field" ]]; then
+                            passphrase=$(echo "$vault_content" | _r42_yaml_get "$field")
+                        fi
+                    fi
+
+                    if [[ -n "$passphrase" ]]; then
+                        # non-interactive via SSH_ASKPASS ; fall back to /dev/tty
+                        # if the vault passphrase does not match the key (desync).
+                        if ! _r42_ssh_add_with_passphrase "$identity_file" "$passphrase"; then
+                            ssh-add "$identity_file" </dev/tty 2>/dev/null
+                        fi
+                    else
+                        # vault unreadable, field absent, or empty passphrase :
+                        # plain ssh-add. Loads unprotected keys silently, prompts
+                        # for protected ones via /dev/tty (legacy behavior).
+                        ssh-add "$identity_file" </dev/tty 2>/dev/null
+                    fi
                 done
         done
 
@@ -325,6 +420,21 @@ _r42_use() {
         _r42_print_warning "sourced_range42.sh not found in $config_dir"
     fi
 
+    #### mirror the .zshrc workspace block : add devkit to PATH + gdk alias.
+    #### These two lines live in the per-workspace block of .zshrc (see role
+    #### workspace.credentials/tasks/03_deploy_sourced_env.yml) so they fire on a
+    #### fresh shell. Without mirroring them here, `range42-context use` from an
+    #### already-loaded shell would leave devkit out of PATH until the user spawns
+    #### a new zsh — confusing UX.
+    if [[ -n "$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR" ]]; then
+        case ":$PATH:" in
+            *":$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR:"*) ;;
+            *) export PATH="$PATH:$RANGE42_ANSIBLE_ROLES__DEVKITS_DIR" ;;
+        esac
+        alias gdk="cd $RANGE42_ANSIBLE_ROLES__DEVKITS_DIR"
+        _r42_print_step "devkit added to PATH (idempotent) + gdk alias defined"
+    fi
+
     #### update secrets symlinks in git repos to point to the active workspace
 
     local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
@@ -334,10 +444,16 @@ _r42_use() {
     if [[ -d "${git_dir%/}/range42-ansible_roles-debug-devkit" ]]; then
         ln -sfn "$config_dir/secrets" "$devkit_secrets"
         _r42_print_step "updated secrets symlink in devkit → $target"
+    else
+        _r42_print_warning "range42-ansible_roles-debug-devkit not found at ${git_dir%/}/range42-ansible_roles-debug-devkit"
+        _r42_print_warning "  -> devkit scripts (proxmox_vm.*.sh) will not work in this shell"
     fi
     if [[ -d "${git_dir%/}/range42-playbooks/scenarios/${scenario}" ]]; then
         ln -sfn "$config_dir/secrets" "$playbooks_secrets"
         _r42_print_step "updated secrets symlink in playbooks → $target"
+    else
+        _r42_print_warning "scenario '${scenario}' not found in range42-playbooks (${git_dir%/}/range42-playbooks/scenarios/${scenario})"
+        _r42_print_warning "  -> ansible-playbook calls will fail ; verify the scenario name or pull range42-playbooks"
     fi
 
     #### flush known_hosts for the target workspace (avoid stale host keys on multi-infra)
@@ -383,10 +499,10 @@ _r42_use() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context inventory — show ansible inventory tree
+# range42-context show-inventory — show ansible inventory tree
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_inventory() {
+_r42_show_inventory() {
 
     local inventory_dir="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR:-}"
 
@@ -528,31 +644,86 @@ _r42_status() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context passwords — show generated credentials
+# COMMENT BLOCK BEFORE CHORE-DELETE :
+# `range42-context passwords` removed - replaced by `show-vault` (secrets via
+# ansible-vault view) + `show-config` (non-secret orientation via summary.txt).
+# Function body kept commented for short-term rollback ; delete entirely in a
+# follow-up chore.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_passwords() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+# _r42_passwords() {
+#     local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+#
+#     if [[ -z "$config_dir" ]]; then
+#         _r42_print_fail "no active workspace"
+#         return 1
+#     fi
+#
+#     # try summary.txt first, then passwords.env
+#     local summary="$config_dir/summary.txt"
+#     local passwords="$config_dir/passwords.env"
+#
+#     if [[ -f "$summary" ]]; then
+#         _r42_print_section "credentials summary"
+#         cat "$summary"
+#     elif [[ -f "$passwords" ]]; then
+#         _r42_print_section "passwords"
+#         cat "$passwords"
+#     else
+#         _r42_print_fail "no summary.txt or passwords.env found in $config_dir"
+#         _r42_print_warning "credentials may not have been generated yet"
+#     fi
+# }
 
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context show-vault — show ansible vault contents (decrypted on the fly)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_show_vault() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
     if [[ -z "$config_dir" ]]; then
         _r42_print_fail "no active workspace"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
         return 1
     fi
 
-    # try summary.txt first, then passwords.env
-    local summary="$config_dir/summary.txt"
-    local passwords="$config_dir/passwords.env"
+    local vault_file="${config_dir%/}/secrets/default_vault.yml"
+    local vault_pass_file="${RANGE42_VAULT_PASSWORD_FILE:-${config_dir%/}/secrets/vault_pass.txt}"
 
-    if [[ -f "$summary" ]]; then
-        _r42_print_section "credentials summary"
-        cat "$summary"
-    elif [[ -f "$passwords" ]]; then
-        _r42_print_section "passwords"
-        cat "$passwords"
-    else
-        _r42_print_fail "no summary.txt or passwords.env found in $config_dir"
-        _r42_print_warning "credentials may not have been generated yet"
+    if [[ ! -f "$vault_file" ]]; then
+        _r42_print_fail "vault file not found: $vault_file"
+        return 1
     fi
+    if [[ ! -f "$vault_pass_file" ]]; then
+        _r42_print_fail "vault password file not found: $vault_pass_file"
+        return 1
+    fi
+
+    _r42_print_section "ansible vault (credentials + SSH passphrases) — ${RANGE42_ACTIVE_WORKSPACE:-unknown}"
+    ansible-vault view "$vault_file" --vault-password-file "$vault_pass_file"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context show-config — show workspace orientation (paths + SSH hosts)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_show_config() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    local summary="${config_dir%/}/summary.txt"
+    if [[ ! -f "$summary" ]]; then
+        _r42_print_fail "summary.txt not found in $config_dir"
+        _r42_print_warning "workspace may not have been fully deployed yet"
+        return 1
+    fi
+
+    _r42_print_section "workspace config summary — ${RANGE42_ACTIVE_WORKSPACE:-unknown}"
+    cat "$summary"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -612,21 +783,10 @@ _r42_ssh() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_deploy() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local setup_script="$(readlink -f "$scenario_dir")/${scenario_name}.setup.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local setup_script="${scenario_target}/${scenario_name}.setup.sh"
 
     if [[ ! -f "$setup_script" ]]; then
         _r42_print_fail "setup script not found: $setup_script"
@@ -638,7 +798,7 @@ _r42_deploy() {
     _r42_print_step "running: $setup_script"
     echo ""
 
-    cd "$(dirname "$setup_script")" && bash "$setup_script"
+    cd "$scenario_target" && bash "$setup_script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -646,21 +806,10 @@ _r42_deploy() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_deploy_vms() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local script="$(readlink -f "$scenario_dir")/${scenario_name}.setup_vms_only.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local script="${scenario_target}/${scenario_name}.setup_vms_only.sh"
 
     if [[ ! -f "$script" ]]; then
         _r42_print_fail "script not found: $script"
@@ -672,7 +821,7 @@ _r42_deploy_vms() {
     _r42_print_step "running: $script"
     echo ""
 
-    cd "$(dirname "$script")" && bash "$script"
+    cd "$scenario_target" && bash "$script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -680,21 +829,10 @@ _r42_deploy_vms() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_delete() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local delete_script="$(readlink -f "$scenario_dir")/${scenario_name}.delete_all.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local delete_script="${scenario_target}/${scenario_name}.delete_all.sh"
 
     if [[ ! -f "$delete_script" ]]; then
         _r42_print_fail "script not found: $delete_script"
@@ -706,7 +844,7 @@ _r42_delete() {
     _r42_print_step "running: $delete_script"
     echo ""
 
-    cd "$(dirname "$delete_script")" && bash "$delete_script"
+    cd "$scenario_target" && bash "$delete_script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -714,21 +852,10 @@ _r42_delete() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_reset() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local reset_script="$(readlink -f "$scenario_dir")/${scenario_name}.reset.setup.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local reset_script="${scenario_target}/${scenario_name}.reset.setup.sh"
 
     if [[ ! -f "$reset_script" ]]; then
         _r42_print_fail "script not found: $reset_script"
@@ -740,7 +867,7 @@ _r42_reset() {
     _r42_print_step "running: $reset_script"
     echo ""
 
-    cd "$(dirname "$reset_script")" && bash "$reset_script"
+    cd "$scenario_target" && bash "$reset_script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -748,21 +875,10 @@ _r42_reset() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 _r42_delete_vms() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace"
-        return 1
-    fi
-
-    local scenario_dir="$config_dir/scenario"
-    if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found"
-        return 1
-    fi
-
-    local scenario_name
-    scenario_name=$(basename "$(readlink -f "$scenario_dir")")
-    local script="$(readlink -f "$scenario_dir")/${scenario_name}.delete_vms_only.sh"
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local script="${scenario_target}/${scenario_name}.delete_vms_only.sh"
 
     if [[ ! -f "$script" ]]; then
         _r42_print_fail "script not found: $script"
@@ -773,45 +889,65 @@ _r42_delete_vms() {
     _r42_print_step "running: $script"
     echo ""
 
-    cd "$(dirname "$script")" && bash "$script"
+    cd "$scenario_target" && bash "$script"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# helpers — scenario manifest discovery
+# helpers — scenario directory / manifest / name discovery
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-# Resolve the manifest path for the active scenario.
-# Echoes the path on stdout, returns 0 on success, 1 on failure.
-_r42_active_scenario_manifest() {
+# Resolve the absolute directory of the active scenario (target of the
+# $RANGE42_ACTIVE_CONFIG_DIR/scenario symlink).
+# Echoes the path on stdout ; errors go to stderr ; returns 0/1.
+#
+# Uses zsh native ${var:A} when available — no external readlink dep, which has
+# proved unreliable inside some freshly-sourced function call chains on the deployer.
+# Falls back to readlink -f for bash callers.
+_r42_active_scenario_dir() {
     local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
     if [[ -z "$config_dir" ]]; then
-        _r42_print_fail "no active workspace" >&2
+        _r42_print_fail "no active workspace (RANGE42_ACTIVE_CONFIG_DIR is empty)" >&2
         return 1
     fi
-
     local scenario_dir="$config_dir/scenario"
     if [[ ! -L "$scenario_dir" ]]; then
-        _r42_print_fail "scenario symlink not found" >&2
+        _r42_print_fail "scenario symlink not found: $scenario_dir" >&2
         return 1
     fi
+    local target
+    if [[ -n "$ZSH_VERSION" ]]; then
+        target="${scenario_dir:A}"
+    else
+        target=$(readlink -f "$scenario_dir") || {
+            _r42_print_fail "readlink -f failed on $scenario_dir" >&2
+            return 1
+        }
+    fi
+    if [[ -z "$target" ]]; then
+        _r42_print_fail "resolved scenario target is empty for $scenario_dir" >&2
+        return 1
+    fi
+    echo "$target"
+}
 
-    local manifest="$(readlink -f "$scenario_dir")/manifest/scenario_vms.json"
+# Echo the manifest path for the active scenario.
+_r42_active_scenario_manifest() {
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local manifest="${scenario_target}/manifest/scenario_vms.json"
     if [[ ! -f "$manifest" ]]; then
         _r42_print_fail "manifest not found: $manifest" >&2
         _r42_print_warning "this scenario has no manifest yet (only blank_scenario_2_subnets has one for now)" >&2
         return 1
     fi
-
     echo "$manifest"
 }
 
-# Echo the active scenario name (basename of the symlink target).
+# Echo the active scenario name (final path component of the symlink target).
 _r42_active_scenario_name() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
-    [[ -z "$config_dir" ]] && return 1
-    local scenario_dir="$config_dir/scenario"
-    [[ ! -L "$scenario_dir" ]] && return 1
-    basename "$(readlink -f "$scenario_dir")"
+    local target
+    target=$(_r42_active_scenario_dir) || return 1
+    echo "${target##*/}"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -873,6 +1009,28 @@ _r42_snapshot() {
     echo ""
     _r42_print_check "snapshot created: $snap_name"
     echo "  revert with: range42-context revert $snap_name"
+    echo "  list snapshots with: range42-context snapshot-list"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context snapshot-list — list snapshots of all VMs of the active scenario
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_snapshot_list() {
+    local manifest scenario_name
+    manifest=$(_r42_active_scenario_manifest) || return 1
+    scenario_name=$(_r42_active_scenario_name) || return 1
+
+    _r42_print_section "list snapshots of scenario VMs"
+    _r42_print_step "scenario : $scenario_name"
+    echo ""
+
+    jq -c '.vms[] | {vm_id: .vm_id}' "$manifest" \
+        | proxmox_snapshot_vm.vm_id.list_snapshot.to.jsons.sh
+
+    echo ""
+    _r42_print_check "snapshot listing done"
+    echo "  revert with: range42-context revert <snapshot_name>"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -999,6 +1157,604 @@ _r42_delete_everything() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# catalog-try helpers (used by `range42-context catalog-try <path>`)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# Resolve a logical catalog path (e.g. `docker/_ctf/hello`) to an absolute path
+# under range42-catalog/.
+#
+# The logical path skips the numbered layer prefix : the operator types
+# `docker/_ctf/hello` instead of `03_container_layer/docker/_ctf/hello`. This
+# function searches all `NN_<x>_layer/` directories for the first key and
+# returns the matching absolute path.
+#
+# Usage: abs_path=$(_r42_catalog_resolve_path "docker/_ctf/hello")
+#
+# Returns 0 + abs path on stdout on success, 1 + error on stderr otherwise.
+# Validation : final dir must exist and contain at least one of compose.yml,
+# docker-compose.yml, or Makefile (otherwise not a deployable element).
+_r42_catalog_resolve_path() {
+    local input_path="$1"
+    if [[ -z "$input_path" ]]; then
+        _r42_print_fail "usage: _r42_catalog_resolve_path <path>" >&2
+        return 1
+    fi
+
+    # Anchor on RANGE42_INVENTORY (set by the scenario env) so the resolver is not
+    # restricted to a single catalog subtree. Falls back to $HOME/range42/range42-catalog.
+    local catalog_root="${RANGE42_INVENTORY:-$HOME/range42/range42-catalog}"
+    if [[ ! -d "$catalog_root" ]]; then
+        _r42_print_fail "range42-catalog not found at $catalog_root (set RANGE42_INVENTORY)" >&2
+        return 1
+    fi
+
+    # Split input into first component (layer key) + rest
+    local first="${input_path%%/*}"
+    local rest="${input_path#*/}"
+    if [[ "$first" == "$input_path" ]]; then
+        rest=""
+    fi
+
+    # Find which numbered layer contains the first component as a subdir
+    local matches=()
+    local layer_dir
+    for layer_dir in "$catalog_root"/*/; do
+        layer_dir="${layer_dir%/}"
+        local layer_name="${layer_dir##*/}"
+        # Only consider canonical numbered layer dirs (NN_<x>_layer)
+        [[ "$layer_name" =~ ^[0-9]+_.*_layer$ ]] || continue
+        if [[ -d "$layer_dir/$first" ]]; then
+            matches+=("$layer_dir/$first")
+        fi
+    done
+
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        _r42_print_fail "no catalog layer contains '$first'" >&2
+        echo "  Available layer keys :" >&2
+        for layer_dir in "$catalog_root"/*/; do
+            layer_dir="${layer_dir%/}"
+            local lname="${layer_dir##*/}"
+            [[ "$lname" =~ ^[0-9]+_.*_layer$ ]] || continue
+            local sub sname
+            for sub in "$layer_dir"/*/; do
+                sub="${sub%/}"
+                sname="${sub##*/}"
+                [[ -d "$sub" ]] && echo "    ${sname}  (in ${lname})" >&2
+            done
+        done
+        return 1
+    fi
+
+    if [[ ${#matches[@]} -gt 1 ]]; then
+        _r42_print_fail "ambiguous : '$first' is in multiple layers" >&2
+        local m
+        for m in "${matches[@]}"; do echo "    $m" >&2; done
+        return 1
+    fi
+
+    # Single layer match - construct the full target path
+    # Note: zsh arrays are 1-indexed, bash 0-indexed. Iterate to grab the first
+    # element in a shell-agnostic way (we know matches has exactly 1 element here).
+    local full_path=""
+    local _m
+    for _m in "${matches[@]}"; do full_path="$_m"; break; done
+    if [[ -n "$rest" ]]; then
+        full_path="${full_path}/${rest}"
+    fi
+
+    # Verify the full path exists
+    if [[ ! -e "$full_path" ]]; then
+        _r42_print_fail "path not found : $full_path" >&2
+        local parent="${full_path%/*}"
+        if [[ -d "$parent" ]]; then
+            echo "  Candidates under $parent :" >&2
+            local c cname
+            for c in "$parent"/*/; do
+                c="${c%/}"
+                cname="${c##*/}"
+                [[ -d "$c" ]] && echo "    ${cname}" >&2
+            done
+        fi
+        return 1
+    fi
+
+    if [[ ! -d "$full_path" ]]; then
+        _r42_print_fail "not a directory : $full_path" >&2
+        return 1
+    fi
+
+    # Verify it's a deployable element (has at least one of compose.yml, docker-compose.yml, Makefile)
+    if [[ ! -f "$full_path/compose.yml" ]] && \
+       [[ ! -f "$full_path/docker-compose.yml" ]] && \
+       [[ ! -f "$full_path/Makefile" ]]; then
+        _r42_print_fail "not a deployable element : $full_path" >&2
+        echo "  Missing : at least one of compose.yml, docker-compose.yml, or Makefile" >&2
+        echo "  Subdirectories under this path (try a deeper match ?) :" >&2
+        local c cname
+        for c in "$full_path"/*/; do
+            c="${c%/}"
+            cname="${c##*/}"
+            [[ -d "$c" ]] && echo "    ${cname}" >&2
+        done
+        return 1
+    fi
+
+    # Resolution OK - emit absolute path on stdout
+    echo "$full_path"
+    return 0
+}
+
+# Read a single scalar value from a catalog_try.yml file (simple grep, no full YAML parsing).
+# Usage : _r42_catalog_try_yml_get <yml_file> <key> [<default>]
+_r42_catalog_try_yml_get() {
+    local yml="$1" key="$2" default="${3:-}"
+    [[ ! -f "$yml" ]] && { echo "$default" ; return ; }
+    local val
+    val=$(grep -E "^${key}:" "$yml" 2>/dev/null | sed -E "s/^${key}:[[:space:]]*//" | sed -E 's/^"(.*)"$/\1/' | head -1)
+    if [[ -z "$val" ]] ; then
+        echo "$default"
+    else
+        echo "$val"
+    fi
+}
+
+# List all catalog elements that can be run via `range42-context catalog-try`.
+# Scans range42-catalog/NN_*_layer/.../ for directories that look deployable
+# (compose.yml / docker-compose.yml / Makefile) and marks those carrying a
+# `catalog_try.yml` contract as L2 (strict smoke) vs L1 (default fallback).
+#
+# Output is meant for the operator to discover what's runnable. Logical paths
+# (with the NN_*_layer/ prefix stripped) are ready to copy-paste into a
+# `range42-context catalog-try <path>` invocation.
+#
+# Optional args : two logical-path prefixes to scope the listing.
+#   $1 = include_prefix : if set, keep only elements whose rel_path starts with it
+#   $2 = exclude_prefix : if set, drop elements whose rel_path starts with it
+# Both empty = list everything. Used by the dispatch to split admin vs non-admin
+# without changing the underlying scan logic.
+_r42_catalog_try_list() {
+    hash -r 2>/dev/null || true
+
+    local include_prefix="${1:-}"
+    local exclude_prefix="${2:-}"
+
+    local catalog_root="${RANGE42_INVENTORY:-$HOME/range42/range42-catalog}"
+    if [[ ! -d "$catalog_root" ]]; then
+        _r42_print_fail "range42-catalog not found at $catalog_root"
+        _r42_print_step "set RANGE42_INVENTORY or activate a workspace : range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    local scope_label=""
+    if [[ -n "$include_prefix" ]]; then
+        scope_label="only ${include_prefix}"
+    elif [[ -n "$exclude_prefix" ]]; then
+        scope_label="excluding ${exclude_prefix}"
+    fi
+    if [[ -n "$scope_label" ]]; then
+        _r42_print_section "catalog elements compatible with catalog-try  (${scope_label})"
+    else
+        _r42_print_section "catalog elements compatible with catalog-try"
+    fi
+    _r42_print_step "catalog root : $catalog_root"
+    echo ""
+
+    # color codes : L2 = green (strict contract, "good"), L1 = yellow (fallback,
+    # "ok but best-effort"). Plain reset at the end of each marker.
+    local L2_COLOR='\033[1;32m'
+    local L1_COLOR='\033[1;33m'
+    local COLOR_RESET='\033[0m'
+
+    local layer_re='^[0-9]+_.*_layer$'
+    local count_l1=0 count_l2=0
+    local layer layer_name elem rel_path
+
+    for layer in "$catalog_root"/*/; do
+        layer="${layer%/}"
+        layer_name="${layer##*/}"
+        [[ "$layer_name" =~ $layer_re ]] || continue
+
+        # Find all dirs under this layer that look deployable. Use `find -type d`
+        # then check for compose/Makefile presence per dir (simple, no trickery).
+        # `-not -path '*/roles/*'` filters out ansible-role internals (e.g.
+        # 02_ansible_layer/admin/roles/.../files) that may contain a compose.yml
+        # as a template but are not catalog-try-deployable elements.
+        while IFS= read -r elem; do
+            if [[ -f "$elem/compose.yml" ]] || [[ -f "$elem/docker-compose.yml" ]] || [[ -f "$elem/Makefile" ]]; then
+                # logical path : strip the layer dir prefix
+                rel_path="${elem#${layer}/}"
+                # Scope filters : include-prefix (positive) + exclude-prefix (negative).
+                [[ -n "$include_prefix" && "$rel_path" != "$include_prefix"* ]] && continue
+                [[ -n "$exclude_prefix" && "$rel_path" == "$exclude_prefix"* ]] && continue
+                if [[ -f "$elem/catalog_try.yml" ]]; then
+                    printf "    ${L2_COLOR}[L2]${COLOR_RESET}  %s\n" "$rel_path"
+                    count_l2=$((count_l2 + 1))
+                else
+                    printf "    ${L1_COLOR}[L1]${COLOR_RESET}  %s\n" "$rel_path"
+                    count_l1=$((count_l1 + 1))
+                fi
+            fi
+        done < <(find "$layer" -mindepth 1 -type d -not -path '*/roles/*' 2>/dev/null | sort)
+    done
+
+    echo ""
+    if [[ $((count_l1 + count_l2)) -eq 0 ]]; then
+        if [[ -n "$scope_label" ]]; then
+            _r42_print_warning "no deployable elements matched the scope (${scope_label}) under ${catalog_root}"
+        else
+            _r42_print_warning "no deployable elements found under ${catalog_root}"
+            _r42_print_step "expected at least one directory containing compose.yml, docker-compose.yml, or Makefile"
+            _r42_print_step "verify the catalog is properly cloned : ls -la ${catalog_root}"
+        fi
+        return 1
+    fi
+
+    # Counts with inline color markers matching the L2/L1 colors above.
+    printf "    \033[34m➜\033[0m %d deployable elements  (${L2_COLOR}L2${COLOR_RESET}: %d, ${L1_COLOR}L1${COLOR_RESET}: %d)\n" \
+        "$((count_l1 + count_l2))" "$count_l2" "$count_l1"
+
+    _r42_print_section "legend"
+    printf "    ${L2_COLOR}[L2]${COLOR_RESET}  catalog_try.yml present  - strict smoke check (signature grep or HTTP poll)\n"
+    printf "    ${L1_COLOR}[L1]${COLOR_RESET}  no contract              - best-effort fallback (docker ps -a, any container)\n"
+    echo ""
+    _r42_print_step "run any : range42-context catalog-try <logical_path>"
+}
+
+# Convenience : list only admin-scoped docker elements (docker/admin/*).
+_r42_catalog_try_list_admin() {
+    _r42_catalog_try_list "docker/admin/" ""
+}
+
+
+# Main orchestrator : `range42-context catalog-try <path>`.
+# Overwrites the catalog_try test VM, deploys a single catalog element on it,
+# and runs a smoke check based on the element's optional catalog_try.yml.
+#
+# Usage : _r42_catalog_try <path>
+#   <path> : logical catalog path (e.g. docker/_ctf/hello)
+#
+# Requires : active scenario = catalog_try (range42-context use <codename> catalog_try first).
+_r42_catalog_try() {
+    # IMPORTANT : do NOT name this local var "path" — zsh ties $PATH (string) to
+    # $path (array). Declaring `local path="$1"` silently overwrites PATH in this
+    # function's scope, breaking every external command (jq, ssh, basename, bash...).
+    # See : zsh manual, typeset -T (tied parameters).
+    local catalog_path="$1"
+    if [[ -z "$catalog_path" ]]; then
+        _r42_print_fail "usage: range42-context catalog-try <path>"
+        echo "  example : range42-context catalog-try docker/_ctf/hello" >&2
+        return 1
+    fi
+
+    # 1. Resolve logical path to absolute catalog element dir
+    local element_abs_path
+    element_abs_path=$(_r42_catalog_resolve_path "$catalog_path") || return 1
+    local element_name="${element_abs_path##*/}"
+
+    _r42_print_section "pre-flight"
+    _r42_print_step "resolved element : ${element_abs_path}"
+
+    # 2. Verify (and if needed, auto-switch to) a catalog_try workspace
+    #
+    # Auto-switch policy (strict same-codename) :
+    #   - active workspace IS catalog_try   -> continue
+    #   - active workspace IS NOT catalog_try but <codename>-catalog_try exists for
+    #     the SAME codename                 -> prompt, then auto `range42-context use`
+    #   - active workspace IS NOT catalog_try and <codename>-catalog_try is absent
+    #                                       -> fail loud + suggest bootstrap (no
+    #                                          auto-switch to OTHER codenames'
+    #                                          catalog_try workspaces : the inventory,
+    #                                          vault, and ssh config wouldn't match)
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    local active_scenario=""
+    _r42_print_step "active config dir : ${config_dir:-<empty>}"
+
+    # Stale env var recovery : if RANGE42_ACTIVE_CONFIG_DIR points to a dir
+    # that no longer exists (e.g. the operator moved or deleted ~/range42.config
+    # after the env was set, without re-sourcing the shell), treat as "no active
+    # workspace" and fall through to the auto-detection logic below. Saves the
+    # operator from having to manually `exec zsh` first.
+    if [[ -n "$config_dir" ]] && [[ ! -d "$config_dir" ]]; then
+        _r42_print_warning "RANGE42_ACTIVE_CONFIG_DIR points to a non-existent dir : ${config_dir}"
+        _r42_print_step "(stale env var ; treating as no active workspace)"
+        config_dir=""
+    fi
+
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace (RANGE42_ACTIVE_CONFIG_DIR is empty)"
+
+        # Enumerate any catalog_try workspaces present locally — the auto-switch
+        # decision below is keyed on how many we find.
+        # zsh's default `nomatch` errors out on unmatched globs ; we enable
+        # null_glob locally so an empty match expands to nothing instead.
+        # `setopt local_options null_glob` is zsh-specific ; bash has no `setopt`
+        # so the redirect + `|| true` makes the call safe (bash treats unmatched
+        # globs as literal by default, which the `-d` check below filters out).
+        setopt local_options null_glob 2>/dev/null || true
+        local _ct_workspaces=() _ws_dir
+        for _ws_dir in "$HOME/range42.config/"*-catalog_try ; do
+            [[ -d "$_ws_dir" ]] || continue
+            _ct_workspaces+=("${_ws_dir##*/}")
+        done
+
+        if [[ ${#_ct_workspaces[@]} -eq 1 ]]; then
+            # Exactly one catalog_try workspace exists : safe to offer auto-activate.
+            local target_workspace=""
+            local _ws
+            for _ws in "${_ct_workspaces[@]}"; do target_workspace="$_ws"; break; done
+            local active_codename="${target_workspace%-catalog_try}"
+            _r42_print_step "found exactly one catalog_try workspace : ${target_workspace}"
+            printf "  activate %s and continue ? [Y/n] " "$target_workspace"
+            local switch_reply
+            read -r switch_reply
+            if [[ "$switch_reply" != "" && "$switch_reply" != "y" && "$switch_reply" != "Y" ]]; then
+                echo "  Aborted."
+                return 1
+            fi
+            _r42_use "$active_codename" "catalog_try" || return 1
+            # Refresh local state. active_scenario is intentionally set to the
+            # constant : we know what we just activated, and the next check
+            # `[[ -z "$active_scenario" ]]` below skips the redundant lookup.
+            config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+            active_scenario="catalog_try"
+
+        elif [[ ${#_ct_workspaces[@]} -gt 1 ]]; then
+            # Multiple catalog_try workspaces : would have to pick a codename ;
+            # refuse to guess (different codenames carry different Proxmox,
+            # inventory, vault — wrong pick = subtle breakage).
+            local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+            _r42_print_step "multiple catalog_try workspaces exist (cannot auto-pick) :"
+            local _ws
+            for _ws in "${_ct_workspaces[@]}" ; do
+                printf "      %s\n" "$_ws" >&2
+            done
+            _r42_print_step "activate one : range42-context use <codename> catalog_try"
+            _r42_print_step "then re-run  : range42-context catalog-try ${_q_path}"
+            return 1
+
+        elif [[ -d "$HOME/range42.config" ]] && [[ -n "$(ls -A "$HOME/range42.config" 2>/dev/null)" ]]; then
+            # Some workspaces exist, but none for catalog_try : list + suggest
+            # either activating an existing one or bootstrapping a catalog_try one.
+            local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+            _r42_print_step "available workspaces in ~/range42.config/ (none are catalog_try) :"
+            ls "$HOME/range42.config/" | sed 's/^/      /' >&2
+            _r42_print_step "options :"
+            _r42_print_step "  1) activate an existing : range42-context use <codename> <scenario>"
+            _r42_print_step "  2) bootstrap a new catalog_try : python3 ${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42/range42-init.py --catalog-try ${_q_path}"
+            return 1
+
+        else
+            # No workspaces at all : auto-launch the wizard with the catalog path
+            # threaded through. The 2s wait gives the operator a chance to Ctrl+C
+            # if the auto-bootstrap is not desired.
+            _r42_print_step "no infrastructure configured yet (~/range42.config is empty)"
+            local wizard_path="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42/range42-init.py"
+            if [[ ! -f "$wizard_path" ]]; then
+                # Wizard not present : fall back to manual suggestion (with
+                # defensive single-quote escape on catalog_path).
+                local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+                _r42_print_fail "wizard not found at ${wizard_path}"
+                _r42_print_step "clone range42 first, then run manually :"
+                _r42_print_step "  cd ${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42 && python3 range42-init.py --catalog-try ${_q_path}"
+                return 1
+            fi
+            echo ""
+            echo ""
+            _r42_print_step "launching wizard for first configuration ..."
+            _r42_print_step "  (Ctrl+C now to abort)"
+            echo ""
+            echo ""
+            sleep 2
+            python3 "$wizard_path" --catalog-try "$catalog_path"
+            return $?
+        fi
+    fi
+
+    # Resolve active scenario unless we already set it (in the auto-activate path above).
+    if [[ -z "$active_scenario" ]]; then
+        active_scenario=$(_r42_active_scenario_name) || {
+            local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+            _r42_print_fail "could not resolve active scenario (see error above)"
+            echo "  Tried : ${config_dir}/scenario" >&2
+            _r42_print_step "workspace appears corrupted ; re-bootstrap with the same element :"
+            _r42_print_step "  cd ${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42 && python3 range42-init.py --catalog-try ${_q_path}"
+            return 1
+        }
+    fi
+    _r42_print_step "active scenario  : ${active_scenario}"
+
+    if [[ "$active_scenario" != "catalog_try" ]]; then
+        # Derive codename from the active workspace name. Workspace dir is
+        # named "<codename>-<scenario>" (codenames may contain hyphens, so we
+        # strip the trailing "-${active_scenario}" rather than splitting).
+        local active_workspace="${config_dir##*/}"
+        local active_codename="${active_workspace%-${active_scenario}}"
+        local target_workspace="${active_codename}-catalog_try"
+        local target_dir="$HOME/range42.config/${target_workspace}"
+
+        if [[ -d "$target_dir" ]]; then
+            _r42_print_warning "active scenario is '${active_scenario}', not 'catalog_try'"
+            _r42_print_step "found existing workspace : ${target_workspace}"
+            # %s format to defuse any % in $target_workspace (defensive ;
+            # codenames are normally sanitized by the wizard).
+            printf "  switch to %s and continue ? [Y/n] " "$target_workspace"
+            local switch_reply
+            read -r switch_reply
+            if [[ "$switch_reply" != "" && "$switch_reply" != "y" && "$switch_reply" != "Y" ]]; then
+                echo "  Aborted."
+                return 1
+            fi
+            _r42_use "$active_codename" "catalog_try" || return 1
+            # refresh local vars after the switch (config_dir + scenario changed)
+            config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+            active_scenario="catalog_try"
+        else
+            # Defensive quote (same idiom as the "no workspace" branch above) :
+            # protect catalog_path against shell-meta leaking into copy-paste suggestions.
+            local _q_path="'${catalog_path//\'/\'\\\'\'}'"
+            _r42_print_fail "active scenario is '${active_scenario}', and no catalog_try workspace exists for codename '${active_codename}'"
+            _r42_print_step "options :"
+            _r42_print_step "  1) bootstrap a catalog_try workspace via the wizard :"
+            _r42_print_step "     cd ${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}/range42 && python3 range42-init.py --catalog-try ${_q_path}"
+            _r42_print_step "  2) if you already created a catalog_try workspace, activate + re-run :"
+            _r42_print_step "     range42-context use ${active_codename} catalog_try"
+            _r42_print_step "     range42-context catalog-try ${_q_path}"
+            # Info-only listing of catalog_try workspaces on OTHER codenames.
+            # Never auto-switch to those (Proxmox API + inventory + vault would
+            # mismatch the active infra context).
+            # zsh `nomatch` would error on no-match : null_glob locally (no-op
+            # in bash thanks to redirect + || true).
+            setopt local_options null_glob 2>/dev/null || true
+            local _other_ws _other_list=""
+            for _other_ws in "$HOME/range42.config/"*-catalog_try ; do
+                [[ -d "$_other_ws" ]] || continue
+                local _other_name="${_other_ws##*/}"
+                [[ "$_other_name" == "${target_workspace}" ]] && continue
+                _other_list+="      ${_other_name}"$'\n'
+            done
+            if [[ -n "$_other_list" ]]; then
+                _r42_print_warning "other catalog_try workspaces exist on different codenames (NOT auto-switched, mixing codenames is unsafe) :"
+                printf "%s" "$_other_list" >&2
+            fi
+            return 1
+        fi
+    fi
+
+    # 3. Read optional catalog_try.yml for smoke check config (defaults if missing)
+    local catalog_try_yml="$element_abs_path/catalog_try.yml"
+    local ct_mode ct_port ct_endpoint ct_init_timeout ct_exit_signature
+    ct_mode=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_mode" "service")
+    ct_port=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_port" "")
+    ct_endpoint=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_endpoint" "/")
+    ct_init_timeout=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_init_timeout" "60")
+    ct_exit_signature=$(_r42_catalog_try_yml_get "$catalog_try_yml" "catalog_try_exit_signature" "")
+    # Validate init_timeout is numeric (fall back to 60 if not)
+    if ! [[ "$ct_init_timeout" =~ ^[0-9]+$ ]]; then
+        _r42_print_warning "catalog_try_init_timeout '${ct_init_timeout}' is not a valid integer, defaulting to 60s"
+        ct_init_timeout=60
+    fi
+    # Clamp init_timeout to max 600s (C.19)
+    if [[ "$ct_init_timeout" -gt 600 ]]; then
+        _r42_print_warning "catalog_try_init_timeout clamped from ${ct_init_timeout}s to 600s (max)"
+        ct_init_timeout=600
+    fi
+    # Validate port is numeric if present (fall back to L1 if not)
+    if [[ -n "$ct_port" ]] && ! [[ "$ct_port" =~ ^[0-9]+$ ]]; then
+        _r42_print_warning "catalog_try_port '${ct_port}' is not a valid port number, falling back to L1 smoke check"
+        ct_port=""
+    fi
+
+    # 4. Read VM allocation from scenario manifest
+    local manifest
+    manifest=$(_r42_active_scenario_manifest) || return 1
+    local vm_ip vm_id vm_name vm_ssh
+    vm_ip=$(jq -r '.vms[0].ip' "$manifest")
+    vm_id=$(jq -r '.vms[0].vm_id' "$manifest")
+    vm_name=$(jq -r '.vms[0].vm_name' "$manifest")
+    vm_ssh="r42.${vm_name}"
+
+    # 5. Confirmation prompt
+    _r42_print_section "summary"
+    _r42_print_step "Element       : ${element_name}"
+    _r42_print_step "Catalog path  : ${catalog_path}"
+    _r42_print_step "Mode          : $ct_mode"
+    if [[ "$ct_mode" == "service" && -n "$ct_port" ]]; then
+        _r42_print_step "Smoke check   : curl http://${vm_ip}:${ct_port}${ct_endpoint}  (timeout ${ct_init_timeout}s)"
+    elif [[ "$ct_mode" == "oneshot" && -n "$ct_exit_signature" ]]; then
+        _r42_print_step "Smoke check   : grep '${ct_exit_signature}' in container output"
+    else
+        _r42_print_step "Smoke check   : L1 fallback (no contract declared)"
+    fi
+    _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip}, VMID ${vm_id})"
+    _r42_print_warning "This will DESTROY VM ${vm_id} and redeploy it fresh."
+    # Portable prompt (bash `read -p` is not zsh-compatible : -p means coprocess in zsh)
+    printf '  Continue ? [y/N] '
+    read -r response
+    if [[ "$response" != "y" && "$response" != "Y" ]]; then
+        echo "  Aborted."
+        return 1
+    fi
+
+    # 6. Flush known_hosts for the test VM IP (avoid SSH host key collision)
+    ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$vm_ip" >/dev/null 2>&1 || true
+
+    # 7. Destroy previous test VM
+    _r42_print_section "destroying previous test VM"
+    _r42_delete_vms || { _r42_print_fail "delete_vms failed" ; return 1 ; }
+
+    # 8. Redeploy fresh VM with Docker baseline
+    _r42_print_section "redeploying test VM"
+    _r42_deploy_vms || { _r42_print_fail "deploy_vms failed" ; return 1 ; }
+
+    # 9-11. Deploy element to VM (copy + run + smoke) via Ansible playbook.
+    # The playbook handles file transfer (ansible.builtin.copy / SFTP), docker
+    # compose / make execution (become:true, no shell sudo), and the smoke check
+    # (oneshot exit_signature grep / service HTTP polling via uri / L1 docker ps).
+    # All visible in PLAY RECAP, debuggable as standard Ansible tasks.
+    _r42_print_section "deploy element to test VM (copy + run + smoke)"
+    local remote_dir="/home/alice/catalog-try-element"
+    local scenario_dir
+    scenario_dir=$(_r42_active_scenario_dir) || return 1
+    local deploy_script="${scenario_dir}/catalog_try.element_deploy.sh"
+    if [[ ! -f "$deploy_script" ]]; then
+        _r42_print_fail "deploy script not found: ${deploy_script}"
+        _r42_print_step "expected file from catalog_try scenario - pull latest range42-playbooks ?"
+        return 1
+    fi
+    local use_makefile="false"
+    [[ -f "${element_abs_path}/Makefile" ]] && use_makefile="true"
+    if ! (
+        cd "$scenario_dir" && \
+        CATALOG_TRY_ELEMENT_SRC="$element_abs_path" \
+        CATALOG_TRY_MODE="$ct_mode" \
+        CATALOG_TRY_USE_MAKEFILE="$use_makefile" \
+        CATALOG_TRY_VM_IP="$vm_ip" \
+        CATALOG_TRY_EXIT_SIGNATURE="$ct_exit_signature" \
+        CATALOG_TRY_PORT="$ct_port" \
+        CATALOG_TRY_ENDPOINT="$ct_endpoint" \
+        CATALOG_TRY_INIT_TIMEOUT="$ct_init_timeout" \
+            bash "$deploy_script"
+    ) ; then
+        _r42_print_fail "element deploy failed (see playbook output above)"
+        return 1
+    fi
+    _r42_print_check "element deployed on ${vm_ssh}:${remote_dir}"
+
+    # 12. Final summary - mirror the intro layout (section + aligned key:value).
+    #
+    # NB on the smoke check line below : if we reached this point, the Ansible
+    # smoke task returned 0 (the wrapper would have exited non-zero otherwise
+    # and we'd never get here). So `✓ PASS` is implicit ; we just surface the
+    # mode (L2 strict / L1 fallback) for the operator's situational awareness.
+    # The L2/L1 detection mirrors the playbook's `when:` predicates exactly.
+    local _smoke_label _smoke_color_open
+    if [[ "$ct_mode" == "service" && -n "$ct_port" ]]; then
+        _smoke_label="L2 service HTTP poll (port ${ct_port}${ct_endpoint})"
+        _smoke_color_open='\033[1;32m'
+    elif [[ "$ct_mode" == "oneshot" && -n "$ct_exit_signature" ]]; then
+        _smoke_label="L2 oneshot signature grep"
+        _smoke_color_open='\033[1;32m'
+    else
+        _smoke_label="L1 fallback (docker ps -a, any container)"
+        _smoke_color_open='\033[1;33m'
+    fi
+
+    _r42_print_section "done - one usage VM ready"
+    _r42_print_step "Element       : ${element_name}"
+    _r42_print_step "Catalog path  : ${catalog_path}"
+    _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip})"
+    _r42_print_step "Deployed at   : ${remote_dir}  (on the VM)"
+    # Smoke check line : colored L?-label (green=L2, yellow=L1) + green ✓ PASS.
+    # %s for the label defuses any format-meta in $ct_port / $ct_exit_signature.
+    printf "    \033[34m➜\033[0m Smoke check   : ${_smoke_color_open}%s\033[0m  \033[1;32m✓ PASS\033[0m\n" "$_smoke_label"
+
+    _r42_print_section "next steps"
+    _r42_print_step "deploy again  : range42-context catalog-try ${catalog_path}"
+    _r42_print_step "connect to VM : range42-context ssh ${vm_ssh}"
+    _r42_print_step "                (alt : ssh ${vm_ssh})"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context init — launch the setup wizard from anywhere
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -1100,14 +1856,21 @@ _r42_help() {
     printf "    ${N}pause${R}                          ${D}pause all scenario VMs${R}\n"
     printf "    ${N}resume${R}                         ${D}resume all paused scenario VMs${R}\n"
     printf "    ${N}snapshot${R} [name]                ${D}snapshot all scenario VMs (auto-named if not provided)${R}\n"
+    printf "    ${N}snapshot-list${R}                  ${D}list snapshots of all scenario VMs${R}\n"
     printf "    ${N}revert${R} <name>                  ${D}revert all scenario VMs to a snapshot${R}\n"
     echo ""
     printf "  ${C}info${R}\n"
-    printf "    ${N}inventory${R}                      ${D}show ansible inventory tree${R}\n"
-    printf "    ${N}passwords${R}                      ${D}show generated credentials${R}\n"
+    printf "    ${N}show-vault${R}                     ${D}show ansible vault contents (decrypted on the fly)${R}\n"
+    printf "    ${N}show-config${R}                    ${D}show workspace orientation (paths + SSH hosts)${R}\n"
+    printf "    ${N}show-inventory${R}                 ${D}show ansible inventory tree${R}\n"
     printf "    ${N}ssh${R} <pattern>                  ${D}quick ssh to a VM by name${R}\n"
     printf "    ${N}debug${R}                          ${D}toggle verbose output (show/hide skipped tasks)${R}\n"
     printf "    ${N}help${R}                           ${D}show this help${R}\n"
+    echo ""
+    printf "  ${C}catalog-try (one usage VM for single catalog element validation)${R}\n"
+    printf "    ${N}catalog-try${R} <path>             ${D}deploy + smoke-check a catalog element (e.g. docker/_ctf/hello)${R}\n"
+    printf "    ${N}catalog-try-list${R}               ${D}list catalog-try elements (L1/L2) excluding docker/admin/*${R}\n"
+    printf "    ${N}catalog-try-list-admin${R}         ${D}list catalog-try elements (L1/L2) under docker/admin/* only${R}\n"
     echo ""
 }
 
@@ -1138,13 +1901,18 @@ range42-context() {
         pause)              _r42_pause ;;
         resume)             _r42_resume ;;
         snapshot)           _r42_snapshot "$@" ;;
+        snapshot-list)      _r42_snapshot_list ;;
         revert)             _r42_revert "$@" ;;
         ssh-reload)     _r42_ssh_reload ;;
-        inventory|inv)  _r42_inventory ;;
-        passwords|pw)   _r42_passwords ;;
+        show-vault)     _r42_show_vault ;;
+        show-config)    _r42_show_config ;;
+        show-inventory) _r42_show_inventory ;;
         ssh)            _r42_ssh "$@" ;;
         cd)             _r42_cd "$@" ;;
         debug)          _r42_debug ;;
+        catalog-try)         _r42_catalog_try "$@" ;;
+        catalog-try-list)        _r42_catalog_try_list "" "docker/admin/" ;;
+        catalog-try-list-admin)  _r42_catalog_try_list_admin ;;
         help|--help|-h) _r42_help ;;
         *)
             _r42_print_fail "unknown command: $cmd"

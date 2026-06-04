@@ -32,3 +32,4 @@
 - import_tasks: ./01_deploy_ssh_keys.yml
 - import_tasks: ./02_deploy_secrets.yml
 - import_tasks: ./03_deploy_sourced_env.yml
+- import_tasks: ./04_deploy_workspace_summary.yml

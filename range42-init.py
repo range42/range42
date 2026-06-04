@@ -6,11 +6,139 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import argparse, json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
+
+
+# ── CLI flags ─────────────────────────────────────────────────────────────────
+# Parsed early (before the textual import / install fallback) so :
+#   1. `--help` works even when textual is not installed yet
+#   2. argparse survives the auto-reexec paths (textual auto-install line ~118,
+#      apt install at end of __main__) which preserve sys.argv[1:]
+def _parse_cli():
+    parser = argparse.ArgumentParser(
+        prog="range42-init.py",
+        description="range42 interactive infrastructure setup (Textual TUI)",
+    )
+    parser.add_argument(
+        "--catalog-try",
+        dest="catalog_try",
+        metavar="<catalog_path>",
+        default="",
+        help=("bootstrap a minimal workspace for catalog-try mode ; "
+              "forces scenario=catalog_try and surfaces the catalog path "
+              "in the post-deploy banner. example : "
+              "--catalog-try docker/_ctf/hello"),
+    )
+    return parser.parse_args()
+
+_CLI_ARGS = _parse_cli()
+
+
+# ── catalog-try path validation (Python port of bash _r42_catalog_resolve_path) ──
+# Best-effort : if range42-catalog is found locally, validate the path strictly.
+# If not found, skip silently — the preflight stage clones the repos later, and
+# the actual catalog-try run happens on the deployer-cli (where the catalog IS
+# expected to be present) via `range42-context catalog-try <path>`.
+
+def _find_catalog_root():
+    """Locate range42-catalog clone on this machine. Returns abs path or None."""
+    candidates = [
+        os.environ.get("RANGE42_INVENTORY", ""),
+        os.path.join(os.environ.get("RANGE42_GITDIR__ROOT_DIR", ""), "range42-catalog"),
+        os.path.expanduser("~/range42/range42-catalog"),
+        str(Path(__file__).resolve().parent.parent / "range42-catalog"),
+    ]
+    for c in candidates:
+        if c and os.path.isdir(c):
+            return c
+    return None
+
+
+def _validate_catalog_try_path(logical_path):
+    """
+    Resolve a logical catalog path like `docker/_ctf/hello` to an absolute path
+    under range42-catalog/. Mirrors the bash _r42_catalog_resolve_path logic :
+    strip the numbered layer prefix (`03_container_layer/`), validate the final
+    dir is a deployable element (compose.yml / docker-compose.yml / Makefile).
+
+    Returns (ok: bool, message: str). When ok is True and message is non-empty,
+    it contains the absolute resolved path. When ok is True and message is empty,
+    catalog repo was not found locally (validation skipped, deferred to deploy-cli).
+    """
+    catalog_root = _find_catalog_root()
+    if not catalog_root:
+        # warn explicitly so the operator knows validation was skipped — silent
+        # skip would mask a typo until much later (on the deployer-cli side).
+        print("  [warn] range42-catalog not found locally - path validation deferred to deployer-cli",
+              file=sys.stderr)
+        return True, ""  # catalog not cloned yet, skip validation
+
+    layer_re = re.compile(r"^[0-9]+_.*_layer$")
+    parts = logical_path.split("/", 1)
+    first = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+
+    matches = []
+    try:
+        for entry in sorted(os.listdir(catalog_root)):
+            full_layer = os.path.join(catalog_root, entry)
+            if not (os.path.isdir(full_layer) and layer_re.match(entry)):
+                continue
+            candidate = os.path.join(full_layer, first)
+            if os.path.isdir(candidate):
+                matches.append(candidate)
+    except OSError:
+        # can't read catalog (perms, broken symlink, ...) - skip validation
+        # rather than failing the wizard hard ; deployer-cli will re-validate.
+        return True, ""
+
+    if not matches:
+        return False, f"no catalog layer contains '{first}' under {catalog_root}"
+    if len(matches) > 1:
+        return False, f"ambiguous : '{first}' present in multiple layers : {', '.join(matches)}"
+
+    full_path = matches[0]
+    if rest:
+        full_path = os.path.join(full_path, rest)
+
+    # Containment check : the resolved path must stay UNDER catalog_root after
+    # path normalization. Defends against `..` traversal in the rest component
+    # (e.g. --catalog-try "docker/_ctf/hello/../../../etc/passwd") which could
+    # otherwise resolve outside the catalog tree.
+    real_full = os.path.realpath(full_path)
+    real_root = os.path.realpath(catalog_root)
+    if not (real_full == real_root or real_full.startswith(real_root + os.sep)):
+        return False, f"resolved path escapes catalog root : {real_full} (catalog root : {real_root})"
+
+    if not os.path.exists(full_path):
+        return False, f"path not found : {full_path}"
+    if not os.path.isdir(full_path):
+        return False, f"not a directory : {full_path}"
+
+    deployable = any(
+        os.path.isfile(os.path.join(full_path, f))
+        for f in ("compose.yml", "docker-compose.yml", "Makefile")
+    )
+    if not deployable:
+        return False, (f"not a deployable element : {full_path} "
+                       f"(missing compose.yml / docker-compose.yml / Makefile)")
+
+    return True, full_path
+
+
+if _CLI_ARGS.catalog_try:
+    _ok, _msg = _validate_catalog_try_path(_CLI_ARGS.catalog_try)
+    if not _ok:
+        # red [FAIL] marker (matches the shell-side _r42_print_fail visual style)
+        print(f"\n  \033[1;31m[FAIL]\033[0m invalid --catalog-try path : {_msg}\n", file=sys.stderr)
+        print(f"  hint : the path is logical (e.g. docker/_ctf/hello), resolved under range42-catalog/", file=sys.stderr)
+        print(f"         the final directory must contain compose.yml, docker-compose.yml, or Makefile\n", file=sys.stderr)
+        sys.exit(2)
+
 
 # force truecolor — SSH doesn't forward COLORTERM, causing Textual
 # to fall back to 16-color ANSI palette (ugly DOS blue)
@@ -136,14 +264,6 @@ EXAMPLE_DIR = INVENTORIES / "example"
 # preflight auto-clones it if missing (see wizard/preflight.py:ensure_playbooks_repo).
 PLAYBOOKS_DIR = SCRIPT_DIR.parent / "range42-playbooks"
 
-# files required in each scenario's templates/ dir for it to be deployable
-SCENARIO_REQUIRED_FILES = (
-    "ansible-inventory.j2",
-    "ansible-vars.yml",
-    "ssh-config.j2",
-    "vault-example.yml",
-)
-
 
 def list_deployable_scenarios():
     """
@@ -209,14 +329,25 @@ class _S:
     deploy_now      = False
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
-    nat_bridges     = {f"vmbr{i}": True for i in range(140, 152)}
     apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
     apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
     apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
     apt_mirror_prewarm    = _load_wizard_cache().get("apt_mirror_prewarm", False)
     apt_mirror_persistent = _load_wizard_cache().get("apt_mirror_persistent", False)
     apt_mirror_vm_ip      = _load_wizard_cache().get("apt_mirror_vm_ip", "")
+    # catalog-try mode : set from --catalog-try <path> CLI flag.
+    # When non-empty, the wizard forces scenario=catalog_try and skips StepScenario.
+    catalog_try_path = ""
+
+    def __init__(self):
+        self.nat_bridges = {f"vmbr{i}": True for i in range(140, 152)}
 S = _S()
+
+# wire catalog-try mode from CLI : force scenario + remember the path for the
+# post-deploy banner. Path validation lives in D.2b (port of catalog resolver).
+if _CLI_ARGS.catalog_try:
+    S.catalog_try_path = _CLI_ARGS.catalog_try
+    S.scenario = "catalog_try"
 
 
 # ── apt proxy validation helpers ──────────────────────────────────────────────
@@ -252,7 +383,7 @@ def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
         return False, f"{type(e).__name__}: {e}"
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
-from wizard.preflight import run_all_checks, get_apt_install_command, get_apt_install_packages
+from wizard.preflight import SCENARIO_REQUIRED_FILES, run_all_checks, get_apt_install_command, get_apt_install_packages
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def cmd_ok(c): return bool(shutil.which(c))
@@ -291,8 +422,12 @@ def prefill(name):
     S.apt_mirror_prewarm    = ex_bool("apt_mirror_prewarm")
     S.apt_mirror_persistent = ex_bool("apt_mirror_persistent")
     S.apt_mirror_vm_ip      = ex("apt_mirror_vm_ip")
-    for d in (INVENTORIES / name / "group_vars").iterdir():
-        if d.name != "all": S.scenario = d.name; break
+    # --catalog-try forces S.scenario=catalog_try upstream (line ~349). Skip the
+    # group_vars scan in that mode, otherwise a previous scenario dir on the same
+    # codename (e.g. debug_scenario_b/) silently overrides catalog_try.
+    if not _CLI_ARGS.catalog_try:
+        for d in (INVENTORIES / name / "group_vars").iterdir():
+            if d.name != "all": S.scenario = d.name; break
 
 def sed_f(path, old, new):
     p = Path(path)
@@ -772,7 +907,10 @@ class StepExisting(Step):
         if not bid.startswith("c-"): return
         mode = bid[2:].split("--")[0]
         S.setup_mode = mode
-        if mode != "new": prefill(mode)
+        if mode != "new":
+            if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9._-]*$', mode):
+                return  # reject invalid names silently (button was created from filesystem, shouldn't happen)
+            prefill(mode)
         self.app._go(StepCodename())
 
 
@@ -1004,8 +1142,9 @@ class StepAutoDetectNAT(Step):
             else:
                 # no root password — can't SSH, use default
                 detected = "vmbr0"
-        except Exception:
-            pass
+        except Exception as exc:
+            detected = "vmbr0"
+            _exc_msg = str(exc)  # available for UI if needed
 
         S.nat_interface = detected
 
@@ -1085,7 +1224,13 @@ class StepNATBridges(Step):
         event.button.add_class("-ok" if enabled else "-danger")
 
     def handle_next(self, app):
-        app._go(StepScenario())
+        # catalog-try mode forces scenario=catalog_try upstream — skip the
+        # scenario selection step entirely (StepScenario would otherwise just
+        # confirm the already-set value, wasting a click).
+        if S.catalog_try_path:
+            app._go(StepDeployerIP())
+        else:
+            app._go(StepScenario())
 
     def handle_back(self, app):
         app._go(StepAutoDetectNAT())
@@ -1159,7 +1304,14 @@ class StepDeployerIP(Step):
         S.deployer_ip = self.query_one("#i-dip", Input).value.strip() or "127.0.0.1"
         app._go(StepDeployerUser())
 
-    def handle_back(self, app): app._go(StepScenario())
+    def handle_back(self, app):
+        # symmetry with StepNATBridges.handle_next : in catalog-try mode the
+        # scenario step was skipped, so going back from here lands directly
+        # on the NAT bridges step instead of the (skipped) scenario step.
+        if S.catalog_try_path:
+            app._go(StepNATBridges())
+        else:
+            app._go(StepScenario())
 
 
 class StepDeployerUser(Step):
@@ -1177,7 +1329,7 @@ class StepDeployerUser(Step):
 
     def handle_next(self, app):
         S.deployer_user = self.query_one("#i-duser", Input).value.strip() or os.environ.get("USER", "")
-        S.deployer_cli_pw = S.sudo_pw  # reuse sudo password for deployer SSH
+        S.deployer_cli_pw = S.sudo_pw  # reuse sudo password for deployer SSH (single-machine assumption)
         app._go(StepReview())
 
     def handle_back(self, app): app._go(StepDeployerIP())
@@ -1220,6 +1372,7 @@ class StepRootPassword(Step):
     @work(thread=True)
     def _test_pw(self, pw):
         ok = False
+        exc_detail = ""
         try:
             env = os.environ.copy()
             env["SSHPASS"] = pw
@@ -1235,17 +1388,22 @@ class StepRootPassword(Step):
                  f"root@{S.proxmox_address}", "true"],
                 env=env, capture_output=True, timeout=10)
             ok = r.returncode == 0
-        except Exception:
-            pass
+        except Exception as exc:
+            ok = False
+            exc_detail = f"{type(exc).__name__}: {exc}"
 
-        def _show(ok=ok):
+        def _show(ok=ok, exc_detail=exc_detail):
             self.query_one("#spin-rootpw").display = False
             if ok:
                 self.query_one("#e-rootpw", Label).update("")
                 self.app._go(StepSudoPassword())
             else:
-                self.query_one("#e-rootpw", Label).update(
-                    "✗ could not authenticate — check password or server access")
+                msg = "✗ could not authenticate"
+                if exc_detail:
+                    msg += f" — {exc_detail}"
+                else:
+                    msg += " — check password or server access"
+                self.query_one("#e-rootpw", Label).update(msg)
         self.app.call_from_thread(_show)
 
     def handle_back(self, app): app._go(StepNode())
@@ -1284,47 +1442,32 @@ class StepSudoPassword(Step):
     @work(thread=True)
     def _test_sudo(self, pw):
         ok = False
+        exc_detail = ""
         try:
             r = subprocess.run(
                 ["sudo", "-S", "-k", "true"],
                 input=pw + "\n", capture_output=True, text=True, timeout=5)
             ok = r.returncode == 0
-        except Exception:
-            pass
+        except Exception as exc:
+            ok = False
+            exc_detail = f"{type(exc).__name__}: {exc}"
 
-        def _show(ok=ok):
+        def _show(ok=ok, exc_detail=exc_detail):
             self.query_one("#spin-sudopw").display = False
             if ok:
                 self.query_one("#e-sudopw", Label).update("")
                 self.app._go(StepProxmoxCheck())
             else:
-                self.query_one("#e-sudopw", Label).update(
-                    "✗ sudo authentication failed — check password")
+                msg = "✗ sudo authentication failed"
+                if exc_detail:
+                    msg += f" — {exc_detail}"
+                else:
+                    msg += " — check password"
+                self.query_one("#e-sudopw", Label).update(msg)
         self.app.call_from_thread(_show)
 
     def handle_back(self, app): app._go(StepRootPassword())
 
-
-class StepDeployerPassword(Step):
-    STEP_NUM = 4
-
-    def compose(self) -> ComposeResult:
-        yield Label("◆  deployer-cli SSH password", classes="title")
-        yield Rule()
-        yield Static(
-            f"  SSH password for {S.deployer_user}@{S.deployer_ip}.\n\n"
-            "  The deployer-cli is a remote machine. Ansible needs SSH access.\n"
-            "  Leave empty if SSH key access is already configured.",
-            classes="muted")
-        yield Static("")
-        yield Input(password=True, placeholder="leave empty to skip", id="i-clipw")
-        yield Static("  Ctrl+P to reveal / hide", classes="muted")
-
-    def handle_next(self, app):
-        S.deployer_cli_pw = self.query_one("#i-clipw", Input).value
-        app._go(StepReview())
-
-    def handle_back(self, app): app._go(StepDeployerUser())
 
 
 # ── step 5 — review & confirm ─────────────────────────────────────────────────
@@ -1754,8 +1897,7 @@ def post_wizard():
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
-        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario} \\")
-        _print_cmd(f"  -e context_ssh_keys_use_passphrase=NO")
+        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
         return
 
@@ -1763,6 +1905,16 @@ def post_wizard():
     _print_bold("starting deployment")
 
     env = os.environ.copy()
+
+    # Force a known-good locale before invoking ansible-playbook.
+    # SSH commonly forwards LC_* from the operator's client (e.g. macOS sets
+    # LC_ADDRESS=fr_FR.UTF-8 etc. via SendEnv). On a fresh deployer-cli only
+    # en_US.UTF-8 / C.UTF-8 are generated, so Ansible's setlocale(LC_ALL, '')
+    # fails with "unsupported locale setting". C.UTF-8 is POSIX-compatible
+    # and guaranteed present on every modern glibc.
+    env["LC_ALL"] = "C.UTF-8"
+    env["LANG"]   = "C.UTF-8"
+
     extra = []
 
     if S.proxmox_root_pw:
@@ -1800,7 +1952,6 @@ def post_wizard():
          "-i", f"inventories/{S.codename}/hosts.yml",
          "-e", f"@{scenario_vars_file}",
          "-e", f"INFRASTRUCTURE_SCENARIO={S.scenario}",
-         "-e", "context_ssh_keys_use_passphrase=NO",
          *extra],
         cwd=str(SCRIPT_DIR), env=env
     ).returncode
@@ -1826,9 +1977,23 @@ def post_wizard():
         _print_info("check everything is ready:")
         _print_cmd("range42-context status")
         print()
-        _print_info("deploy the lab VMs:")
-        _print_cmd("range42-context deploy")
-        print()
+        if S.catalog_try_path:
+            # catalog-try mode : skip the generic deploy line ; the operator goes
+            # straight to `catalog-try <path>` which handles delete+deploy+run.
+            _print_info(f"validate the catalog element :")
+            # shlex.quote() defends against shell-meta in catalog_try_path being
+            # propagated into a copy-paste-able command suggestion. For normal
+            # logical paths (e.g. docker/_ctf/hello), quote() returns the string
+            # unchanged ; only weird input gets wrapped in single quotes.
+            _print_cmd(f"range42-context catalog-try {shlex.quote(S.catalog_try_path)}")
+            print()
+            _print_info("discover other catalog-try-compatible elements :")
+            _print_cmd("range42-context catalog-try-list")
+            print()
+        else:
+            _print_info("deploy the lab VMs:")
+            _print_cmd("range42-context deploy")
+            print()
         print("  ---- daily operations ----")
         print()
         _print_info("fast redeploy (VMs only, skip templates):")
@@ -1865,8 +2030,7 @@ def post_wizard():
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
-        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario} \\")
-        _print_cmd(f"  -e context_ssh_keys_use_passphrase=NO")
+        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
 
 

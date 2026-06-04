@@ -1,0 +1,17 @@
+---
+# workspace credentials - deploy summary.txt to the deployer-cli workspace
+#
+# summary.txt is generated locally by credentials.generate/06_write_summary.yml
+# and contains the non-secret workspace orientation (paths + SSH hosts).
+# It is consumed by `range42-context show-config` on the deployer-cli.
+#
+# Secrets (SSH passphrases + VM passwords) are no longer in summary.txt -
+# they live in the ansible vault (see `range42-context show-vault`).
+
+- name: WORKSPACE CREDENTIALS - DEPLOY SUMMARY.TXT TO DEPLOYER-CLI
+  ansible.builtin.copy:
+    src: "{{ INFRASTRUCTURE__AUTO_GENERATED__CONFIG_DIR_LOCAL }}/summary.txt"
+    dest: "{{ DEPLOYER_CLI__DST_CONFIG_DIR }}/summary.txt"
+    owner: "{{ DEPLOYER_CLI_USER }}"
+    group: "{{ DEPLOYER_CLI_USER }}"
+    mode: "0600"

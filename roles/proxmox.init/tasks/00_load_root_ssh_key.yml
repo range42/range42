@@ -6,6 +6,20 @@
 #
 # ssh-agent is guaranteed to be running by playbook 02 pre_tasks
 #
+# When the root SSH key is generated with a passphrase (default since the
+# wizard uses context_ssh_keys_use_passphrase=YES), ssh-add cannot prompt
+# interactively from ansible (no tty). We feed the passphrase via the
+# SSH_ASKPASS pattern : a tempfile script that echoes $SSH_ASKPASS_PASSWORD,
+# pointed to by SSH_ASKPASS env, with SSH_ASKPASS_REQUIRE=force to make
+# ssh-add use the askpass even when DISPLAY is unset. The passphrase comes
+# from the generated_px_root_passphrase fact set by credentials.generate
+# in playbook 01 (host facts persist across import_playbook within the
+# same ansible-playbook invocation).
+#
+# When the key has no passphrase (legacy mode), the passphrase fact is empty
+# string and ssh-add does not need to invoke askpass at all - the env vars
+# are set but unused.
+#
 # source: proxmox_load_root_ssh_key() lines 757-775
 
 - name: PROXMOX INIT - CLEAR ALL KEYS FROM AGENT (AVOID TOO MANY AUTH FAILURES)
@@ -13,7 +27,39 @@
   changed_when: true
   failed_when: false
 
+- name: PROXMOX INIT - CREATE SSH_ASKPASS HELPER TEMPFILE
+  ansible.builtin.copy:
+    content: |
+      #!/bin/sh
+      printf "%s" "$SSH_ASKPASS_PASSWORD"
+    dest: "/tmp/r42-askpass-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.sh"
+    mode: '0700'
+
 - name: PROXMOX INIT - LOAD PROXMOX ROOT SSH KEY INTO AGENT
   ansible.builtin.command: ssh-add "{{ proxmox_root_ssh_key_path }}"
-  register: ssh_add_result
-  changed_when: "'Identity added' in ssh_add_result.stdout"
+  environment:
+    SSH_ASKPASS: "/tmp/r42-askpass-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.sh"
+    SSH_ASKPASS_PASSWORD: "{{ generated_px_root_passphrase | default('') }}"
+    SSH_ASKPASS_REQUIRE: force
+  register: ssh_add_root_result
+  changed_when: "'Identity added' in ssh_add_root_result.stdout"
+  no_log: true
+
+# Also load the jump SSH key into the agent so subsequent tasks in proxmox.jump-user
+# (e.g., the BatchMode `ssh -i jump_key jump_user@px true` verify step) can use it
+# without prompting. The jump key is encrypted with generated_px_jump_passphrase
+# (same fact propagation as root passphrase).
+- name: PROXMOX INIT - LOAD PROXMOX JUMP SSH KEY INTO AGENT
+  ansible.builtin.command: ssh-add "{{ proxmox_jump_ssh_key_path }}"
+  environment:
+    SSH_ASKPASS: "/tmp/r42-askpass-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.sh"
+    SSH_ASKPASS_PASSWORD: "{{ generated_px_jump_passphrase | default('') }}"
+    SSH_ASKPASS_REQUIRE: force
+  register: ssh_add_jump_result
+  changed_when: "'Identity added' in ssh_add_jump_result.stdout"
+  no_log: true
+
+- name: PROXMOX INIT - CLEANUP SSH_ASKPASS HELPER TEMPFILE
+  ansible.builtin.file:
+    path: "/tmp/r42-askpass-{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}.sh"
+    state: absent

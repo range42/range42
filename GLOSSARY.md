@@ -131,10 +131,24 @@ A zsh function available on the deployer-cli. Central tool for managing workspac
 
 | Command | What it does |
 |---------|-------------|
-| `range42-context inventory` | show the Ansible inventory tree |
-| `range42-context passwords` | show generated credentials (summary.txt) |
+| `range42-context show-vault` | show ansible vault contents (decrypted on the fly) |
+| `range42-context show-config` | show workspace orientation (paths + SSH hosts) |
+| `range42-context show-inventory` | show the Ansible inventory tree |
 | `range42-context ssh <pattern>` | quick SSH to a VM by partial name (e.g. `ssh wazuh`) |
 | `range42-context help` | show all commands |
+
+**Catalog testing:**
+
+Fast-iteration mode for deploying a single catalog element on a disposable
+VM (the `catalog_try` scenario) without rebuilding a full lab. See
+[range42-catalog](https://github.com/range42/range42-catalog) for the
+available elements.
+
+| Command | What it does |
+|---------|-------------|
+| `range42-context catalog-try <path>` | deploy + smoke-check a single catalog element on the `catalog_try` VM (e.g. `catalog-try docker/_ctf/hello`) |
+| `range42-context catalog-try-list` | list catalog elements deployable via `catalog-try` (excludes `docker/admin/*` by default) |
+| `range42-context catalog-try-list-admin` | list only the admin catalog elements (`docker/admin/*`) |
 
 ### range42-workspace
 

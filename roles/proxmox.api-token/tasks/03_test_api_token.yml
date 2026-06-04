@@ -11,7 +11,7 @@
     method: GET
     headers:
       Authorization: "PVEAPIToken={{ proxmox_api_user }}!{{ proxmox_api_token_id }}={{ proxmox_api_token_secret_result }}"
-    validate_certs: false
+    validate_certs: "{{ proxmox_api_validate_certs }}"
     status_code: 200
   register: api_test_result
   when: proxmox_api_token_secret_result is defined and proxmox_api_token_secret_result | length > 0

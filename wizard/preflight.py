@@ -33,12 +33,31 @@ COLLECTIONS = [
     "community.general",
 ]
 
+# Python modules required by Ansible modules invoked from playbook 01.
+# community.crypto.openssh_keypair needs bcrypt to create passphrase-protected
+# ed25519 keys (the cryptography library uses bcrypt for the AES key derivation
+# when encrypting the private key file). Without bcrypt installed, the wizard
+# fails at the GENERATE PROXMOX ROOT SSH KEY task with :
+#     cryptography.exceptions.UnsupportedAlgorithm: Need bcrypt module
+PYTHON_DEPS = [
+    {"label": "python3-bcrypt", "module": "bcrypt", "fix": "sudo apt install python3-bcrypt", "required": True, "manual": False},
+]
+
 
 # ── detection functions ──────────────────────────────────────────────────────
 
 def check_command(cmd):
     """Check if a command is available in PATH."""
     return shutil.which(cmd) is not None
+
+
+def check_python_module(name):
+    """Check if a Python module is importable from the current python3."""
+    r = subprocess.run(
+        ["python3", "-c", f"import {name}"],
+        capture_output=True,
+    )
+    return r.returncode == 0
 
 
 def get_version(cmd):
@@ -60,7 +79,7 @@ def check_collection(name):
         ["ansible-galaxy", "collection", "list"],
         capture_output=True, text=True,
     )
-    return name in r.stdout
+    return any(line.strip().startswith(name) for line in r.stdout.splitlines())
 
 
 def check_ssh_agent_running():
@@ -133,6 +152,29 @@ def run_all_checks(example_dir):
             "detail": detail,
             "required": check["required"],
             "apt_fix": check["fix"] if not ok and not check.get("manual") and (check.get("fix") or "").startswith("sudo apt") else None,
+        })
+
+    # python module checks (e.g., bcrypt for openssh_keypair with passphrase)
+    for dep in PYTHON_DEPS:
+        ok = check_python_module(dep["module"])
+
+        if ok:
+            badge = "PASS"
+            detail = ""
+        elif dep["required"]:
+            badge = "FAIL"
+            detail = f"  {dep['fix']}  [Install & retry]"
+            fail = True
+        else:
+            badge = "WARN"
+            detail = f"  {dep['fix']}  [Install & retry]"
+
+        results.append({
+            "badge": badge,
+            "label": dep["label"],
+            "detail": detail,
+            "required": dep["required"],
+            "apt_fix": dep["fix"] if not ok and (dep.get("fix") or "").startswith("sudo apt") else None,
         })
 
     # collection checks
@@ -210,8 +252,7 @@ def get_apt_install_command(results):
 
 
 # files required in each scenario's templates/ dir for it to be deployable
-# (duplicated in range42-init.py to avoid circular imports; keep in sync)
-_SCENARIO_REQUIRED_FILES = (
+SCENARIO_REQUIRED_FILES = (
     "ansible-inventory.j2",
     "ansible-vars.yml",
     "ssh-config.j2",
@@ -227,7 +268,7 @@ def _has_deployable_scenario(scenarios_dir):
         if not d.is_dir() or d.name.startswith("_"):
             continue
         tmpl = d / "templates"
-        if tmpl.is_dir() and all((tmpl / f).exists() for f in _SCENARIO_REQUIRED_FILES):
+        if tmpl.is_dir() and all((tmpl / f).exists() for f in SCENARIO_REQUIRED_FILES):
             return True
     return False
 
