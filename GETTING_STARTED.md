@@ -132,6 +132,7 @@ deployer-cli  ──ssh──▶  Proxmox jump_user  ──ProxyJump──▶  b
   - **Debian 13** — also expected to work (less extensively tested)
   - Other distros may work but are not officially supported
 - Python 3.10+
+- `python3-bcrypt` (required to generate passphrase-protected ed25519 SSH keys ; the wizard preflight detects it and offers an Install button if missing, but you can pre-install with `sudo apt install python3-bcrypt`)
 - Network access to your Proxmox (see ports below)
 
 ### On the Proxmox server
@@ -661,6 +662,34 @@ $ range42-context show-inventory
 
 Useful for sanity-checking what would be deployed before running `deploy`.
 
+#### Try a single catalog element
+
+For fast iteration on a single deployable element (Docker compose / Makefile)
+from [range42-catalog](https://github.com/range42/range42-catalog) without
+rebuilding a full lab, range42 ships a disposable-VM mode :
+
+```bash
+range42-context catalog-try-list                # browse available elements
+range42-context catalog-try docker/_ctf/hello   # deploy + smoke-check one
+```
+
+`catalog-try` resolves the logical path, deploys the element on the
+`catalog_try` VM, runs it, and smoke-checks it per the element's contract
+(`catalog_try.yml` declaring L2 service / oneshot / L1 fallback). Each run
+destroys + recreates the test VM, so iteration is fast and stateless. Admin
+elements (Gitea, Mattermost, Nextcloud ...) are listed separately via
+`catalog-try-list-admin`.
+
+You can also bootstrap a fresh deployer-cli directly into this mode from your
+laptop :
+
+```bash
+./range42-init.py --catalog-try docker/_ctf/hello
+```
+
+The wizard skips the scenario picker, forces `scenario=catalog_try`, and the
+final banner suggests the right `range42-context catalog-try <path>` to run.
+
 #### SSH into deployed VMs
 
 `range42-context use` configures **two** things at once:
@@ -840,14 +869,25 @@ vault password every time.
 #### How to view the vault contents
 
 The vault contains generated VM passwords, the Wazuh password, the Proxmox API
-token. To inspect them:
+token, and the SSH key passphrases (`ssh_passphrase_px_root`,
+`ssh_passphrase_px_jump`, `ssh_passphrase_admin_alice`,
+`ssh_passphrase_student_bob`, plus one per student extra key). To inspect them
+with the active workspace loaded:
+
+```bash
+range42-context show-vault
+```
+
+This wraps `ansible-vault view` against the active workspace's
+`default_vault.yml` and uses `vault_pass.txt` automatically.
+
+If you prefer working from the workspace directory directly, the helper
+scripts shipped in the workspace still work:
 
 ```bash
 cd ~/range42.config/<codename>-<scenario>/secrets/
 ./vault.view.sh default_vault.yml
 ```
-
-This wraps `ansible-vault view` and uses `vault_pass.txt` automatically.
 
 To edit:
 
