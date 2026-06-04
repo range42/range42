@@ -634,7 +634,7 @@ mylab-demo_lab
 Lists all hosts the active workspace will deploy:
 
 ```
-$ range42-context inventory
+$ range42-context show-inventory
 
 @all:
   |--@range42_infrastructure:

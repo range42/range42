@@ -42,19 +42,25 @@
  2 - SSH KEY PASSPHRASES
 ==============================================================================
 
-    px root    : {{ generated_px_root_passphrase }}
-    px jump    : {{ generated_px_jump_passphrase }}
-    alice      : {{ generated_deployer_passphrase }}
-    bob        : {{ generated_student_passphrase }}
+  Moved to the ansible vault. View with :
+    `range42-context show-vault`  (on the deployer-cli)
+    OR `ansible-vault view {{ vault_output_dir | default(credentials_output_dir ~ "/secrets") }}/default_vault.yml --vault-password-file ...`
+
+    px root    : <moved to vault — field ssh_passphrase_px_root>
+    px jump    : <moved to vault — field ssh_passphrase_px_jump>
+    alice      : <moved to vault — field ssh_passphrase_deployer_admin>
+    bob        : <moved to vault — field ssh_passphrase_student_user>
 
 
 ==============================================================================
  3 - VM USER PASSWORDS
 ==============================================================================
 
-    alice (admin)   : {{ generated_admin_password }}
-    bob (student)   : {{ generated_trainee_password }}
-    wazuh (admin)   : {{ generated_wazuh_password }}
+  Moved to the ansible vault. View with `range42-context show-vault`.
+
+    alice (admin)   : <moved to vault — field default_admin_vm_ci_password>
+    bob (student)   : <moved to vault — field default_trainee_vm_ci_password>
+    wazuh (admin)   : <moved to vault — field infrastructure_wazuh_admin_password>
 
 
 ==============================================================================

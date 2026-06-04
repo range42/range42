@@ -422,8 +422,12 @@ def prefill(name):
     S.apt_mirror_prewarm    = ex_bool("apt_mirror_prewarm")
     S.apt_mirror_persistent = ex_bool("apt_mirror_persistent")
     S.apt_mirror_vm_ip      = ex("apt_mirror_vm_ip")
-    for d in (INVENTORIES / name / "group_vars").iterdir():
-        if d.name != "all": S.scenario = d.name; break
+    # --catalog-try forces S.scenario=catalog_try upstream (line ~349). Skip the
+    # group_vars scan in that mode, otherwise a previous scenario dir on the same
+    # codename (e.g. debug_scenario_b/) silently overrides catalog_try.
+    if not _CLI_ARGS.catalog_try:
+        for d in (INVENTORIES / name / "group_vars").iterdir():
+            if d.name != "all": S.scenario = d.name; break
 
 def sed_f(path, old, new):
     p = Path(path)
@@ -1893,8 +1897,7 @@ def post_wizard():
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
-        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario} \\")
-        _print_cmd(f"  -e context_ssh_keys_use_passphrase=NO")
+        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
         return
 
@@ -1949,7 +1952,6 @@ def post_wizard():
          "-i", f"inventories/{S.codename}/hosts.yml",
          "-e", f"@{scenario_vars_file}",
          "-e", f"INFRASTRUCTURE_SCENARIO={S.scenario}",
-         "-e", "context_ssh_keys_use_passphrase=NO",
          *extra],
         cwd=str(SCRIPT_DIR), env=env
     ).returncode
@@ -2028,8 +2030,7 @@ def post_wizard():
         _print_cmd(f"ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
-        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario} \\")
-        _print_cmd(f"  -e context_ssh_keys_use_passphrase=NO")
+        _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
 
 

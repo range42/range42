@@ -224,6 +224,59 @@ _r42_flush_known_hosts() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# helpers for vault-backed SSH key auto-unlock (used by _r42_ssh_reload)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# _r42_yaml_get — extract a top-level scalar field from YAML on stdin via yq.
+# Returns empty string if the field is absent or null.
+# usage : echo "$yaml" | _r42_yaml_get <field_name>
+_r42_yaml_get() {
+    local field="$1"
+    yq -r ".${field} // \"\""
+}
+
+# _r42_passphrase_field_for_key — map an SSH key file path to the YAML field
+# name in the vault that holds its passphrase. Echoes the field name on match,
+# empty otherwise.
+# usage : _r42_passphrase_field_for_key <key_file_path>
+_r42_passphrase_field_for_key() {
+    local keyfile="$1"
+    case "$keyfile" in
+        *ssh_cli.root)       echo "ssh_passphrase_px_root" ;;
+        *ssh_cli.jump_user)  echo "ssh_passphrase_px_jump" ;;
+        *deployer-key_alice) echo "ssh_passphrase_deployer_admin" ;;
+        *student-key_bob_*)  echo "ssh_passphrase_student_user_extra_all" ;;
+        *student-key_bob)    echo "ssh_passphrase_student_user" ;;
+        *)                   echo "" ;;
+    esac
+}
+
+# _r42_ssh_add_with_passphrase — non-interactive ssh-add via SSH_ASKPASS.
+# Creates a one-shot askpass tempfile script that prints $SSH_ASKPASS_PASSWORD,
+# invokes ssh-add with SSH_ASKPASS_REQUIRE=force and stdin from /dev/null so
+# ssh-add cannot fall back to /dev/tty, then cleans up the tempfile.
+# Returns ssh-add's exit code (0 on success, non-zero on bad passphrase / etc).
+# usage : _r42_ssh_add_with_passphrase <key_file_path> <passphrase>
+_r42_ssh_add_with_passphrase() {
+    local keyfile="$1"
+    local passphrase="$2"
+    local askpass_script rc
+
+    askpass_script=$(mktemp -t r42-askpass-XXXXXX.sh) || return 1
+    chmod 700 "$askpass_script"
+    printf '#!/bin/sh\nprintf "%%s" "$SSH_ASKPASS_PASSWORD"\n' > "$askpass_script"
+
+    SSH_ASKPASS="$askpass_script" \
+    SSH_ASKPASS_PASSWORD="$passphrase" \
+    SSH_ASKPASS_REQUIRE=force \
+        ssh-add "$keyfile" </dev/null >/dev/null 2>&1
+    rc=$?
+
+    rm -f "$askpass_script"
+    return $rc
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context ssh-reload — reload SSH keys for active workspace (T45)
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -248,9 +301,25 @@ _r42_ssh_reload() {
         return 1
     }
 
+    # decrypt the vault once for passphrase lookup. On any failure (missing
+    # vault_pass.txt, missing vault file, decrypt error), $vault_content stays
+    # empty and the per-key loop falls back to interactive ssh-add. No abort.
+    local vault_file vault_pass_file vault_content=""
+    vault_file="${RANGE42_CONFIG__ROOT_DIR%/}/secrets/default_vault.yml"
+    vault_pass_file="${RANGE42_VAULT_PASSWORD_FILE:-}"
+
+    if [[ -n "$vault_pass_file" && -f "$vault_pass_file" && -f "$vault_file" ]]; then
+        vault_content=$(ansible-vault view "$vault_file" \
+            --vault-password-file "$vault_pass_file" 2>/dev/null) \
+            || vault_content=""
+    fi
+
+    if [[ -z "$vault_content" && "$verbose" == "-v" ]]; then
+        _r42_print_warning "vault not readable - ssh-add will prompt interactively for passphrase-protected keys"
+    fi
+
     # parse active ssh config for IdentityFile entries
     # FIX P4: trim leading whitespace from IdentityFile paths
-    local key_count=0
     grep '^Include ' "$RANGE42_SSH_CONFIG_FILE" |
         grep 'config_range42' |
         grep -v '^#' |
@@ -263,8 +332,28 @@ _r42_ssh_reload() {
                     if [[ "$verbose" == "-v" ]]; then
                         _r42_print_warning "loading: $identity_file"
                     fi
-                    ssh-add "$identity_file" </dev/tty 2>/dev/null
-                    key_count=$((key_count + 1))
+
+                    # try passphrase lookup from vault first
+                    local field="" passphrase=""
+                    if [[ -n "$vault_content" ]]; then
+                        field=$(_r42_passphrase_field_for_key "$identity_file")
+                        if [[ -n "$field" ]]; then
+                            passphrase=$(echo "$vault_content" | _r42_yaml_get "$field")
+                        fi
+                    fi
+
+                    if [[ -n "$passphrase" ]]; then
+                        # non-interactive via SSH_ASKPASS ; fall back to /dev/tty
+                        # if the vault passphrase does not match the key (desync).
+                        if ! _r42_ssh_add_with_passphrase "$identity_file" "$passphrase"; then
+                            ssh-add "$identity_file" </dev/tty 2>/dev/null
+                        fi
+                    else
+                        # vault unreadable, field absent, or empty passphrase :
+                        # plain ssh-add. Loads unprotected keys silently, prompts
+                        # for protected ones via /dev/tty (legacy behavior).
+                        ssh-add "$identity_file" </dev/tty 2>/dev/null
+                    fi
                 done
         done
 
@@ -410,10 +499,10 @@ _r42_use() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context inventory — show ansible inventory tree
+# range42-context show-inventory — show ansible inventory tree
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_inventory() {
+_r42_show_inventory() {
 
     local inventory_dir="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR:-}"
 
@@ -555,31 +644,86 @@ _r42_status() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context passwords — show generated credentials
+# COMMENT BLOCK BEFORE CHORE-DELETE :
+# `range42-context passwords` removed - replaced by `show-vault` (secrets via
+# ansible-vault view) + `show-config` (non-secret orientation via summary.txt).
+# Function body kept commented for short-term rollback ; delete entirely in a
+# follow-up chore.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_passwords() {
-    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+# _r42_passwords() {
+#     local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+#
+#     if [[ -z "$config_dir" ]]; then
+#         _r42_print_fail "no active workspace"
+#         return 1
+#     fi
+#
+#     # try summary.txt first, then passwords.env
+#     local summary="$config_dir/summary.txt"
+#     local passwords="$config_dir/passwords.env"
+#
+#     if [[ -f "$summary" ]]; then
+#         _r42_print_section "credentials summary"
+#         cat "$summary"
+#     elif [[ -f "$passwords" ]]; then
+#         _r42_print_section "passwords"
+#         cat "$passwords"
+#     else
+#         _r42_print_fail "no summary.txt or passwords.env found in $config_dir"
+#         _r42_print_warning "credentials may not have been generated yet"
+#     fi
+# }
 
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context show-vault — show ansible vault contents (decrypted on the fly)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_show_vault() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
     if [[ -z "$config_dir" ]]; then
         _r42_print_fail "no active workspace"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
         return 1
     fi
 
-    # try summary.txt first, then passwords.env
-    local summary="$config_dir/summary.txt"
-    local passwords="$config_dir/passwords.env"
+    local vault_file="${config_dir%/}/secrets/default_vault.yml"
+    local vault_pass_file="${RANGE42_VAULT_PASSWORD_FILE:-${config_dir%/}/secrets/vault_pass.txt}"
 
-    if [[ -f "$summary" ]]; then
-        _r42_print_section "credentials summary"
-        cat "$summary"
-    elif [[ -f "$passwords" ]]; then
-        _r42_print_section "passwords"
-        cat "$passwords"
-    else
-        _r42_print_fail "no summary.txt or passwords.env found in $config_dir"
-        _r42_print_warning "credentials may not have been generated yet"
+    if [[ ! -f "$vault_file" ]]; then
+        _r42_print_fail "vault file not found: $vault_file"
+        return 1
     fi
+    if [[ ! -f "$vault_pass_file" ]]; then
+        _r42_print_fail "vault password file not found: $vault_pass_file"
+        return 1
+    fi
+
+    _r42_print_section "ansible vault (credentials + SSH passphrases) — ${RANGE42_ACTIVE_WORKSPACE:-unknown}"
+    ansible-vault view "$vault_file" --vault-password-file "$vault_pass_file"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context show-config — show workspace orientation (paths + SSH hosts)
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_show_config() {
+    local config_dir="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$config_dir" ]]; then
+        _r42_print_fail "no active workspace"
+        _r42_print_warning "run: range42-context use <codename> <scenario>"
+        return 1
+    fi
+
+    local summary="${config_dir%/}/summary.txt"
+    if [[ ! -f "$summary" ]]; then
+        _r42_print_fail "summary.txt not found in $config_dir"
+        _r42_print_warning "workspace may not have been fully deployed yet"
+        return 1
+    fi
+
+    _r42_print_section "workspace config summary — ${RANGE42_ACTIVE_WORKSPACE:-unknown}"
+    cat "$summary"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -1716,8 +1860,9 @@ _r42_help() {
     printf "    ${N}revert${R} <name>                  ${D}revert all scenario VMs to a snapshot${R}\n"
     echo ""
     printf "  ${C}info${R}\n"
-    printf "    ${N}inventory${R}                      ${D}show ansible inventory tree${R}\n"
-    printf "    ${N}passwords${R}                      ${D}show generated credentials${R}\n"
+    printf "    ${N}show-vault${R}                     ${D}show ansible vault contents (decrypted on the fly)${R}\n"
+    printf "    ${N}show-config${R}                    ${D}show workspace orientation (paths + SSH hosts)${R}\n"
+    printf "    ${N}show-inventory${R}                 ${D}show ansible inventory tree${R}\n"
     printf "    ${N}ssh${R} <pattern>                  ${D}quick ssh to a VM by name${R}\n"
     printf "    ${N}debug${R}                          ${D}toggle verbose output (show/hide skipped tasks)${R}\n"
     printf "    ${N}help${R}                           ${D}show this help${R}\n"
@@ -1759,8 +1904,9 @@ range42-context() {
         snapshot-list)      _r42_snapshot_list ;;
         revert)             _r42_revert "$@" ;;
         ssh-reload)     _r42_ssh_reload ;;
-        inventory|inv)  _r42_inventory ;;
-        passwords|pw)   _r42_passwords ;;
+        show-vault)     _r42_show_vault ;;
+        show-config)    _r42_show_config ;;
+        show-inventory) _r42_show_inventory ;;
         ssh)            _r42_ssh "$@" ;;
         cd)             _r42_cd "$@" ;;
         debug)          _r42_debug ;;
