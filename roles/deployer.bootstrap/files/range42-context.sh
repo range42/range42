@@ -1146,6 +1146,36 @@ _r42_delete_everything() {
     echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
     echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
 
+    # flush R42-FORWARD iptables chain if any scenario had network isolation
+    local first_teardown=""
+    for m in "${manifests[@]}"; do
+        local scn_dir="${m%/manifest/scenario_vms.json}"
+        local teardown_yml="${scn_dir}/05_network_isolation/teardown.yml"
+        if [[ -f "$teardown_yml" ]]; then
+            first_teardown="$teardown_yml"
+            break
+        fi
+    done
+
+    if [[ -n "$first_teardown" ]]; then
+        local inv_dir="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR:-}"
+        local vault_pass="${RANGE42_VAULT_PASSWORD_FILE:-}"
+        if [[ -z "$inv_dir" || -z "$vault_pass" ]]; then
+            _r42_print_warning "skipping R42-FORWARD teardown — RANGE42_ANSIBLE_ROLES__INVENTORY_DIR or RANGE42_VAULT_PASSWORD_FILE not set (run: range42-context use <codename> <scenario>)"
+        else
+            echo ""
+            _r42_print_step "flushing R42-FORWARD iptables chain (network isolation teardown) ..."
+            (
+                cd "$(dirname "$first_teardown")" && \
+                ansible-playbook \
+                    -i "${inv_dir}/inventory_default.yml" \
+                    -l "all" \
+                    "./teardown.yml" \
+                    --vault-password-file "${vault_pass}"
+            ) || _r42_print_warning "R42-FORWARD teardown returned non-zero (chain may not have been deployed — safe to ignore)"
+        fi
+    fi
+
     echo ""
     _r42_print_step "cleaning ${#all_ips[@]} known_hosts entries ..."
     for ip in "${all_ips[@]}"; do
