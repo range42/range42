@@ -1139,12 +1139,11 @@ _r42_delete_everything() {
     local _vm_list_json
     _vm_list_json=$(proxmox_vm.list.to.jsons.sh 2>&1 | grep '"vm_id":[0-9]')
     if [ -z "$_vm_list_json" ]; then
-        _r42_print_fail "proxmox_vm.list.to.jsons.sh returned no VM data (no vm_id lines) — aborting nuke"
-        _r42_print_warning "output: ${_vm_list_json[1,200]}"
-        return 1
+        _r42_print_warning "proxmox_vm.list.to.jsons.sh returned no VM data — skipping VM deletion (continuing with firewall + known_hosts cleanup)"
+    else
+        echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
+        echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
     fi
-    echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
-    echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
 
     # flush R42-FORWARD iptables chain via direct SSH to proxmox-cli
     local codename="${RANGE42_INFRASTRUCTURE_CODENAME:-}"
