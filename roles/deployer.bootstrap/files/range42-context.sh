@@ -1089,7 +1089,7 @@ _r42_delete_everything() {
     fi
 
     _r42_print_section "DELETE EVERYTHING — cross-scenario nuke"
-    _r42_print_warning "this will destroy ALL VMs + templates referenced by EVERY scenario manifest on this Proxmox"
+    _r42_print_warning "this will destroy ALL VMs + templates referenced by EVERY scenario manifest on this Proxmox, and flush ALL R42-FORWARD firewall rules"
     echo ""
     echo "  scenarios with a manifest:"
     for m in "${manifests[@]}"; do
