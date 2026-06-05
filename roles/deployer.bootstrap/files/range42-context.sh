@@ -318,44 +318,44 @@ _r42_ssh_reload() {
         _r42_print_warning "vault not readable - ssh-add will prompt interactively for passphrase-protected keys"
     fi
 
-    # parse active ssh config for IdentityFile entries.
-    # Process substitution (<(...)) keeps the while loops in the current shell
-    # so vault_content (set above) is visible — pipelines fork subshells in
-    # interactive ZSH (job control enabled) and would lose the variable.
-    while IFS= read -r config_file; do
-        while IFS= read -r identity_file; do
-            if [[ "$verbose" == "-v" ]]; then
-                _r42_print_warning "loading: $identity_file"
-            fi
+    # parse active ssh config for IdentityFile entries
+    # FIX P4: trim leading whitespace from IdentityFile paths
+    grep '^Include ' "$RANGE42_SSH_CONFIG_FILE" |
+        grep 'config_range42' |
+        grep -v '^#' |
+        sed 's/^Include //' |
+        while read -r config_file; do
+            grep 'IdentityFile ' "$config_file" 2>/dev/null |
+                sed 's/^[[:space:]]*IdentityFile[[:space:]]*//' |
+                sort -u |
+                while read -r identity_file; do
+                    if [[ "$verbose" == "-v" ]]; then
+                        _r42_print_warning "loading: $identity_file"
+                    fi
 
-            # try passphrase lookup from vault first
-            local field="" passphrase=""
-            if [[ -n "$vault_content" ]]; then
-                field=$(_r42_passphrase_field_for_key "$identity_file")
-                if [[ -n "$field" ]]; then
-                    passphrase=$(echo "$vault_content" | _r42_yaml_get "$field")
-                fi
-            fi
+                    # try passphrase lookup from vault first
+                    local field="" passphrase=""
+                    if [[ -n "$vault_content" ]]; then
+                        field=$(_r42_passphrase_field_for_key "$identity_file")
+                        if [[ -n "$field" ]]; then
+                            passphrase=$(echo "$vault_content" | _r42_yaml_get "$field")
+                        fi
+                    fi
 
-            if [[ -n "$passphrase" ]]; then
-                # non-interactive via SSH_ASKPASS ; fall back to /dev/tty
-                # if the vault passphrase does not match the key (desync).
-                if ! _r42_ssh_add_with_passphrase "$identity_file" "$passphrase"; then
-                    ssh-add "$identity_file" </dev/tty 2>/dev/null
-                fi
-            else
-                # vault unreadable, field absent, or empty passphrase :
-                # plain ssh-add. Loads unprotected keys silently, prompts
-                # for protected ones via /dev/tty (legacy behavior).
-                ssh-add "$identity_file" </dev/tty 2>/dev/null
-            fi
-        done < <(grep 'IdentityFile ' "$config_file" 2>/dev/null \
-                     | sed 's/^[[:space:]]*IdentityFile[[:space:]]*//' \
-                     | sort -u)
-    done < <(grep '^Include ' "$RANGE42_SSH_CONFIG_FILE" \
-                 | grep 'config_range42' \
-                 | grep -v '^#' \
-                 | sed 's/^Include //')
+                    if [[ -n "$passphrase" ]]; then
+                        # non-interactive via SSH_ASKPASS ; fall back to /dev/tty
+                        # if the vault passphrase does not match the key (desync).
+                        if ! _r42_ssh_add_with_passphrase "$identity_file" "$passphrase"; then
+                            ssh-add "$identity_file" </dev/tty 2>/dev/null
+                        fi
+                    else
+                        # vault unreadable, field absent, or empty passphrase :
+                        # plain ssh-add. Loads unprotected keys silently, prompts
+                        # for protected ones via /dev/tty (legacy behavior).
+                        ssh-add "$identity_file" </dev/tty 2>/dev/null
+                    fi
+                done
+        done
 
     local loaded
     loaded=$(ssh-add -l 2>/dev/null | wc -l)
