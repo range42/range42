@@ -26,32 +26,35 @@ RANGE42_SSH_BEGIN_MARK='^#### BEGIN RANGE42 INCLUDE'
 RANGE42_SSH_END_MARK='^#### END RANGE42 INCLUDE'
 RANGE42_CONFIG_BASE_DIR="${RANGE42_CONFIG_BASE_DIR:-$HOME/range42.config}"
 
-# banner on load
-_r42_last_workspace="$(sed -n "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/{/^[[:space:]]*Include /{s@.*config_range42-@@;s@[[:space:]].*@@;p;}}" "$RANGE42_SSH_CONFIG_FILE" 2>/dev/null | head -1)"
-printf "\n\033[1;32m  deployer-cli ready\033[0m\n"
-if [[ -n "$_r42_last_workspace" ]]; then
-    # split CODENAME-SCENARIO: scenario is after the last known separator
-    local _last_scenario _last_codename
-    for _sd in "$RANGE42_CONFIG_BASE_DIR/$_r42_last_workspace"/; do
-        if [[ -d "$_sd" ]]; then
-            # find scenario from scenario dir in range42-playbooks
-            for _pd in "$HOME/range42/range42-playbooks/scenarios"/*/; do
-                _last_scenario="$(basename "$_pd")"
-                if [[ "$_r42_last_workspace" == *"-${_last_scenario}" ]]; then
-                    _last_codename="${_r42_last_workspace%-${_last_scenario}}"
-                    break 2
-                fi
-            done
+# banner on load - skipped when RANGE42_QUIET is set (e.g. by the TUI which
+# re-sources this file on every subcommand and does not want the banner replayed)
+if [[ -z "${RANGE42_QUIET:-}" ]]; then
+    _r42_last_workspace="$(sed -n "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/{/^[[:space:]]*Include /{s@.*config_range42-@@;s@[[:space:]].*@@;p;}}" "$RANGE42_SSH_CONFIG_FILE" 2>/dev/null | head -1)"
+    printf "\n\033[1;32m  deployer-cli ready\033[0m\n"
+    if [[ -n "$_r42_last_workspace" ]]; then
+        # split CODENAME-SCENARIO: scenario is after the last known separator
+        local _last_scenario _last_codename
+        for _sd in "$RANGE42_CONFIG_BASE_DIR/$_r42_last_workspace"/; do
+            if [[ -d "$_sd" ]]; then
+                # find scenario from scenario dir in range42-playbooks
+                for _pd in "$HOME/range42/range42-playbooks/scenarios"/*/; do
+                    _last_scenario="$(basename "$_pd")"
+                    if [[ "$_r42_last_workspace" == *"-${_last_scenario}" ]]; then
+                        _last_codename="${_r42_last_workspace%-${_last_scenario}}"
+                        break 2
+                    fi
+                done
+            fi
+        done
+        if [[ -n "$_last_codename" && -n "$_last_scenario" ]]; then
+            printf "\n\033[0;90m  INFO  load previous workspace:\033[0m\n"
+            printf "\033[0;37m        range42-context use %s %s\033[0m\n" "$_last_codename" "$_last_scenario"
         fi
-    done
-    if [[ -n "$_last_codename" && -n "$_last_scenario" ]]; then
-        printf "\n\033[0;90m  INFO  load previous workspace:\033[0m\n"
-        printf "\033[0;37m        range42-context use %s %s\033[0m\n" "$_last_codename" "$_last_scenario"
     fi
+    unset _r42_last_workspace _last_scenario _last_codename
+    printf "\n\033[0;90m  INFO  all commands:\033[0m\n"
+    printf "\033[0;37m        range42-context help\033[0m\n\n"
 fi
-unset _r42_last_workspace _last_scenario _last_codename
-printf "\n\033[0;90m  INFO  all commands:\033[0m\n"
-printf "\033[0;37m        range42-context help\033[0m\n\n"
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # display helpers
@@ -1834,6 +1837,7 @@ _r42_help() {
     printf "    ${N}use${R} <codename> <scenario>      ${D}switch to a workspace${R}\n"
     printf "    ${N}status${R}                         ${D}check workspace health${R}\n"
     printf "    ${N}init${R}                           ${D}launch setup wizard${R}\n"
+    printf "    ${N}--tui${R}                          ${D}launch the interactive TUI dashboard${R}\n"
     echo ""
     printf "  ${C}navigation${R}\n"
     printf "    ${N}cd config${R}                      ${D}go to workspace config directory${R}\n"
@@ -1914,6 +1918,53 @@ range42-context() {
         catalog-try-list)        _r42_catalog_try_list "" "docker/admin/" ;;
         catalog-try-list-admin)  _r42_catalog_try_list_admin ;;
         help|--help|-h) _r42_help ;;
+        --tui)
+            # Launch the Textual TUI in a while-loop so `use` (eval-on-exit, code 42)
+            # can mutate the parent shell environment and the TUI re-launches with
+            # the new workspace active.
+            local _r42_tui_git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+            local _r42_tui_py=""
+            local _r42_tui_search_paths=(
+                "${_r42_tui_git_dir%/}/range42/range42-context-tui.py"
+                "${_r42_tui_git_dir%/}/range42-context-tui.py"
+            )
+            for p in "${_r42_tui_search_paths[@]}"; do
+                if [[ -f "$p" ]]; then
+                    _r42_tui_py="$p"
+                    break
+                fi
+            done
+            if [[ -z "$_r42_tui_py" ]]; then
+                _r42_print_fail "range42-context-tui.py not found"
+                _r42_print_warning "searched:"
+                for p in "${_r42_tui_search_paths[@]}"; do
+                    _r42_print_warning "  $p"
+                done
+                return 1
+            fi
+            local _r42_tui_sentinel
+            _r42_tui_sentinel="$(mktemp -t range42-tui-eval.XXXXXX.sh)" || return 1
+            export RANGE42_TUI_SENTINEL="$_r42_tui_sentinel"
+            while true; do
+                : > "$_r42_tui_sentinel"
+                python3 "$_r42_tui_py"
+                local _rc=$?
+                case "$_rc" in
+                    0)  break ;;
+                    42)
+                        if [[ -s "$_r42_tui_sentinel" ]]; then
+                            eval "$(cat "$_r42_tui_sentinel")"
+                        fi
+                        ;;
+                    *)
+                        _r42_print_fail "range42-context --tui exited with code $_rc"
+                        break
+                        ;;
+                esac
+            done
+            rm -f "$_r42_tui_sentinel"
+            unset RANGE42_TUI_SENTINEL
+            ;;
         *)
             _r42_print_fail "unknown command: $cmd"
             _r42_help
