@@ -14,4 +14,5 @@ jobs:
       - run: apt-get update && apt-get install -y --no-install-recommends git
       - uses: actions/checkout@v4
       - run: pip install --no-cache-dir ansible-lint
-      - run: ansible-lint --profile=production
+      - run: ansible-galaxy collection install community.crypto community.general
+      - run: ansible-lint

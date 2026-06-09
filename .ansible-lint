@@ -1,0 +1,12 @@
+profile: basic
+
+skip_list:
+  # SCREAMING_SNAKE is the documented convention for infrastructure-wide vars
+  # (see inventories/example/group_vars/all/vars.yml and CLAUDE.md)
+  - var-naming[pattern]
+  # noun.verb role naming is the documented convention (e.g. proxmox.init, deployer.bootstrap)
+  - role-name
+
+warn_list:
+  - yaml[line-length]
+  - risky-shell-pipe
