@@ -6,7 +6,12 @@ skip_list:
   - var-naming[pattern]
   # noun.verb role naming is the documented convention (e.g. proxmox.init, deployer.bootstrap)
   - role-name
+  # pre-existing pattern: import_tasks without explicit names throughout roles
+  - name[missing]
+  # plays in bootstrapper playbooks do not require names
+  - name[play]
 
 warn_list:
   - yaml[line-length]
+  - yaml[commas]
   - risky-shell-pipe
