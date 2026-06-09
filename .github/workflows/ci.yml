@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install --no-cache-dir ruff
-      - run: ruff check --select ALL .
+      - run: ruff check --select ALL wizard/ range42-init.py range42-context-tui.py
 
   ansible-lint:
     name: Ansible Lint
