@@ -153,7 +153,7 @@ try:
     from textual.theme import Theme
     from textual.widget import Widget
     from textual.widgets import (
-        Button, DataTable, Footer, Header,
+        Button, Footer, Header,
         Input, Label, LoadingIndicator, RichLog, Select, Static, Rule, Switch,
     )
 
@@ -383,7 +383,7 @@ def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
         return False, f"{type(e).__name__}: {e}"
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
-from wizard.preflight import SCENARIO_REQUIRED_FILES, run_all_checks, get_apt_install_command, get_apt_install_packages
+from wizard.preflight import SCENARIO_REQUIRED_FILES, run_all_checks, get_apt_install_packages
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def cmd_ok(c): return bool(shutil.which(c))
