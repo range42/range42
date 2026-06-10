@@ -976,14 +976,14 @@ _r42_apply_to_scenario_vms() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context start / stop / stop-force / pause / resume
+# range42-context start / stop / stop-acpi / pause / resume
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_start()      { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.start.to.jsons.sh"      "starting"; }
-_r42_stop()       { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.stop.to.jsons.sh"       "stopping"; }
-_r42_stop_force() { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.stop_force.to.jsons.sh" "force-stopping"; }
-_r42_pause()      { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.pause.to.jsons.sh"      "pausing"; }
-_r42_resume()     { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.resume.to.jsons.sh"     "resuming"; }
+_r42_start()     { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.start.to.jsons.sh"      "starting"; }
+_r42_stop()      { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.stop_force.to.jsons.sh" "stopping (force)"; }
+_r42_stop_acpi() { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.stop.to.jsons.sh"       "stopping (acpi)"; }
+_r42_pause()     { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.pause.to.jsons.sh"      "pausing"; }
+_r42_resume()    { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.resume.to.jsons.sh"     "resuming"; }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context snapshot — snapshot all VMs of the active scenario
@@ -1855,8 +1855,8 @@ _r42_help() {
     echo ""
     printf "  ${C}lifecycle (all VMs of active scenario)${R}\n"
     printf "    ${N}start${R}                          ${D}start all scenario VMs${R}\n"
-    printf "    ${N}stop${R}                           ${D}graceful shutdown of all scenario VMs${R}\n"
-    printf "    ${N}stop-force${R}                     ${D}force stop all scenario VMs${R}\n"
+    printf "    ${N}stop${R}                           ${D}force stop all scenario VMs (kill timeout=10)${R}\n"
+    printf "    ${N}stop-acpi${R}                      ${D}graceful ACPI shutdown of all scenario VMs${R}\n"
     printf "    ${N}pause${R}                          ${D}pause all scenario VMs${R}\n"
     printf "    ${N}resume${R}                         ${D}resume all paused scenario VMs${R}\n"
     printf "    ${N}snapshot${R} [name]                ${D}snapshot all scenario VMs (auto-named if not provided)${R}\n"
@@ -1901,7 +1901,7 @@ range42-context() {
         reset)              _r42_reset ;;
         start)              _r42_start ;;
         stop)               _r42_stop ;;
-        stop-force)         _r42_stop_force ;;
+        stop-acpi)          _r42_stop_acpi ;;
         pause)              _r42_pause ;;
         resume)             _r42_resume ;;
         snapshot)           _r42_snapshot "$@" ;;

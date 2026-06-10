@@ -238,8 +238,8 @@ COMMANDS: list = [
     CommandSpec("ssh-reload",        "operations", "ssh-reload",        "reload SSH keys for active workspace",      "subprocess"),
     # lifecycle
     CommandSpec("start",         "lifecycle", "start",         "start all scenario VMs",          "subprocess"),
-    CommandSpec("stop",          "lifecycle", "stop",          "graceful shutdown of all VMs",    "subprocess"),
-    CommandSpec("stop-force",    "lifecycle", "stop-force",    "force stop all scenario VMs",     "subprocess"),
+    CommandSpec("stop",          "lifecycle", "stop",          "force stop all scenario VMs (kill timeout=10)", "subprocess"),
+    CommandSpec("stop-acpi",     "lifecycle", "stop-acpi",     "graceful ACPI shutdown of all VMs",             "subprocess"),
     CommandSpec("pause",         "lifecycle", "pause",         "pause all scenario VMs",          "subprocess"),
     CommandSpec("resume",        "lifecycle", "resume",        "resume all paused scenario VMs",  "subprocess"),
     CommandSpec("snapshot",      "lifecycle", "snapshot",      "snapshot all scenario VMs",       "subprocess", arg_ui="arg-input", args_optional=["name"]),
