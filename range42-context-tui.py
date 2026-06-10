@@ -822,9 +822,7 @@ class DeployOptionsScreen(ModalScreen):
                 for f in self.features:
                     fid = f.get("id", "")
                     label = f.get("label") or fid
-                    desc = f.get("description", "")
-                    text = f"{label}" if not desc else f"{label}  -  {desc}"
-                    yield Checkbox(text,
+                    yield Checkbox(label,
                                    value=bool(self.defaults.get(fid, True)),
                                    id=f"deploy-opt-{fid}")
             with Horizontal(id="deploy-opts-buttons"):
