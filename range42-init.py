@@ -6,7 +6,7 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import argparse, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import argparse, os, re, shlex, shutil, subprocess, ssl, sys, time, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
