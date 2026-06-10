@@ -125,17 +125,12 @@ from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import (
     Header, Footer, OptionList, RichLog, Input, ListView, ListItem, Label, Static,
-    Checkbox, Button,
+    Switch, Button,
 )
 from textual.widgets.option_list import Option
 
 from textual import work, on
 from rich.text import Text
-
-# Override the default Textual Checkbox tick character ("X") with a check mark.
-# Reason : in DeployOptionsScreen, "X" reads as "removed/rejected" rather than
-# "selected/installed". The check mark matches operator intuition.
-Checkbox.BUTTON_INNER = "✓"   # U+2713 CHECK MARK ; falls back to "V" in 7-bit terminals
 
 try:
     import yaml  # used by DeployOptionsScreen to parse feature_flags.yml
@@ -751,9 +746,9 @@ class ArgInputScreen(ModalScreen):
         self.dismiss(None)
 
 
-# ── deploy options modal (feature flag checkboxes) ────────────────────────────
+# ── deploy options modal (feature flag toggles) ──────────────────────────────
 class DeployOptionsScreen(ModalScreen):
-    """Modal that renders one Checkbox per entry of the active scenario's
+    """Modal that renders one Switch per entry of the active scenario's
     feature_flags.yml. Returns the list of `-e INSTALL_<ID>=YES|NO` args
     to pass to `range42-context deploy`. Returns None if cancelled."""
 
@@ -791,8 +786,19 @@ class DeployOptionsScreen(ModalScreen):
         margin: 1 0;
     }
 
-    Checkbox {
-        margin: 0 0;
+    .deploy-opt-row {
+        height: 3;
+        align-vertical: middle;
+        margin-bottom: 0;
+    }
+
+    .deploy-opt-row Switch {
+        margin-right: 1;
+    }
+
+    .deploy-opt-label {
+        height: 3;
+        content-align: left middle;
     }
 
     #deploy-opts-buttons {
@@ -821,15 +827,16 @@ class DeployOptionsScreen(ModalScreen):
         with Vertical(id="deploy-opts-container"):
             yield Static(f"deploy {self.scenario_name}  -  optional components",
                          id="deploy-opts-title")
-            yield Static("Tick the components to install. Untick to skip.",
+            yield Static("Toggle the components on (install) or off (skip).",
                          id="deploy-opts-subtitle")
             with Vertical(id="deploy-opts-list"):
                 for f in self.features:
                     fid = f.get("id", "")
                     label = f.get("label") or fid
-                    yield Checkbox(label,
-                                   value=bool(self.defaults.get(fid, True)),
-                                   id=f"deploy-opt-{fid}")
+                    with Horizontal(classes="deploy-opt-row"):
+                        yield Switch(value=bool(self.defaults.get(fid, True)),
+                                     id=f"deploy-opt-{fid}")
+                        yield Label(label, classes="deploy-opt-label")
             with Horizontal(id="deploy-opts-buttons"):
                 yield Button("Deploy", id="btn-deploy", variant="success")
                 yield Button("Cancel", id="btn-cancel", variant="default")
@@ -854,8 +861,8 @@ class DeployOptionsScreen(ModalScreen):
             if not fid:
                 continue
             try:
-                cb = self.query_one(f"#deploy-opt-{fid}", Checkbox)
-                val = "YES" if bool(cb.value) else "NO"
+                sw = self.query_one(f"#deploy-opt-{fid}", Switch)
+                val = "YES" if bool(sw.value) else "NO"
             except Exception:
                 val = "YES" if bool(self.defaults.get(fid, True)) else "NO"
             args.extend(["-e", f"INSTALL_{fid}={val}"])
