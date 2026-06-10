@@ -329,6 +329,7 @@ class _S:
     deploy_now      = False
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
+    dns_server      = "1.1.1.1"
     apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
     apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
     apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
@@ -1139,6 +1140,18 @@ class StepAutoDetectNAT(Step):
                      "ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 && echo OK || echo FAIL"],
                     env=env, capture_output=True, text=True, timeout=15)
                 internet_ok = "OK" in r2.stdout
+                # detect the node's configured resolver — used as the default DNS
+                # for VM cloud-init (avoids hardcoding 1.1.1.1, which some lab
+                # networks firewall). Falls back to the default on any failure.
+                r3 = subprocess.run(
+                    ["sshpass", "-e", "ssh",
+                     "-o", "StrictHostKeyChecking=accept-new",
+                     "-o", "ConnectTimeout=5",
+                     f"root@{S.proxmox_address}",
+                     "awk '/^nameserver/{print $2; exit}' /etc/resolv.conf"],
+                    env=env, capture_output=True, text=True, timeout=10)
+                if r3.returncode == 0 and r3.stdout.strip():
+                    S.dns_server = r3.stdout.strip()
             else:
                 # no root password — can't SSH, use default
                 detected = "vmbr0"
@@ -1505,6 +1518,7 @@ class StepReview(Step):
             ("deployer IP",     S.deployer_ip),
             ("NAT interface",   S.nat_interface),
             ("NAT bridges",     ", ".join(n for n, v in sorted(S.nat_bridges.items()) if v)),
+            ("VM DNS",          S.dns_server),
             ("apt mirror",       "enabled" if S.apt_mirror_enabled else "disabled"),
             ("mirror IP",        S.apt_mirror_vm_ip if S.apt_mirror_enabled else "—"),
             ("root password",   pw),
@@ -1702,7 +1716,15 @@ class StepDeploy(Step):
             scen.mkdir(parents=True, exist_ok=True)
             sh.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
             sh.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
-            log_row("PASS", "configured scenario", f"name={S.scenario}")
+            # substitute the detected Proxmox node resolver as the default VM DNS
+            # (templates ship 1.1.1.1 as the portable fallback). vault.yml.example
+            # carries it too, so the operator-built vault — which the scenario
+            # deploy actually loads — gets the right resolver instead of 1.1.1.1.
+            for _f in (scen / "vars.yml", scen / "vault.yml.example"):
+                _t = _f.read_text()
+                _f.write_text(_t.replace('default_vm_ci_dns_ips: "1.1.1.1"',
+                                         f'default_vm_ci_dns_ips: "{S.dns_server}"'))
+            log_row("PASS", "configured scenario", f"name={S.scenario}  dns={S.dns_server}")
         else:
             log_row("PASS", "preserved scenario", f"name={S.scenario} (existing config untouched)")
         log_row("PASS", "vault template ready", "file=vault.yml.example")
