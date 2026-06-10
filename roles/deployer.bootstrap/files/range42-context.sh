@@ -798,10 +798,16 @@ _r42_deploy() {
 
     _r42_print_section "deploying scenario"
     _r42_flush_known_hosts "${RANGE42_ACTIVE_WORKSPACE:-}"
-    _r42_print_step "running: $setup_script"
+    if [ "$#" -gt 0 ]; then
+        _r42_print_step "running: $setup_script $*"
+    else
+        _r42_print_step "running: $setup_script"
+    fi
     echo ""
 
-    cd "$scenario_target" && bash "$setup_script"
+    # Extra args (typically -e enable_<feature>=<bool> from the TUI deploy modal)
+    # propagate as-is to the scenario's setup.sh which forwards to ansible-playbook.
+    cd "$scenario_target" && bash "$setup_script" "$@"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -821,10 +827,16 @@ _r42_deploy_vms() {
 
     _r42_print_section "deploying VMs only (skip templates)"
     _r42_flush_known_hosts "${RANGE42_ACTIVE_WORKSPACE:-}"
-    _r42_print_step "running: $script"
+    if [ "$#" -gt 0 ]; then
+        _r42_print_step "running: $script $*"
+    else
+        _r42_print_step "running: $script"
+    fi
     echo ""
 
-    cd "$scenario_target" && bash "$script"
+    # Extra args (typically -e enable_<feature>=<bool> from the TUI deploy modal)
+    # propagate as-is to the scenario's setup_vms_only.sh which forwards to ansible-playbook.
+    cd "$scenario_target" && bash "$script" "$@"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -1893,8 +1905,8 @@ range42-context() {
         use)            _r42_use "$@" ;;
         status)         _r42_status ;;
         init)           _r42_init ;;
-        deploy)             _r42_deploy ;;
-        deploy-vms)         _r42_deploy_vms ;;
+        deploy)             _r42_deploy "$@" ;;
+        deploy-vms)         _r42_deploy_vms "$@" ;;
         delete)             _r42_delete ;;
         delete-vms)         _r42_delete_vms ;;
         delete-everything)  _r42_delete_everything ;;
