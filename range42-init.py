@@ -317,6 +317,7 @@ class WizardState(BaseModel):
     deploy_now:      bool      = False
     install_dir:     str       = Field(default_factory=lambda: os.path.expanduser("~/range42"))
     nat_interface:   str       = "vmbr0"
+    dns_server:      str       = "1.1.1.1"
     nat_bridges:     dict[str, bool] = Field(
         default_factory=lambda: {f"vmbr{i}": True for i in range(140, 152)}
     )
@@ -965,6 +966,18 @@ class StepAutoDetectNAT(Step):
                      "ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 && echo OK || echo FAIL"],
                     env=env, capture_output=True, text=True, timeout=15)
                 internet_ok = "OK" in r2.stdout
+                # detect the node's configured resolver — used as the default DNS
+                # for VM cloud-init (avoids hardcoding 1.1.1.1, which some lab
+                # networks firewall). Falls back to the default on any failure.
+                r3 = subprocess.run(
+                    ["sshpass", "-e", "ssh",
+                     "-o", "StrictHostKeyChecking=accept-new",
+                     "-o", "ConnectTimeout=5",
+                     f"root@{S.proxmox_address}",
+                     "awk '/^nameserver/{print $2; exit}' /etc/resolv.conf"],
+                    env=env, capture_output=True, text=True, timeout=10)
+                if r3.returncode == 0 and r3.stdout.strip():
+                    S.dns_server = r3.stdout.strip()
             else:
                 # no root password — can't SSH, use default
                 detected = "vmbr0"
@@ -1337,6 +1350,7 @@ class StepReview(Step):
             ("deployer IP",     S.deployer_ip),
             ("NAT interface",   S.nat_interface),
             ("NAT bridges",     ", ".join(n for n, v in sorted(S.nat_bridges.items()) if v)),
+            ("VM DNS",          S.dns_server),
             ("root password",   pw),
             ("sudo password",   spw),
             ("deployer access", dpw),
@@ -1480,8 +1494,17 @@ class StepDeploy(Step):
         with open(vars_, "a") as f:
             f.write(bridges_yaml)
 
+        # inject default cloud-init DNS for lab VMs — detected from the Proxmox
+        # node resolver (overridable per-scenario via vm_ci_dns_ips).
+        with open(vars_, "a") as f:
+            f.write(
+                "\n# default cloud-init DNS for lab VMs (detected from the "
+                "Proxmox node resolver)\n"
+                f'default_vm_ci_dns_ips: "{S.dns_server}"\n')
+
         log_row("PASS", "configured vars.yml",
-                f"codename={S.codename}  node={S.proxmox_node}  nat={S.nat_interface}")
+                f"codename={S.codename}  node={S.proxmox_node}  "
+                f"nat={S.nat_interface}  dns={S.dns_server}")
         time.sleep(0.1)
 
         # populate scenario group_vars from range42-playbooks/scenarios/<s>/templates/
