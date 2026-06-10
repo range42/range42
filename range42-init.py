@@ -1494,17 +1494,8 @@ class StepDeploy(Step):
         with open(vars_, "a") as f:
             f.write(bridges_yaml)
 
-        # inject default cloud-init DNS for lab VMs — detected from the Proxmox
-        # node resolver (overridable per-scenario via vm_ci_dns_ips).
-        with open(vars_, "a") as f:
-            f.write(
-                "\n# default cloud-init DNS for lab VMs (detected from the "
-                "Proxmox node resolver)\n"
-                f'default_vm_ci_dns_ips: "{S.dns_server}"\n')
-
         log_row("PASS", "configured vars.yml",
-                f"codename={S.codename}  node={S.proxmox_node}  "
-                f"nat={S.nat_interface}  dns={S.dns_server}")
+                f"codename={S.codename}  node={S.proxmox_node}  nat={S.nat_interface}")
         time.sleep(0.1)
 
         # populate scenario group_vars from range42-playbooks/scenarios/<s>/templates/
@@ -1516,7 +1507,15 @@ class StepDeploy(Step):
             scen.mkdir(parents=True, exist_ok=True)
             shutil.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
             shutil.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
-            log_row("PASS", "configured scenario", f"name={S.scenario}")
+            # substitute the detected Proxmox node resolver as the default VM DNS
+            # (templates ship 1.1.1.1 as the portable fallback). vault.yml.example
+            # carries it too, so the operator-built vault — which the scenario
+            # deploy actually loads — gets the right resolver instead of 1.1.1.1.
+            for _f in (scen / "vars.yml", scen / "vault.yml.example"):
+                _t = _f.read_text()
+                _f.write_text(_t.replace('default_vm_ci_dns_ips: "1.1.1.1"',
+                                         f'default_vm_ci_dns_ips: "{S.dns_server}"'))
+            log_row("PASS", "configured scenario", f"name={S.scenario}  dns={S.dns_server}")
         else:
             log_row("PASS", "preserved scenario", f"name={S.scenario} (existing config untouched)")
         log_row("PASS", "vault template ready", "file=vault.yml.example")
