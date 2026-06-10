@@ -1092,7 +1092,7 @@ _r42_delete_everything() {
     fi
 
     _r42_print_section "DELETE EVERYTHING — cross-scenario nuke"
-    _r42_print_warning "this will destroy ALL VMs + templates referenced by EVERY scenario manifest on this Proxmox"
+    _r42_print_warning "this will destroy ALL VMs + templates referenced by EVERY scenario manifest on this Proxmox, and flush ALL R42-FORWARD firewall rules"
     echo ""
     echo "  scenarios with a manifest:"
     for m in "${manifests[@]}"; do
@@ -1142,12 +1142,25 @@ _r42_delete_everything() {
     local _vm_list_json
     _vm_list_json=$(proxmox_vm.list.to.jsons.sh 2>&1 | grep '"vm_id":[0-9]')
     if [ -z "$_vm_list_json" ]; then
-        _r42_print_fail "proxmox_vm.list.to.jsons.sh returned no VM data (no vm_id lines) — aborting nuke"
-        _r42_print_warning "output: ${_vm_list_json[1,200]}"
-        return 1
+        _r42_print_warning "proxmox_vm.list.to.jsons.sh returned no VM data — skipping VM deletion (continuing with firewall + known_hosts cleanup)"
+    else
+        echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
+        echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
     fi
-    echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.stop_force.to.jsons.sh
-    echo "$_vm_list_json" | jq -c | grep -E "\"vm_id\":($id_regex)([^0-9]|\$)" | proxmox_vm.vm_id.delete.to.jsons.sh
+
+    # flush R42-FORWARD iptables chain via direct SSH to proxmox-cli
+    local codename="${RANGE42_INFRASTRUCTURE_CODENAME:-}"
+    if [[ -z "$codename" ]]; then
+        _r42_print_warning "skipping R42-FORWARD teardown — RANGE42_INFRASTRUCTURE_CODENAME not set (run: range42-context use <codename> <scenario>)"
+    else
+        local px_cli="${codename}-cli"
+        echo ""
+        _r42_print_step "flushing R42-FORWARD iptables chain on $px_cli ..."
+        ssh "$px_cli" \
+            'iptables -D FORWARD -j R42-FORWARD 2>/dev/null; iptables -F R42-FORWARD 2>/dev/null; iptables -X R42-FORWARD 2>/dev/null; true' \
+            && _r42_print_check "R42-FORWARD chain removed" \
+            || _r42_print_warning "R42-FORWARD teardown returned non-zero (chain may not have been deployed — safe to ignore)"
+    fi
 
     echo ""
     _r42_print_step "cleaning ${#all_ips[@]} known_hosts entries ..."
