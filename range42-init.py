@@ -339,7 +339,7 @@ def prefill(name):
     if not vf.exists(): return
     txt = vf.read_text()
     def ex(k):
-        m = re.search(rf'^{k}:\s*"([^"]*)"', txt, re.M)
+        m = re.search(rf'^{re.escape(k)}:\s*"([^"]*)"', txt, re.M)
         return m.group(1) if m else ""
     S.codename        = name
     S.proxmox_address = ex("INFRASTRUCTURE_PROXMOX_ADDRESS")
@@ -511,7 +511,6 @@ class StepPreflight(Step):
 
     @work(thread=True)
     def check(self):
-        import time
         results, fail = run_all_checks(EXAMPLE_DIR)
         for r in results:
             self.app.call_from_thread(self._row, r["badge"], r["label"], r["detail"])
@@ -778,10 +777,13 @@ class StepAddress(Step):
     )
 
     def handle_next(self, app):
-        addr = self.query_one("#i-addr", Input).value.strip().split(":")[0]
+        addr_raw = self.query_one("#i-addr", Input).value.strip()
         err = self.query_one("#e-addr", Label)
-        if not addr:
+        if not addr_raw:
             err.update("✗ address is required"); return
+        if addr_raw.count(":") > 1:
+            err.update("✗ IPv6 not supported — use an IPv4 address or hostname"); return
+        addr = addr_raw.split(":")[0]
         if not self._ADDR_RE.match(addr):
             err.update("✗ invalid address — use an IPv4 (192.168.1.100) or hostname (proxmox.local)"); return
         err.update("")
@@ -993,7 +995,7 @@ class StepNATBridges(Step):
         bid = event.button.id or ""
         if not bid.startswith("nat-"):
             return
-        name = bid.replace("nat-", "")
+        name = bid.removeprefix("nat-")
         S.nat_bridges[name] = not S.nat_bridges[name]
         enabled = S.nat_bridges[name]
         event.button.label = self._btn_label(name, enabled)
@@ -1339,8 +1341,6 @@ class StepDeploy(Step):
     # ── inventory creation ────────────────────────────────────────────────────
     @work(thread=True)
     def create_inventory(self):
-        import time, shutil as sh
-
         def log_row(badge, msg, kv=""):
             cols = {"PASS":"#4ade80","WARN":"#fbbf24","FAIL":"#f87171","INFO":"#38bdf8"}
             c = cols.get(badge, "#94a3b8")
@@ -1369,8 +1369,8 @@ class StepDeploy(Step):
             # create skeleton: hosts.yml + group_vars/all/ only
             # scenario group_vars are populated further down from playbooks templates
             (dest / "group_vars" / "all").mkdir(parents=True, exist_ok=True)
-            sh.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
-            sh.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml",
+            shutil.copy2(EXAMPLE_DIR / "hosts.yml", dest / "hosts.yml")
+            shutil.copy2(EXAMPLE_DIR / "group_vars" / "all" / "vars.yml",
                      dest / "group_vars" / "all" / "vars.yml")
             log_row("PASS", "created" if was_new else "updated",
                     f"path=inventories/{S.codename}/")
@@ -1438,8 +1438,8 @@ class StepDeploy(Step):
         # preserve ALL existing files — user may have edited vars.yml or filled vault.yml.
         if not scen.exists():
             scen.mkdir(parents=True, exist_ok=True)
-            sh.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
-            sh.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
+            shutil.copy2(scenario_tmpl / "ansible-vars.yml",  scen / "vars.yml")
+            shutil.copy2(scenario_tmpl / "vault-example.yml", scen / "vault.yml.example")
             log_row("PASS", "configured scenario", f"name={S.scenario}")
         else:
             log_row("PASS", "preserved scenario", f"name={S.scenario} (existing config untouched)")
