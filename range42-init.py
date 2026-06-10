@@ -6,7 +6,7 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import argparse, json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import argparse, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
@@ -283,35 +283,6 @@ def list_deployable_scenarios():
             out.append(d.name)
     return out
 
-# ── wizard cache (XDG-compliant, survives reboot) ─────────────────────────────
-# Used to remember non-sensitive wizard inputs across runs (e.g. last apt proxy URL).
-# Never store credentials, vault contents, or anything per-codename here.
-_WIZARD_CACHE_DIR  = os.path.expanduser("~/.cache/range42")
-_WIZARD_CACHE_FILE = os.path.join(_WIZARD_CACHE_DIR, "wizard.json")
-
-
-def _load_wizard_cache() -> dict:
-    """Return cached wizard inputs as a dict. Silent fallback to {} on any error."""
-    try:
-        with open(_WIZARD_CACHE_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError, PermissionError, OSError):
-        return {}
-
-
-def _save_wizard_cache(updates: dict) -> None:
-    """Merge `updates` into the cache file. Silent fail if write impossible."""
-    try:
-        os.makedirs(_WIZARD_CACHE_DIR, exist_ok=True)
-        cache = _load_wizard_cache()
-        cache.update(updates)
-        with open(_WIZARD_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(cache, f, indent=2)
-    except (PermissionError, OSError):
-        pass  # caching is best-effort, never block the wizard
-
-
 # ── state ──────────────────────────────────────────────────────────────────────
 class _S:
     codename        = ""
@@ -329,12 +300,6 @@ class _S:
     deploy_now      = False
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
-    apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
-    apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
-    apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
-    apt_mirror_prewarm    = _load_wizard_cache().get("apt_mirror_prewarm", False)
-    apt_mirror_persistent = _load_wizard_cache().get("apt_mirror_persistent", False)
-    apt_mirror_vm_ip      = _load_wizard_cache().get("apt_mirror_vm_ip", "")
     # catalog-try mode : set from --catalog-try <path> CLI flag.
     # When non-empty, the wizard forces scenario=catalog_try and skips StepScenario.
     catalog_try_path = ""
@@ -349,38 +314,6 @@ if _CLI_ARGS.catalog_try:
     S.catalog_try_path = _CLI_ARGS.catalog_try
     S.scenario = "catalog_try"
 
-
-# ── apt proxy validation helpers ──────────────────────────────────────────────
-
-# Format: http(s)://host:port  (host can be IP or hostname; port is required)
-_APT_PROXY_RE = re.compile(r'^https?://[A-Za-z0-9._\-]+:\d+/?$')
-
-
-def _validate_apt_proxy_url(url: str) -> bool:
-    """Return True if url matches http(s)://host:port format."""
-    return bool(_APT_PROXY_RE.match(url))
-
-
-def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
-    """
-    Test reachability of an apt proxy URL via HTTP HEAD.
-    Returns (ok: bool, msg: str). 4xx/5xx counts as reachable (server responding).
-    """
-    try:
-        req = urllib.request.Request(url, method='HEAD')
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-            return True, f"HTTP {resp.status}"
-    except urllib.error.HTTPError as e:
-        return True, f"HTTP {e.code}"
-    except urllib.error.URLError as e:
-        return False, str(e.reason)
-    except (TimeoutError, OSError) as e:
-        return False, str(e)
-    except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
 from wizard.preflight import SCENARIO_REQUIRED_FILES, run_all_checks, get_apt_install_command, get_apt_install_packages
@@ -414,14 +347,6 @@ def prefill(name):
     S.deployer_user   = ex("DEPLOYER_CLI_USER") or S.deployer_user
     S.deployer_ip     = ex("deployer_cli_ip") or "127.0.0.1"
     S.network_iface   = ex("infrastructure_proxmox_default_network_card_interface") or "enp3s0"
-    def ex_bool(k):
-        m = re.search(rf'^{k}:\s*(true|false)', txt, re.M)
-        return m.group(1) == "true" if m else False
-    S.apt_mirror_enabled    = ex_bool("apt_mirror_enabled")
-    S.apt_mirror_airgapped  = ex_bool("apt_mirror_airgapped")
-    S.apt_mirror_prewarm    = ex_bool("apt_mirror_prewarm")
-    S.apt_mirror_persistent = ex_bool("apt_mirror_persistent")
-    S.apt_mirror_vm_ip      = ex("apt_mirror_vm_ip")
     # --catalog-try forces S.scenario=catalog_try upstream (line ~349). Skip the
     # group_vars scan in that mode, otherwise a previous scenario dir on the same
     # codename (e.g. debug_scenario_b/) silently overrides catalog_try.
@@ -514,8 +439,6 @@ LoadingIndicator { color: $primary; }
 # ── sidebar (table of contents) ────────────────────────────────────────────────
 STEPS = [
     (0, "welcome"),
-    (0, "apt proxy"),
-    (0, "apt mirror"),
     (0, "prerequisites"),
     (2, "codename"),
     (2, "proxmox address"),
@@ -568,158 +491,13 @@ class Step(Widget):
     def handle_back(self, app: "Range42"): pass
 
 
-# ── step 0 — apt proxy (optional) ─────────────────────────────────────────────
-class StepAptProxy(Step):
-    STEP_NUM  = 0
-    SHOW_BACK = True  # back to welcome
-
-    def handle_back(self, app):
-        app._go(StepWelcome())
-
-    def compose(self) -> ComposeResult:
-        yield Label("◆  step 0 — apt proxy (optional)", classes="title")
-        yield Rule()
-        yield Static(
-            "  If you have a local apt cache (apt-cacher-ng, Squid, etc.), enter\n"
-            "  its URL here. It will be used to speed up apt-get installs on:\n"
-            "    - the deployer-cli (during system bootstrap)\n"
-            "    - the Proxmox host (cloud-init cicustom snippet for VM templates)\n"
-            "    - all lab VMs (inherited via cloud-init from templates)\n\n"
-            "  Format: full URL with protocol AND port\n"
-            "  Examples:\n"
-            "    http://192.168.1.50:3142     (apt-cacher-ng default port)\n"
-            "    http://192.168.1.100:80      (proxy on port 80)\n\n"
-            "  Leave empty to disable. Reachability is checked on Continue.",
-            classes="muted")
-        yield Static("")
-        yield Input(value=S.apt_proxy_url, placeholder="(empty = no proxy)", id="i-apt-proxy")
-        yield Static("", id="apt-proxy-status", classes="muted")
-
-    def handle_next(self, app):
-        url = self.query_one("#i-apt-proxy", Input).value.strip()
-        status = self.query_one("#apt-proxy-status", Static)
-
-        # empty = OK, no proxy
-        if not url:
-            S.apt_proxy_url = ""
-            _save_wizard_cache({"apt_proxy_url": ""})
-            app._go(StepPreflight())
-            return
-
-        # validate format
-        if not _validate_apt_proxy_url(url):
-            status.update(
-                "[FAIL] invalid format — expected http(s)://host:port  "
-                "(e.g. http://192.168.1.50:3142)"
-            )
-            return
-
-        # reachability check
-        status.update(f"[INFO] checking reachability of {url} ...")
-        ok, msg = _check_apt_proxy_reachable(url)
-        if not ok:
-            status.update(f"[FAIL] not reachable: {msg}")
-            return
-
-        # validation passed — persist for next runs
-        S.apt_proxy_url = url
-        _save_wizard_cache({"apt_proxy_url": url})
-        app._go(StepAptMirror())
-
-
-# ── step 0 — apt mirror ───────────────────────────────────────────────────────
-class StepAptMirror(Step):
-    STEP_NUM  = 0
-    SHOW_BACK = True
-
-    def handle_back(self, app):
-        app._go(StepAptProxy())
-
-    def compose(self) -> ComposeResult:
-        yield Label("◆  step 0 — local APT mirror (optional)", classes="title")
-        yield Rule()
-        yield Static(
-            "  Deploy a local APT mirror VM on your Proxmox host to cache\n"
-            "  Debian/Ubuntu packages and accelerate VM provisioning.\n\n"
-            "  When enabled, a dedicated VM (admin-apt-mirror) is created\n"
-            "  and configured automatically during scenario deployment,\n"
-            "  just like admin-wazuh.\n",
-            classes="muted")
-        yield Horizontal(
-            Switch(value=S.apt_mirror_enabled, id="sw-mirror-enabled"),
-            Static("  Enable local APT mirror", classes="muted"),
-        )
-        yield Static("")
-        yield Static("  Mirror VM IP (in your lab network, e.g. 192.168.142.50)", classes="muted")
-        yield Input(
-            value=S.apt_mirror_vm_ip,
-            placeholder="192.168.142.50",
-            id="i-mirror-ip",
-            disabled=not S.apt_mirror_enabled,
-        )
-        yield Static("")
-        yield Horizontal(
-            Switch(value=S.apt_mirror_airgapped, id="sw-airgapped",
-                   disabled=not S.apt_mirror_enabled),
-            Static("  Air-gapped mode — aptly full mirror (~200 GB)", classes="muted"),
-        )
-        yield Horizontal(
-            Switch(value=S.apt_mirror_prewarm, id="sw-prewarm",
-                   disabled=not S.apt_mirror_enabled),
-            Static("  Pre-warm cache after deployment", classes="muted"),
-        )
-        yield Horizontal(
-            Switch(value=S.apt_mirror_persistent, id="sw-persistent",
-                   disabled=not S.apt_mirror_enabled),
-            Static("  Persist cache between exercises", classes="muted"),
-        )
-        yield Static("", id="mirror-status", classes="muted")
-
-    def on_switch_changed(self, event: Switch.Changed) -> None:
-        if event.control.id != "sw-mirror-enabled":
-            return
-        enabled = event.value
-        for sw_id in ("sw-airgapped", "sw-prewarm", "sw-persistent"):
-            self.query_one(f"#{sw_id}", Switch).disabled = not enabled
-        self.query_one("#i-mirror-ip", Input).disabled = not enabled
-        if not enabled:
-            self.query_one("#mirror-status", Static).update("")
-
-    def handle_next(self, app):
-        enabled = self.query_one("#sw-mirror-enabled", Switch).value
-        S.apt_mirror_enabled = enabled
-
-        if enabled:
-            ip = self.query_one("#i-mirror-ip", Input).value.strip()
-            if not ip or not re.match(r'^\d{1,3}(?:\.\d{1,3}){3}$', ip):
-                self.query_one("#mirror-status", Static).update(
-                    "[FAIL] a valid IPv4 address is required when the mirror is enabled")
-                return
-            S.apt_mirror_vm_ip = ip
-        else:
-            S.apt_mirror_vm_ip = ""
-
-        S.apt_mirror_airgapped  = self.query_one("#sw-airgapped",  Switch).value
-        S.apt_mirror_prewarm    = self.query_one("#sw-prewarm",    Switch).value
-        S.apt_mirror_persistent = self.query_one("#sw-persistent", Switch).value
-
-        _save_wizard_cache({
-            "apt_mirror_enabled":    S.apt_mirror_enabled,
-            "apt_mirror_airgapped":  S.apt_mirror_airgapped,
-            "apt_mirror_prewarm":    S.apt_mirror_prewarm,
-            "apt_mirror_persistent": S.apt_mirror_persistent,
-            "apt_mirror_vm_ip":      S.apt_mirror_vm_ip,
-        })
-        app._go(StepPreflight())
-
-
 # ── step 0 — preflight ────────────────────────────────────────────────────────
 class StepPreflight(Step):
     STEP_NUM  = 0
     SHOW_BACK = True
 
     def handle_back(self, app):
-        app._go(StepAptMirror())
+        app._go(StepWelcome())
 
     def compose(self) -> ComposeResult:
         yield Label("◆  prerequisites checks", classes="title")
@@ -929,12 +707,11 @@ class StepWelcome(Step):
   This wizard configures the initial setup of a new lab environment.
 
   Steps:
-    0. apt proxy (optional, speeds up package downloads)
-    1. prerequisites checks
-    2. Proxmox connection (host address, node)
-    3. scenario + deployer-cli configuration
-    4. credentials (Proxmox root, sudo, deployer-cli)
-    5. review + optional one-shot deployment
+    0. prerequisites checks
+    1. Proxmox connection (host address, node)
+    2. scenario + deployer-cli configuration
+    3. credentials (Proxmox root, sudo, deployer-cli)
+    4. review + optional one-shot deployment
 
   You will need:
     - Your Proxmox server address (IP or FQDN)
@@ -944,7 +721,7 @@ class StepWelcome(Step):
   Press Continue to start, or Ctrl+C to quit at any time.
   Every step has a Back button so you can correct earlier inputs.""", classes="muted")
 
-    def handle_next(self, app): app._go(StepAptProxy())
+    def handle_next(self, app): app._go(StepPreflight())
 
 
 # ── step 2 — infrastructure ───────────────────────────────────────────────────
@@ -1505,8 +1282,6 @@ class StepReview(Step):
             ("deployer IP",     S.deployer_ip),
             ("NAT interface",   S.nat_interface),
             ("NAT bridges",     ", ".join(n for n, v in sorted(S.nat_bridges.items()) if v)),
-            ("apt mirror",       "enabled" if S.apt_mirror_enabled else "disabled"),
-            ("mirror IP",        S.apt_mirror_vm_ip if S.apt_mirror_enabled else "—"),
             ("root password",   pw),
             ("sudo password",   spw),
             ("deployer access", dpw),
@@ -1639,45 +1414,8 @@ class StepDeploy(Step):
              f'DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/{S.deployer_user}/range42.config"'),
             ('ssh_client__dst_config_dir: "/home/your_deployer_cli_username/.ssh"',
              f'ssh_client__dst_config_dir: "/home/{S.deployer_user}/.ssh"'),
-            # if local mirror enabled, use its URL as the apt proxy
-            ('apt_proxy_url: ""', 'apt_proxy_url: "{}"'.format(
-                f"http://{S.apt_mirror_vm_ip}:3142"
-                if S.apt_mirror_enabled and S.apt_mirror_vm_ip and not S.apt_proxy_url
-                else S.apt_proxy_url
-            )),
         ]:
             sed_f(vars_, old, new)
-
-        # apt mirror feature vars
-        if S.apt_mirror_enabled:
-            for old, new in [
-                ('apt_mirror_enabled: false',    'apt_mirror_enabled: true'),
-                ('apt_mirror_vm_ip: ""',         f'apt_mirror_vm_ip: "{S.apt_mirror_vm_ip}"'),
-                ('apt_mirror_airgapped: false',  f'apt_mirror_airgapped: {str(S.apt_mirror_airgapped).lower()}'),
-                ('apt_mirror_prewarm: false',    f'apt_mirror_prewarm: {str(S.apt_mirror_prewarm).lower()}'),
-                ('apt_mirror_persistent: false', f'apt_mirror_persistent: {str(S.apt_mirror_persistent).lower()}'),
-            ]:
-                sed_f(vars_, old, new)
-            # inject apt_mirror host group into hosts.yml
-            mirror_block = (
-                "\n\n    #### apt-mirror — local APT cache VM\n"
-                "    apt_mirror:\n"
-                "      hosts:\n"
-                "        apt-mirror:\n"
-                f'          ansible_host: "{S.apt_mirror_vm_ip}"\n'
-                "          ansible_port: 22\n"
-                f'          ansible_user: "{S.deployer_user}"\n'
-                '          ansible_ssh_private_key_file: "~/.ssh/id_ed25519"\n'
-            )
-            hc = hosts.read_text()
-            if "apt_mirror:" not in hc:
-                marker = "    #### deployer-cli"
-                hosts.write_text(
-                    hc.replace(marker, mirror_block + marker)
-                    if marker in hc else hc + mirror_block
-                )
-            log_row("PASS", "configured apt-mirror",
-                    f"ip={S.apt_mirror_vm_ip}  airgapped={S.apt_mirror_airgapped}")
 
         # inject range42_lab_bridges with NAT toggles
         bridges_yaml = "\n\n# lab bridges NAT configuration (managed by wizard)\nrange42_lab_bridges:\n"
