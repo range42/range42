@@ -132,6 +132,11 @@ from textual.widgets.option_list import Option
 from textual import work, on
 from rich.text import Text
 
+# Override the default Textual Checkbox tick character ("X") with a check mark.
+# Reason : in DeployOptionsScreen, "X" reads as "removed/rejected" rather than
+# "selected/installed". The check mark matches operator intuition.
+Checkbox.BUTTON_INNER = "✓"   # U+2713 CHECK MARK ; falls back to "V" in 7-bit terminals
+
 try:
     import yaml  # used by DeployOptionsScreen to parse feature_flags.yml
     _HAS_YAML = True
