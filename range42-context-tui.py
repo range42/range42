@@ -749,7 +749,7 @@ class ArgInputScreen(ModalScreen):
 # ── deploy options modal (feature flag checkboxes) ────────────────────────────
 class DeployOptionsScreen(ModalScreen):
     """Modal that renders one Checkbox per entry of the active scenario's
-    feature_flags.yml. Returns the list of `-e enable_<id>=true|false` args
+    feature_flags.yml. Returns the list of `-e INSTALL_<ID>=YES|NO` args
     to pass to `range42-context deploy`. Returns None if cancelled."""
 
     BINDINGS = [
@@ -841,6 +841,10 @@ class DeployOptionsScreen(ModalScreen):
             pass
 
     def _collect_args(self) -> list:
+        # Emits -e INSTALL_<ID>=YES|NO per feature, aligned with the existing
+        # INSTALL_TAILSCALE convention in the playbooks. The feature `id` in
+        # feature_flags.yml is expected to be UPPERCASE (e.g. WAZUH, TAILSCALE),
+        # which makes `INSTALL_{fid}` the actual var name the playbook reads.
         args = []
         for f in self.features:
             fid = f.get("id", "")
@@ -848,10 +852,10 @@ class DeployOptionsScreen(ModalScreen):
                 continue
             try:
                 cb = self.query_one(f"#deploy-opt-{fid}", Checkbox)
-                val = "true" if bool(cb.value) else "false"
+                val = "YES" if bool(cb.value) else "NO"
             except Exception:
-                val = "true" if bool(self.defaults.get(fid, True)) else "false"
-            args.extend(["-e", f"enable_{fid}={val}"])
+                val = "YES" if bool(self.defaults.get(fid, True)) else "NO"
+            args.extend(["-e", f"INSTALL_{fid}={val}"])
         return args
 
     @on(Button.Pressed, "#btn-deploy")
@@ -1208,8 +1212,8 @@ class ContextTUI(App):
                 continue
             if fid in defaults_yaml:
                 defaults[fid] = bool(defaults_yaml[fid])
-            elif f"enable_{fid}" in defaults_yaml:
-                defaults[fid] = bool(defaults_yaml[f"enable_{fid}"])
+            elif f"INSTALL_{fid}" in defaults_yaml:
+                defaults[fid] = bool(defaults_yaml[f"INSTALL_{fid}"])
             else:
                 defaults[fid] = bool(f.get("default", True))
         return (workspace, features, defaults)
