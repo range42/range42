@@ -125,7 +125,7 @@ from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import (
     Header, Footer, OptionList, RichLog, Input, ListView, ListItem, Label, Static,
-    Switch, Button,
+    Button,
 )
 from textual.widgets.option_list import Option
 
@@ -746,11 +746,15 @@ class ArgInputScreen(ModalScreen):
         self.dismiss(None)
 
 
-# ── deploy options modal (feature flag toggles) ──────────────────────────────
+# ── deploy options modal (feature flag toggle buttons) ───────────────────────
 class DeployOptionsScreen(ModalScreen):
-    """Modal that renders one Switch per entry of the active scenario's
-    feature_flags.yml. Returns the list of `-e INSTALL_<ID>=YES|NO` args
-    to pass to `range42-context deploy`. Returns None if cancelled."""
+    """Modal that renders one YES/NO toggle Button per entry of the active
+    scenario's feature_flags.yml. Each button shows "YES" in green when the
+    feature will be installed, "NO" in red when it will be skipped. Click
+    flips the state. Returns the list of `-e INSTALL_<ID>=YES|NO` args to
+    pass to `range42-context deploy`. Label and emitted value share the same
+    YES/NO vocabulary so what you click is what gets sent. Returns None if
+    cancelled."""
 
     BINDINGS = [
         Binding("escape", "cancel", "cancel"),
@@ -792,8 +796,10 @@ class DeployOptionsScreen(ModalScreen):
         margin-bottom: 0;
     }
 
-    .deploy-opt-row Switch {
-        margin-right: 1;
+    .deploy-opt-toggle {
+        width: 10;
+        min-width: 10;
+        margin-right: 2;
     }
 
     .deploy-opt-label {
@@ -827,20 +833,23 @@ class DeployOptionsScreen(ModalScreen):
         with Vertical(id="deploy-opts-container"):
             yield Static(f"deploy {self.scenario_name}  -  optional components",
                          id="deploy-opts-title")
-            yield Static("Toggle the components on (install) or off (skip).",
+            yield Static("Click a button to toggle install YES (green) or NO (red).",
                          id="deploy-opts-subtitle")
             with Vertical(id="deploy-opts-list"):
                 for f in self.features:
                     fid = f.get("id", "")
                     label = f.get("label") or fid
+                    initial = bool(self.defaults.get(fid, True))
                     with Horizontal(classes="deploy-opt-row"):
-                        yield Switch(value=bool(self.defaults.get(fid, True)),
-                                     id=f"deploy-opt-{fid}")
+                        yield Button("YES" if initial else "NO",
+                                     id=f"deploy-opt-{fid}",
+                                     variant="success" if initial else "error",
+                                     classes="deploy-opt-toggle")
                         yield Label(label, classes="deploy-opt-label")
             with Horizontal(id="deploy-opts-buttons"):
                 yield Button("Deploy", id="btn-deploy", variant="success")
                 yield Button("Cancel", id="btn-cancel", variant="default")
-            yield Static("Enter=deploy   Esc=cancel   Space/Click=toggle",
+            yield Static("Enter=deploy   Esc=cancel   Click button=toggle",
                          id="deploy-opts-hint")
 
     def on_mount(self) -> None:
@@ -855,18 +864,33 @@ class DeployOptionsScreen(ModalScreen):
         # INSTALL_TAILSCALE convention in the playbooks. The feature `id` in
         # feature_flags.yml is expected to be UPPERCASE (e.g. WAZUH, TAILSCALE),
         # which makes `INSTALL_{fid}` the actual var name the playbook reads.
+        #
+        # Source of truth = the displayed button label (WYSIWYG). Reading the
+        # button's variant or label avoids drift between an internal state dict
+        # and the visible UI - the operator's choice is whatever they see now.
         args = []
         for f in self.features:
             fid = f.get("id", "")
             if not fid:
                 continue
             try:
-                sw = self.query_one(f"#deploy-opt-{fid}", Switch)
-                val = "YES" if bool(sw.value) else "NO"
+                btn = self.query_one(f"#deploy-opt-{fid}", Button)
+                # Variant is the authoritative visual : success = YES, error = NO.
+                val = "YES" if btn.variant == "success" else "NO"
             except Exception:
                 val = "YES" if bool(self.defaults.get(fid, True)) else "NO"
             args.extend(["-e", f"INSTALL_{fid}={val}"])
         return args
+
+    @on(Button.Pressed, ".deploy-opt-toggle")
+    def _on_toggle_btn(self, event: Button.Pressed) -> None:
+        # Flip the visible state of the button. The variant is the source of
+        # truth at _collect_args time so we only need to update label + variant.
+        btn = event.button
+        is_on = btn.variant == "success"
+        new_on = not is_on
+        btn.label = "YES" if new_on else "NO"
+        btn.variant = "success" if new_on else "error"
 
     @on(Button.Pressed, "#btn-deploy")
     def _on_deploy_btn(self, event: Button.Pressed) -> None:

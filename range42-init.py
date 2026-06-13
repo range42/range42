@@ -1250,6 +1250,7 @@ class StepScenario(Step):
             "  Which lab scenario to deploy on this infrastructure.\n\n"
             "  blank_scenario_2_subnets is the minimal lab (4 VMs on 2 subnets) — default.\n"
             "  demo_lab is the full cyber range with admin + student + vulnerable hosts.\n"
+            "  demo_lab_bundles is a POC clone of demo_lab that imports the wazuh stack from bundles/wazuh/ (same VM IDs as demo_lab, do not deploy both on the same Proxmox).\n"
             "  misp_lab deploys a single Ubuntu host pre-provisioned with the Docker baseline, ready to host MISP.\n"
             "  kunai_lab is a 6-VM training scenario (1 trainer + 5 students) with kunai-project repos pre-cloned.\n"
             "  dev_deployer_ui_lab is a 3-VM development lab for the deployer-ui stack.\n\n"
