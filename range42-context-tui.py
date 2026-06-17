@@ -300,7 +300,14 @@ def _parse_workspace_dir(workspace_dir: Path):
 
 
 def _list_workspaces():
-    """Walk CONFIG_BASE_DIR and return [(codename, scenario, dir_name)]."""
+    """Walk CONFIG_BASE_DIR and return [(codename, scenario, dir_name)].
+
+    Filters out workspaces whose linked scenario lacks manifest/scenario_vms.json
+    (matches the conformance predicate used by the wizard's
+    list_deployable_scenarios()). A workspace whose `scenario` symlink is
+    dangling - because the underlying scenario was renamed or dropped from
+    range42-playbooks - is filtered out and must be cleaned up manually.
+    """
     results = []
     try:
         for entry in sorted(CONFIG_BASE_DIR.iterdir()):
@@ -309,9 +316,13 @@ def _list_workspaces():
             if "-" not in entry.name:
                 continue
             parsed = _parse_workspace_dir(entry)
-            if parsed:
-                cn, sc = parsed
-                results.append((cn, sc, entry.name))
+            if not parsed:
+                continue
+            manifest = entry / "scenario" / "manifest" / "scenario_vms.json"
+            if not manifest.is_file():
+                continue
+            cn, sc = parsed
+            results.append((cn, sc, entry.name))
     except (OSError, FileNotFoundError):
         return []
     return results
