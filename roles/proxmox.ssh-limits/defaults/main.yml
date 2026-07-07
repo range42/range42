@@ -1,0 +1,13 @@
+---
+# proxmox.ssh-limits - default variables
+#
+# Raises the jump host sshd pre-auth concurrency limit so that parallel Ansible
+# connections reaching many VMs through the single ProxyJump are not dropped by
+# the default MaxStartups (10:30:100).
+
+# MaxStartups value written to the drop-in. Format: start:rate:full.
+# 100:30:200 keeps a wide margin over the Ansible forks setting.
+proxmox_ssh_limits_maxstartups: "100:30:200"
+
+# Drop-in file managed by this role. Isolated: the main sshd_config is never edited.
+proxmox_ssh_limits_dropin: /etc/ssh/sshd_config.d/60-range42-jump-concurrency.conf
