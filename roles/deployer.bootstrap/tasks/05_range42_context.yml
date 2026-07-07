@@ -20,6 +20,13 @@
     group: "{{ DEPLOYER_CLI_USER }}"
     mode: "0644"
 
+- name: DEPLOYER BOOTSTRAP - REMOVE LEGACY RANGE42 FOLD BLOCK FROM .ZSHRC
+  ansible.builtin.command:
+    cmd: >
+      sed -i '/^# range42 {{{/,/^# }}}/d'
+      "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
+  changed_when: false
+
 - name: DEPLOYER BOOTSTRAP - INJECT RANGE42 TOOLS SOURCE IN .ZSHRC
   ansible.builtin.blockinfile:
     path: "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
