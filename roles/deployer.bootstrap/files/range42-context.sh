@@ -398,7 +398,7 @@ _r42_use() {
         "$RANGE42_SSH_CONFIG_FILE"
     _r42_print_step "commented all active Include lines"
 
-    sed -i "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/ s/^# Include \(.*config_range42-${target}.*\)/Include \1/" \
+    sed -i "/$RANGE42_SSH_BEGIN_MARK/,/$RANGE42_SSH_END_MARK/ s/^# Include \(.*config_range42-${target}\)$/Include \1/" \
         "$RANGE42_SSH_CONFIG_FILE"
     _r42_print_step "uncommented Include for $target"
 
