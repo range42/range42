@@ -1,0 +1,14 @@
+---
+# proxmox.ssh-limits
+#
+# Raise the jump host sshd MaxStartups so parallel Ansible connections reaching
+# many VMs through the single ProxyJump are not dropped by the default limit.
+#
+# Runs against the Proxmox host as root (see the calling play in
+# playbooks/02_configure_proxmox.yml). Idempotent. The running sshd is never left
+# on a broken config: the reload validates via the unit ExecReload and never
+# restarts.
+
+- ansible.builtin.import_tasks: 00_guards.yml
+- ansible.builtin.import_tasks: 01_apply.yml
+- ansible.builtin.import_tasks: 02_verify.yml
