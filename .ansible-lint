@@ -8,6 +8,9 @@ skip_list:
   - role-name
   # pre-existing pattern: import_tasks without explicit names throughout roles
   - name[missing]
+  # lowercase task names are the convention throughout roles (same skip as
+  # range42-playbooks) — e.g. roles/proxmox.ssh-limits
+  - name[casing]
   # plays in bootstrapper playbooks do not require names
   - name[play]
 
