@@ -43,6 +43,11 @@ PYTHON_DEPS = [
     {"label": "python3-bcrypt", "module": "bcrypt", "fix": "sudo apt install python3-bcrypt", "required": True, "manual": False},
 ]
 
+# Key name handed to `keychain --eval` for the sole purpose of forcing an
+# ssh-agent to start. It MUST NOT match any real key: keychain then loads
+# nothing and never asks for a passphrase. See ensure_ssh_agent_running().
+_AGENT_BOOTSTRAP_KEY = "r42_force_agent_start__not_a_real_key"
+
 
 # ── detection functions ──────────────────────────────────────────────────────
 
@@ -91,6 +96,66 @@ def check_ssh_agent_running():
         return False
     r = subprocess.run(["ssh-add", "-l"], capture_output=True)
     return r.returncode != 2  # 2 = agent not running
+
+
+def ensure_ssh_agent_running():
+    """
+    Make sure an ssh-agent is reachable, starting one if there is none.
+
+    Returns (ok, started) — started is True only when this call spawned the agent.
+
+    NO KEY IS ADDED HERE. No passphrase is ever requested by this function: it
+    starts an empty agent and nothing else. Loading the range42 keys stays the
+    job of the playbooks (roles/proxmox.init/tasks/00_load_root_ssh_key.yml).
+
+    Why it has to happen during preflight, before the checks are done:
+    playbook 02 reaches Proxmox through the native ssh connection plugin, and
+    the local ssh client it spawns reads SSH_AUTH_SOCK from the environment that
+    ansible-playbook inherited. A play-level `environment:` cannot reach that
+    client, so the socket has to exist in the wizard's own environment.
+    post_wizard() hands os.environ.copy() to ansible-playbook, so exporting the
+    socket here is what carries the agent all the way down.
+
+    On a fresh VM nothing else can do it: the only agent starter in the project
+    is `keychain` in the deployed .zshrc, and both keychain (01_packages.yml)
+    and that .zshrc (04_dot_files.yml) are installed by playbook 03 — after the
+    playbook that needs the agent. Hence this bootstrap step.
+
+    The agent outlives the wizard on purpose: post_wizard() needs it.
+    """
+    if check_ssh_agent_running():
+        return True, False
+    if not shutil.which("keychain"):
+        return False, False
+    try:
+        # keychain is preferred over a bare `ssh-agent -s`: it re-attaches to an
+        # agent already recorded in ~/.keychain/<host>-sh instead of spawning a
+        # new one at every wizard run, and it is already the project's idiom
+        # (see roles/deployer.bootstrap/files/dot_files/zshrc).
+        #
+        # The key name is DELIBERATELY one that cannot exist. keychain then
+        # starts/re-attaches the agent, loads NOTHING, warns
+        # "can't find <name>; skipping" on stderr and still exits 0 with the
+        # shell assignments on stdout. Passing a REAL key name here would make
+        # keychain prompt for its passphrase during preflight, which is exactly
+        # what must not happen. Do not "fix" this to id_rsa.
+        r = subprocess.run(
+            ["keychain", "--eval", _AGENT_BOOTSTRAP_KEY],
+            capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, False
+    if not r.stdout:
+        return False, False
+    # stdout carries shell assignments, same shape as `ssh-agent -s`:
+    #   SSH_AUTH_SOCK=/tmp/ssh-XXXX/agent.123; export SSH_AUTH_SOCK;
+    #   SSH_AGENT_PID=124; export SSH_AGENT_PID;
+    for line in r.stdout.splitlines():
+        for var in ("SSH_AUTH_SOCK", "SSH_AGENT_PID"):
+            if line.startswith(var + "="):
+                os.environ[var] = line.split("=", 1)[1].split(";", 1)[0].strip()
+    return check_ssh_agent_running(), True
 
 
 # ── run all checks ───────────────────────────────────────────────────────────
@@ -211,12 +276,21 @@ def run_all_checks(example_dir):
         "required": True,
     })
 
-    # ssh-agent running check
-    agent_running = check_ssh_agent_running()
+    # ssh-agent — STARTED here when absent, not merely reported.
+    # Playbook 02 needs a reachable agent and nothing earlier in the run can
+    # provide one on a fresh VM. See ensure_ssh_agent_running() for why the
+    # socket must land in this process' environment. No key is loaded here.
+    agent_running, agent_started = ensure_ssh_agent_running()
+    if agent_running:
+        detail = "  started by the wizard" if agent_started else ""
+    elif not shutil.which("keychain"):
+        detail = "  keychain missing — install it above, the agent starts on the next pass"
+    else:
+        detail = "  could not start one — playbook 02 will fail on passphrase-protected keys"
     results.append({
         "badge": "PASS" if agent_running else "WARN",
         "label": "ssh-agent (running)",
-        "detail": "" if agent_running else "  not running — will be handled during deployment",
+        "detail": detail,
         "required": False,
     })
 
