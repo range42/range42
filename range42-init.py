@@ -135,8 +135,8 @@ if _CLI_ARGS.catalog_try:
     if not _ok:
         # red [FAIL] marker (matches the shell-side _r42_print_fail visual style)
         print(f"\n  \033[1;31m[FAIL]\033[0m invalid --catalog-try path : {_msg}\n", file=sys.stderr)
-        print(f"  hint : the path is logical (e.g. docker/_ctf/hello), resolved under range42-catalog/", file=sys.stderr)
-        print(f"         the final directory must contain compose.yml, docker-compose.yml, or Makefile\n", file=sys.stderr)
+        print("  hint : the path is logical (e.g. docker/_ctf/hello), resolved under range42-catalog/", file=sys.stderr)
+        print("         the final directory must contain compose.yml, docker-compose.yml, or Makefile\n", file=sys.stderr)
         sys.exit(2)
 
 
@@ -153,7 +153,7 @@ try:
     from textual.theme import Theme
     from textual.widget import Widget
     from textual.widgets import (
-        Button, DataTable, Footer, Header,
+        Button, Footer, Header,
         Input, Label, LoadingIndicator, RichLog, Select, Static, Rule, Switch,
     )
 
@@ -383,7 +383,7 @@ def _check_apt_proxy_reachable(url: str, timeout: float = 5.0):
         return False, f"{type(e).__name__}: {e}"
 
 # ── preflight (extracted to wizard/preflight.py) ──────────────────────────────
-from wizard.preflight import SCENARIO_REQUIRED_FILES, run_all_checks, get_apt_install_command, get_apt_install_packages
+from wizard.preflight import SCENARIO_REQUIRED_FILES, run_all_checks, get_apt_install_packages
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 def cmd_ok(c): return bool(shutil.which(c))
@@ -1897,7 +1897,7 @@ def post_wizard():
     if not S.deploy_now:
         _print_info("to deploy later, run:")
         _print_cmd("")
-        _print_cmd(f"ansible-playbook site.yml \\")
+        _print_cmd("ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
         _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
@@ -1970,7 +1970,7 @@ def post_wizard():
         _print_ok("deployer-cli deployed")
         print()
         _print_info(f"repos cloned to:     {S.install_dir}/")
-        _print_info(f"workspace config in: ~/range42.config/")
+        _print_info("workspace config in: ~/range42.config/")
         print()
         print("  ---- first time setup ----")
         print()
@@ -1983,7 +1983,7 @@ def post_wizard():
         if S.catalog_try_path:
             # catalog-try mode : skip the generic deploy line ; the operator goes
             # straight to `catalog-try <path>` which handles delete+deploy+run.
-            _print_info(f"validate the catalog element :")
+            _print_info("validate the catalog element :")
             # shlex.quote() defends against shell-meta in catalog_try_path being
             # propagated into a copy-paste-able command suggestion. For normal
             # logical paths (e.g. docker/_ctf/hello), quote() returns the string
@@ -2030,7 +2030,7 @@ def post_wizard():
         _print_bold("deployment failed")
         _print_fail("check the error above and re-run:")
         _print_cmd("")
-        _print_cmd(f"ansible-playbook site.yml \\")
+        _print_cmd("ansible-playbook site.yml \\")
         _print_cmd(f"  -i inventories/{S.codename}/hosts.yml \\")
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
         _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
