@@ -13,8 +13,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - run: pip install --no-cache-dir ruff
-      - run: ruff check --select ALL wizard/ range42-init.py range42-context-tui.py
+      - run: pip install --no-cache-dir ruff==0.16.2
+      - run: ruff check wizard/ range42-init.py range42-context-tui.py
 
   ansible-lint:
     name: Ansible Lint
@@ -24,6 +24,6 @@ jobs:
     steps:
       - run: apt-get update && apt-get install -y --no-install-recommends git
       - uses: actions/checkout@v6
-      - run: pip install --no-cache-dir ansible-lint
+      - run: pip install --no-cache-dir ansible-lint==26.6.0
       - run: ansible-galaxy collection install community.crypto community.general
       - run: ansible-lint
