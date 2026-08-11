@@ -43,6 +43,11 @@ PYTHON_DEPS = [
     {"label": "python3-bcrypt", "module": "bcrypt", "fix": "sudo apt install python3-bcrypt", "required": True, "manual": False},
 ]
 
+# Key name handed to `keychain --eval` for the sole purpose of forcing an
+# ssh-agent to start. It MUST NOT match any real key: keychain then loads
+# nothing and never asks for a passphrase. See ensure_ssh_agent_running().
+_AGENT_BOOTSTRAP_KEY = "r42_force_agent_start__not_a_real_key"
+
 
 # ── detection functions ──────────────────────────────────────────────────────
 
@@ -82,6 +87,54 @@ def check_collection(name):
     return any(line.strip().startswith(name) for line in r.stdout.splitlines())
 
 
+def check_sudo_is_classic():
+    """
+    True if the sudo in PATH is the classic (C) sudo, False if it is sudo-rs.
+
+    Ubuntu 25.10 and later ship sudo-rs (the Rust rewrite) as the default sudo.
+    It is not a drop-in replacement, and the divergence lands exactly on what
+    Ansible depends on: classic sudo lets -p REPLACE the whole password prompt,
+    while sudo-rs only NESTS the given text inside a "[sudo: ... ]" block and
+    then lets PAM print its own "Password:". The prompt seen on the wire becomes
+
+        [sudo: [sudo via ansible, key=<id>] password:] Password:
+
+    but the become plugin looks for its sentinel at the START of a line
+    (ansible/plugins/become/__init__.py, check_password_prompt uses startswith),
+    so the match never happens, the become password is never sent, and EVERY
+    task using become dies with
+
+        Timed out waiting for become success or become password prompt
+
+    On a fresh VM that is the very first privileged task of deployer.bootstrap,
+    so the whole deployment stops before anything is configured.
+
+    DO NOT "restore the distro default" by dropping this check. sudo-rs being
+    the Ubuntu 26.04 default is precisely why it is here. Interactive sudo works
+    fine with sudo-rs, only Ansible's prompt detection is broken.
+
+    Refs: https://github.com/trifectatechfoundation/sudo-rs/issues/1461
+          https://github.com/ansible/ansible/issues/85837
+
+    Fail-safe: anything unexpected (missing sudo, non-zero rc, empty output)
+    returns True, so a working setup is never blocked by a detection glitch.
+    """
+    if not shutil.which("sudo"):
+        return True  # absence is reported by the dedicated 'sudo' check
+    try:
+        # --version never authenticates and never prompts, on either implementation
+        r = subprocess.run(
+            ["sudo", "--version"],
+            capture_output=True, text=True, timeout=5,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if r.returncode != 0 or not r.stdout:
+        return True
+    return "sudo-rs" not in r.stdout.lower()
+
+
 def check_ssh_agent_running():
     """Check if ssh-agent is running and the socket is valid."""
     if not shutil.which("ssh-add"):
@@ -91,6 +144,66 @@ def check_ssh_agent_running():
         return False
     r = subprocess.run(["ssh-add", "-l"], capture_output=True)
     return r.returncode != 2  # 2 = agent not running
+
+
+def ensure_ssh_agent_running():
+    """
+    Make sure an ssh-agent is reachable, starting one if there is none.
+
+    Returns (ok, started) — started is True only when this call spawned the agent.
+
+    NO KEY IS ADDED HERE. No passphrase is ever requested by this function: it
+    starts an empty agent and nothing else. Loading the range42 keys stays the
+    job of the playbooks (roles/proxmox.init/tasks/00_load_root_ssh_key.yml).
+
+    Why it has to happen during preflight, before the checks are done:
+    playbook 02 reaches Proxmox through the native ssh connection plugin, and
+    the local ssh client it spawns reads SSH_AUTH_SOCK from the environment that
+    ansible-playbook inherited. A play-level `environment:` cannot reach that
+    client, so the socket has to exist in the wizard's own environment.
+    post_wizard() hands os.environ.copy() to ansible-playbook, so exporting the
+    socket here is what carries the agent all the way down.
+
+    On a fresh VM nothing else can do it: the only agent starter in the project
+    is `keychain` in the deployed .zshrc, and both keychain (01_packages.yml)
+    and that .zshrc (04_dot_files.yml) are installed by playbook 03 — after the
+    playbook that needs the agent. Hence this bootstrap step.
+
+    The agent outlives the wizard on purpose: post_wizard() needs it.
+    """
+    if check_ssh_agent_running():
+        return True, False
+    if not shutil.which("keychain"):
+        return False, False
+    try:
+        # keychain is preferred over a bare `ssh-agent -s`: it re-attaches to an
+        # agent already recorded in ~/.keychain/<host>-sh instead of spawning a
+        # new one at every wizard run, and it is already the project's idiom
+        # (see roles/deployer.bootstrap/files/dot_files/zshrc).
+        #
+        # The key name is DELIBERATELY one that cannot exist. keychain then
+        # starts/re-attaches the agent, loads NOTHING, warns
+        # "can't find <name>; skipping" on stderr and still exits 0 with the
+        # shell assignments on stdout. Passing a REAL key name here would make
+        # keychain prompt for its passphrase during preflight, which is exactly
+        # what must not happen. Do not "fix" this to id_rsa.
+        r = subprocess.run(
+            ["keychain", "--eval", _AGENT_BOOTSTRAP_KEY],
+            capture_output=True, text=True, timeout=15,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, False
+    if not r.stdout:
+        return False, False
+    # stdout carries shell assignments, same shape as `ssh-agent -s`:
+    #   SSH_AUTH_SOCK=/tmp/ssh-XXXX/agent.123; export SSH_AUTH_SOCK;
+    #   SSH_AGENT_PID=124; export SSH_AGENT_PID;
+    for line in r.stdout.splitlines():
+        for var in ("SSH_AUTH_SOCK", "SSH_AGENT_PID"):
+            if line.startswith(var + "="):
+                os.environ[var] = line.split("=", 1)[1].split(";", 1)[0].strip()
+    return check_ssh_agent_running(), True
 
 
 # ── run all checks ───────────────────────────────────────────────────────────
@@ -154,6 +267,23 @@ def run_all_checks(example_dir):
             "apt_fix": check["fix"] if not ok and not check.get("manual") and (check.get("fix") or "").startswith("sudo apt") else None,
         })
 
+    # sudo implementation check — sudo-rs breaks Ansible become entirely.
+    # See check_sudo_is_classic() for the full mechanism. The fix installs the
+    # classic sudo AND drops sudo-rs in the SAME apt transaction ("sudo-rs-" is
+    # apt's remove-in-this-transaction syntax), so the machine is never left
+    # without any sudo at all. It is only ever emitted when sudo-rs is actually
+    # detected, so Ubuntu 24.04 / Debian runs are untouched.
+    sudo_classic = check_sudo_is_classic()
+    if not sudo_classic:
+        fail = True
+    results.append({
+        "badge": "PASS" if sudo_classic else "FAIL",
+        "label": "sudo (classic, not sudo-rs)",
+        "detail": "" if sudo_classic else "  sudo apt install sudo sudo-rs-  [Install & retry]",
+        "required": True,
+        "apt_fix": None if sudo_classic else "sudo apt install sudo sudo-rs-",
+    })
+
     # python module checks (e.g., bcrypt for openssh_keypair with passphrase)
     for dep in PYTHON_DEPS:
         ok = check_python_module(dep["module"])
@@ -211,12 +341,21 @@ def run_all_checks(example_dir):
         "required": True,
     })
 
-    # ssh-agent running check
-    agent_running = check_ssh_agent_running()
+    # ssh-agent — STARTED here when absent, not merely reported.
+    # Playbook 02 needs a reachable agent and nothing earlier in the run can
+    # provide one on a fresh VM. See ensure_ssh_agent_running() for why the
+    # socket must land in this process' environment. No key is loaded here.
+    agent_running, agent_started = ensure_ssh_agent_running()
+    if agent_running:
+        detail = "  started by the wizard" if agent_started else ""
+    elif not shutil.which("keychain"):
+        detail = "  keychain missing — install it above, the agent starts on the next pass"
+    else:
+        detail = "  could not start one — playbook 02 will fail on passphrase-protected keys"
     results.append({
         "badge": "PASS" if agent_running else "WARN",
         "label": "ssh-agent (running)",
-        "detail": "" if agent_running else "  not running — will be handled during deployment",
+        "detail": detail,
         "required": False,
     })
 
@@ -233,9 +372,13 @@ def get_apt_install_packages(results) -> list:
     for r in results:
         apt_fix = r.get("apt_fix")
         if apt_fix and r["badge"] in ("FAIL", "WARN"):
-            # extract package name from "sudo apt install <pkg>"
+            # extract package name(s) from "sudo apt install <pkg> [<pkg> ...]"
+            # split() so a fix may carry several tokens — the sudo-rs fix needs
+            # two ("sudo" and "sudo-rs-"), and each must be its own argv entry
+            # for apt-get, otherwise it looks for a package literally named
+            # "sudo sudo-rs-" and fails.
             pkg = apt_fix.replace("sudo apt install ", "").strip()
-            packages.add(pkg)
+            packages.update(pkg.split())
     return sorted(packages)
 
 

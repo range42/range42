@@ -230,14 +230,16 @@ except ImportError:
             print("  then: python3 range42-init.py")
             print()
             sys.exit(1)
-        print("  \033[1;33mINFO\033[0m  installing textual (pip install textual)...")
+        print("  \033[1;33mINFO\033[0m  installing textual + pyyaml (pip install)...")
+        print("        textual : the TUI framework used by range42-init and range42-context --tui")
+        print("        pyyaml  : parses scenario manifests (e.g. feature_flags.yml in the deploy modal)")
         print("        do NOT use: apt install python3-textual (version too old)")
         print()
-        r = subprocess.run([str(_pip), "install", "--quiet", "textual"], check=False)
+        r = subprocess.run([str(_pip), "install", "--quiet", "textual", "pyyaml"], check=False)
         if r.returncode != 0:
-            print("  \033[1;31mFAIL\033[0m  pip install textual failed")
+            print("  \033[1;31mFAIL\033[0m  pip install textual pyyaml failed")
             print()
-            print("  fix:  " + str(_pip) + " install textual")
+            print("  fix:  " + str(_pip) + " install textual pyyaml")
             print()
             sys.exit(1)
 
@@ -268,8 +270,13 @@ PLAYBOOKS_DIR = SCRIPT_DIR.parent / "range42-playbooks"
 def list_deployable_scenarios():
     """
     Return sorted list of scenario names in range42-playbooks/scenarios/ that
-    have a complete templates/ dir (all 4 required template files present).
-    Scenarios starting with '_' are treated as non-deployable placeholders.
+    look like a complete, deployable scenario :
+      - dir name does not start with '_' (those are non-deployable placeholders)
+      - has manifest/scenario_vms.json (source of truth for VMID / IP / role)
+      - has templates/ dir with all 4 required template files present
+    catalog_try is a regular scenario from this predicate's standpoint (it has
+    both the manifest and the templates) ; it is forced via the --catalog-try
+    CLI flag which bypasses StepScenario.
     """
     scenarios_dir = PLAYBOOKS_DIR / "scenarios"
     if not scenarios_dir.exists():
@@ -278,8 +285,11 @@ def list_deployable_scenarios():
     for d in sorted(scenarios_dir.iterdir()):
         if not d.is_dir() or d.name.startswith("_"):
             continue
+        manifest = d / "manifest" / "scenario_vms.json"
         tmpl = d / "templates"
-        if tmpl.is_dir() and all((tmpl / f).exists() for f in SCENARIO_REQUIRED_FILES):
+        if (manifest.is_file()
+                and tmpl.is_dir()
+                and all((tmpl / f).exists() for f in SCENARIO_REQUIRED_FILES)):
             out.append(d.name)
     return out
 
@@ -1246,12 +1256,10 @@ class StepScenario(Step):
         yield Rule()
         yield Static(
             "  Which lab scenario to deploy on this infrastructure.\n\n"
-            "  blank_scenario_2_subnets is the minimal lab (4 VMs on 2 subnets) — default.\n"
-            "  demo_lab is the full cyber range with admin + student + vulnerable hosts.\n"
-            "  misp_lab deploys a single Ubuntu host pre-provisioned with the Docker baseline, ready to host MISP.\n"
-            "  kunai_lab is a 6-VM training scenario (1 trainer + 5 students) with kunai-project repos pre-cloned.\n"
-            "  dev_deployer_ui_lab is a 3-VM development lab for the deployer-ui stack.\n\n"
-            "  Pick from the list of deployable scenarios in range42-playbooks.",
+            "  Pick from the auto-discovered list below. Each entry is sourced from\n"
+            "  range42-playbooks/scenarios/<name>/ and must carry\n"
+            "  manifest/scenario_vms.json + a complete templates/ dir to be listed.\n"
+            "  See the scenario's README and manifest for details.",
             classes="muted")
         yield Static("")
 

@@ -13,6 +13,10 @@ export RANGE42_CONFIG__ROOT_DIR="{{ DEPLOYER_CLI__DST_CONFIG_BASE_DIR }}/$RANGE4
 
 export RANGE42_ANSIBLE_ROLES__ROOT_DIR="${RANGE42_GITDIR__ROOT_DIR%/}/"
 
+# Bundle root - anchors every scenario's `import_playbook` (parse-time env lookup).
+# Scenarios import bundles as `{{ lookup('env','RANGE42_BUNDLE_DIR') }}/<tier>/...`.
+export RANGE42_BUNDLE_DIR="${RANGE42_GITDIR__ROOT_DIR%/}/range42-playbooks/bundles"
+
 export RANGE42_ANSIBLE_ROLES__DEVKITS_DIR="${RANGE42_GITDIR__ROOT_DIR%/}/range42-ansible_roles-debug-devkit/"
 export RANGE42_ANSIBLE_ROLES__INVENTORY_DIR="${RANGE42_CONFIG__ROOT_DIR%/}/inventory/"
 

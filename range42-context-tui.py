@@ -32,6 +32,12 @@ os.environ.setdefault("COLORTERM", "truecolor")
 # The bootstrap MUST only trigger when textual is absent entirely. If a specific
 # submodule import fails inside the actual import block below, we WANT a real
 # traceback - silently re-execing into the same broken venv would loop forever.
+#
+# Note : pyyaml is also a runtime dep (used by DeployOptionsScreen). It is NOT
+# installed here ; the canonical install path is range42-init.py warmup, which
+# installs textual + pyyaml together. If pyyaml is missing at runtime, the
+# `try: import yaml` block below sets _HAS_YAML=False and DeployOptionsScreen
+# gracefully falls back to plain deploy with a TRACE log.
 try:
     import textual as _textual_probe  # noqa: F401
 except ImportError:
@@ -119,11 +125,18 @@ from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import (
     Header, Footer, OptionList, RichLog, Input, ListView, ListItem, Label, Static,
+    Button,
 )
 from textual.widgets.option_list import Option
 
 from textual import work, on
 from rich.text import Text
+
+try:
+    import yaml  # used by DeployOptionsScreen to parse feature_flags.yml
+    _HAS_YAML = True
+except ImportError:
+    _HAS_YAML = False
 
 
 # ── themes (verbatim from range42-init.py:161-177) ────────────────────────────
@@ -229,8 +242,8 @@ COMMANDS: list = [
     CommandSpec("init",    "workspace", "init",    "launch setup wizard",               "suspend"),
     CommandSpec("current", "workspace", "current", "show active workspace",             "subprocess"),
     # operations
-    CommandSpec("deploy",            "operations", "deploy",            "run full scenario setup (templates + VMs)", "subprocess"),
-    CommandSpec("deploy-vms",        "operations", "deploy-vms",        "deploy VMs only (skip templates)",          "subprocess"),
+    CommandSpec("deploy",            "operations", "deploy",            "run full scenario setup (templates + VMs)", "subprocess", arg_ui="deploy-options"),
+    CommandSpec("deploy-vms",        "operations", "deploy-vms",        "deploy VMs only (skip templates)",          "subprocess", arg_ui="deploy-options"),
     CommandSpec("delete",            "operations", "delete",            "delete all scenario VMs + templates",       "subprocess"),
     CommandSpec("delete-vms",        "operations", "delete-vms",        "delete VMs only (keep templates)",          "subprocess"),
     CommandSpec("delete-everything", "operations", "delete-everything", "delete ALL VMs+templates across scenarios", "suspend"),
@@ -238,8 +251,8 @@ COMMANDS: list = [
     CommandSpec("ssh-reload",        "operations", "ssh-reload",        "reload SSH keys for active workspace",      "subprocess"),
     # lifecycle
     CommandSpec("start",         "lifecycle", "start",         "start all scenario VMs",          "subprocess"),
-    CommandSpec("stop",          "lifecycle", "stop",          "graceful shutdown of all VMs",    "subprocess"),
-    CommandSpec("stop-force",    "lifecycle", "stop-force",    "force stop all scenario VMs",     "subprocess"),
+    CommandSpec("stop",          "lifecycle", "stop",          "force stop all scenario VMs (kill timeout=10)", "subprocess"),
+    CommandSpec("stop-acpi",     "lifecycle", "stop-acpi",     "graceful ACPI shutdown of all VMs",             "subprocess"),
     CommandSpec("pause",         "lifecycle", "pause",         "pause all scenario VMs",          "subprocess"),
     CommandSpec("resume",        "lifecycle", "resume",        "resume all paused scenario VMs",  "subprocess"),
     CommandSpec("snapshot",      "lifecycle", "snapshot",      "snapshot all scenario VMs",       "subprocess", arg_ui="arg-input", args_optional=["name"]),
@@ -287,7 +300,14 @@ def _parse_workspace_dir(workspace_dir: Path):
 
 
 def _list_workspaces():
-    """Walk CONFIG_BASE_DIR and return [(codename, scenario, dir_name)]."""
+    """Walk CONFIG_BASE_DIR and return [(codename, scenario, dir_name)].
+
+    Filters out workspaces whose linked scenario lacks manifest/scenario_vms.json
+    (matches the conformance predicate used by the wizard's
+    list_deployable_scenarios()). A workspace whose `scenario` symlink is
+    dangling - because the underlying scenario was renamed or dropped from
+    range42-playbooks - is filtered out and must be cleaned up manually.
+    """
     results = []
     try:
         for entry in sorted(CONFIG_BASE_DIR.iterdir()):
@@ -296,9 +316,13 @@ def _list_workspaces():
             if "-" not in entry.name:
                 continue
             parsed = _parse_workspace_dir(entry)
-            if parsed:
-                cn, sc = parsed
-                results.append((cn, sc, entry.name))
+            if not parsed:
+                continue
+            manifest = entry / "scenario" / "manifest" / "scenario_vms.json"
+            if not manifest.is_file():
+                continue
+            cn, sc = parsed
+            results.append((cn, sc, entry.name))
     except (OSError, FileNotFoundError):
         return []
     return results
@@ -733,6 +757,167 @@ class ArgInputScreen(ModalScreen):
         self.dismiss(None)
 
 
+# ── deploy options modal (feature flag toggle buttons) ───────────────────────
+class DeployOptionsScreen(ModalScreen):
+    """Modal that renders one YES/NO toggle Button per entry of the active
+    scenario's feature_flags.yml. Each button shows "YES" in green when the
+    feature will be installed, "NO" in red when it will be skipped. Click
+    flips the state. Returns the list of `-e INSTALL_<ID>=YES|NO` args to
+    pass to `range42-context deploy`. Label and emitted value share the same
+    YES/NO vocabulary so what you click is what gets sent. Returns None if
+    cancelled."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "cancel"),
+        Binding("enter",  "deploy", "deploy"),
+    ]
+
+    DEFAULT_CSS = """
+    DeployOptionsScreen {
+        align: center middle;
+    }
+
+    #deploy-opts-container {
+        width: 80%;
+        height: auto;
+        max-height: 80%;
+        border: heavy $primary;
+        padding: 1 2;
+    }
+
+    #deploy-opts-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+
+    #deploy-opts-subtitle {
+        color: $foreground 70%;
+        margin-bottom: 1;
+    }
+
+    #deploy-opts-list {
+        height: auto;
+        margin: 1 0;
+    }
+
+    .deploy-opt-row {
+        height: 3;
+        align-vertical: middle;
+        margin-bottom: 0;
+    }
+
+    .deploy-opt-toggle {
+        width: 10;
+        min-width: 10;
+        margin-right: 2;
+    }
+
+    .deploy-opt-label {
+        height: 3;
+        content-align: left middle;
+    }
+
+    #deploy-opts-buttons {
+        height: 3;
+        align: center middle;
+        margin-top: 1;
+    }
+
+    #deploy-opts-buttons Button {
+        margin: 0 1;
+    }
+
+    #deploy-opts-hint {
+        color: $foreground 60%;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, scenario_name: str, features: list, defaults: dict):
+        super().__init__()
+        self.scenario_name = scenario_name
+        self.features = features          # list of {id, label, description, default}
+        self.defaults = defaults          # dict id -> bool (resolved default)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="deploy-opts-container"):
+            yield Static(f"deploy {self.scenario_name}  -  optional components",
+                         id="deploy-opts-title")
+            yield Static("Click a button to toggle install YES (green) or NO (red).",
+                         id="deploy-opts-subtitle")
+            with Vertical(id="deploy-opts-list"):
+                for f in self.features:
+                    fid = f.get("id", "")
+                    label = f.get("label") or fid
+                    initial = bool(self.defaults.get(fid, True))
+                    with Horizontal(classes="deploy-opt-row"):
+                        yield Button("YES" if initial else "NO",
+                                     id=f"deploy-opt-{fid}",
+                                     variant="success" if initial else "error",
+                                     classes="deploy-opt-toggle")
+                        yield Label(label, classes="deploy-opt-label")
+            with Horizontal(id="deploy-opts-buttons"):
+                yield Button("Deploy", id="btn-deploy", variant="success")
+                yield Button("Cancel", id="btn-cancel", variant="default")
+            yield Static("Enter=deploy   Esc=cancel   Click button=toggle",
+                         id="deploy-opts-hint")
+
+    def on_mount(self) -> None:
+        # focus the Deploy button so Enter submits immediately
+        try:
+            self.query_one("#btn-deploy", Button).focus()
+        except Exception:
+            pass
+
+    def _collect_args(self) -> list:
+        # Emits -e INSTALL_<ID>=YES|NO per feature, aligned with the existing
+        # INSTALL_TAILSCALE convention in the playbooks. The feature `id` in
+        # feature_flags.yml is expected to be UPPERCASE (e.g. WAZUH, TAILSCALE),
+        # which makes `INSTALL_{fid}` the actual var name the playbook reads.
+        #
+        # Source of truth = the displayed button label (WYSIWYG). Reading the
+        # button's variant or label avoids drift between an internal state dict
+        # and the visible UI - the operator's choice is whatever they see now.
+        args = []
+        for f in self.features:
+            fid = f.get("id", "")
+            if not fid:
+                continue
+            try:
+                btn = self.query_one(f"#deploy-opt-{fid}", Button)
+                # Variant is the authoritative visual : success = YES, error = NO.
+                val = "YES" if btn.variant == "success" else "NO"
+            except Exception:
+                val = "YES" if bool(self.defaults.get(fid, True)) else "NO"
+            args.extend(["-e", f"INSTALL_{fid}={val}"])
+        return args
+
+    @on(Button.Pressed, ".deploy-opt-toggle")
+    def _on_toggle_btn(self, event: Button.Pressed) -> None:
+        # Flip the visible state of the button. The variant is the source of
+        # truth at _collect_args time so we only need to update label + variant.
+        btn = event.button
+        is_on = btn.variant == "success"
+        new_on = not is_on
+        btn.label = "YES" if new_on else "NO"
+        btn.variant = "success" if new_on else "error"
+
+    @on(Button.Pressed, "#btn-deploy")
+    def _on_deploy_btn(self, event: Button.Pressed) -> None:
+        self.dismiss(self._collect_args())
+
+    @on(Button.Pressed, "#btn-cancel")
+    def _on_cancel_btn(self, event: Button.Pressed) -> None:
+        self.dismiss(None)
+
+    def action_deploy(self) -> None:
+        self.dismiss(self._collect_args())
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 # ── main application ──────────────────────────────────────────────────────────
 class ContextTUI(App):
     TITLE = "range42-context  -  TUI"
@@ -1025,8 +1210,61 @@ class ContextTUI(App):
                 self._run_command(cmd, args)
             self.push_screen(ArgInputScreen(cmd), _then)
             return
+        # deploy-options modal : checkboxes from feature_flags.yml
+        if cmd.arg_ui == "deploy-options":
+            scenario_name, features, defaults = self._load_active_scenario_feature_flags()
+            if not features:
+                # no feature_flags.yml or empty list -> fall back to plain deploy
+                self._log_line(self._fmt_trace("no feature_flags.yml in active scenario - running plain deploy"))
+                self._run_command(cmd, [])
+                return
+            def _then(args):
+                if args is None:
+                    return  # user cancelled
+                self._run_command(cmd, args)
+            self.push_screen(DeployOptionsScreen(scenario_name, features, defaults), _then)
+            return
         # no-arg dispatch
         self._run_command(cmd, [])
+
+    def _load_active_scenario_feature_flags(self) -> tuple:
+        """Read $RANGE42_ACTIVE_WORKSPACE/scenario/manifest/feature_flags.yml from disk.
+        Returns (scenario_name, features_list, defaults_dict) ; on any failure
+        returns ("", [], {}) so the caller can gracefully fall back to plain deploy."""
+        if not _HAS_YAML:
+            self._log_line(self._fmt_trace("python yaml module not available - feature flags modal disabled"))
+            return ("", [], {})
+        workspace = os.environ.get("RANGE42_ACTIVE_WORKSPACE", "").strip()
+        if not workspace:
+            return ("", [], {})
+        flags_path = Path.home() / "range42.config" / workspace / "scenario" / "manifest" / "feature_flags.yml"
+        if not flags_path.is_file():
+            return (workspace, [], {})
+        try:
+            with open(flags_path, "r") as fh:
+                data = yaml.safe_load(fh) or {}
+        except Exception as e:
+            self._log_line(self._fmt_trace(f"failed to parse {flags_path} : {e}"))
+            return (workspace, [], {})
+        features = data.get("features") or []
+        defaults_yaml = data.get("defaults") or {}
+        # resolve defaults : prefer the `defaults:` block, else fall back to the
+        # per-feature `default:` field, else True
+        defaults = {}
+        for f in features:
+            fid = f.get("id", "")
+            if not fid:
+                continue
+            if fid in defaults_yaml:
+                defaults[fid] = bool(defaults_yaml[fid])
+            elif f"INSTALL_{fid}" in defaults_yaml:
+                defaults[fid] = bool(defaults_yaml[f"INSTALL_{fid}"])
+            else:
+                defaults[fid] = bool(f.get("default", True))
+        return (workspace, features, defaults)
+
+    def _fmt_trace(self, msg: str) -> str:
+        return f":: TRACE :: {msg}"
 
     def _run_command(self, cmd: CommandSpec, args: list) -> None:
         if cmd.dispatch == "subprocess":
