@@ -21,6 +21,7 @@
     owner: "{{ DEPLOYER_CLI_USER }}"
     group: "{{ DEPLOYER_CLI_USER }}"
     mode: "0644"
+    force: false
 
 - name: DEPLOYER BOOTSTRAP - DEPLOY VIMRC FOR ROOT
   ansible.builtin.copy:
@@ -38,5 +39,6 @@
     owner: root
     group: root
     mode: "0644"
+    force: false
   become: true
   # FIX B3: was /home/{{ DEPLOYER_CLI_USER }}/.zshrc in original code
