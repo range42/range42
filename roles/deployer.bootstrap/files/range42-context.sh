@@ -1451,6 +1451,67 @@ _r42_networks_legacy_notice() {
 _r42_networks_internet_on()  { _r42_networks_internet_toggle on  "$@" ; }
 _r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
 
+# networks-legacy-clean : disarm the pre-SDN stanzas of the active scenario's networks.
+#
+# The FIRST direct ansible-playbook call from this file - everything else goes through a scenario
+# script or a devkit. It is a bundle, so the form is the one the debug_sdn_tests README documents.
+#
+# Scope is the active scenario, deliberately : networks no scenario claims are left alone.
+# Only netNNN entries are passed - a legacy vmbrNNN has no shadowing counterpart to disarm.
+_r42_networks_legacy_clean() {
+    local assume_no_ask=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y) assume_no_ask=true ; shift ;;
+            *) _r42_print_fail "unknown argument: $1" >&2
+               echo "  networks-legacy-clean [--yes]" >&2
+               return 1 ;;
+        esac
+    done
+
+    local sel vnets n
+    sel=$(_r42_networks_resolve inventory "") || return 1
+    vnets=$(printf '%s\n' "$sel" | jq -c '[ .selected[]
+              | select(.is_sdn)
+              | {vnet: .vnet, subnet: .cidr, gateway: .gateway} ]')
+    n=$(printf '%s\n' "$vnets" | jq 'length')
+    if [[ "$n" -eq 0 ]]; then
+        _r42_print_fail "this scenario declares no SDN network - nothing to disarm" >&2
+        return 1
+    fi
+
+    local inv bdir bundle vault
+    inv="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR%/}/inventory_default.yml"
+    bdir="${RANGE42_BUNDLE_DIR:-${RANGE42_GITDIR__ROOT_DIR%/}/range42-playbooks/bundles}/proxmox/legacy_bridge.cleaning.shadowed_subnet"
+    bundle="${bdir}/main.yml"
+    vault="${RANGE42_VAULT_PASSWORD_FILE:-}"
+    for f in "$inv" "$bundle" "${bdir}/disarm_legacy_bridge.sh" "$vault" ; do
+        [[ -f "$f" ]] || { _r42_print_fail "not found: $f" >&2 ; return 1 ; }
+    done
+
+    _r42_print_section "disarm the pre-SDN stanzas  (scenario: $(_r42_active_scenario_name))"
+    _r42_print_step "networks in scope : $(printf '%s\n' "$vnets" | jq -r 'map(.vnet) | join(" ")')"
+    echo ""
+    echo "  This is a MIGRATION step, run once per scenario. It edits /etc/network/interfaces on"
+    echo "  the hypervisor so that no ifreload can bring the pre-SDN hooks back. A clean host is a"
+    echo "  no-op : nothing is detected, nothing is asked. Where something IS found, the bundle"
+    echo "  shows the exact lines and asks before writing, after taking a timestamped backup."
+    echo ""
+    echo "  It refuses outright if a running VM is still attached to one of those bridges."
+    echo "  The live addresses and rules are NOT touched - reconcile them with"
+    echo "  networks-internet-on afterwards."
+    echo ""
+
+    ## the pause inside the bundle needs a terminal, which is where this command is run from
+    ansible-playbook -i "$inv" "$bundle" \
+        --vault-password-file "$vault" \
+        -e "{\"BUNDLE_SDN_VNETS\": ${vnets}, \"BUNDLE_LEGACY_BUNDLE_DIR\": \"${bdir}\"$( $assume_no_ask && printf ', "BUNDLE_LEGACY_ASSUME_YES": true' )}" \
+      || { _r42_print_fail "nothing was written - see the output above" ; return 1 ; }
+
+    echo ""
+    _r42_print_check "done - check the live state with : range42-context networks-internet-list"
+}
+
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context snapshot — snapshot all VMs of the active scenario
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -2354,6 +2415,7 @@ _r42_help() {
     printf "      ${D}--vnet net143,net144         by network name${R}\n"
     printf "      ${D}--cidr 192.168.143.0/24      by subnet${R}\n"
     printf "      ${D}--yes                        skip the confirmation - needs an explicit scope${R}\n"
+    printf "    ${N}networks-legacy-clean${R}         ${D}migration : disarm the pre-SDN stanzas of this scenario's networks${R}\n"
     echo ""
 }
 
@@ -2401,6 +2463,7 @@ range42-context() {
         networks-internet-list)  _r42_networks_internet_list ;;
         networks-internet-on)    _r42_networks_internet_on "$@" ;;
         networks-internet-off)   _r42_networks_internet_off "$@" ;;
+        networks-legacy-clean)   _r42_networks_legacy_clean "$@" ;;
         help|--help|-h) _r42_help ;;
         --tui)
             # Launch the Textual TUI in a while-loop so `use` (eval-on-exit, code 42)
