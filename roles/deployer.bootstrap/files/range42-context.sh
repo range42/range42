@@ -1350,11 +1350,13 @@ _r42_networks_internet_toggle() {
         return 1
     fi
 
-    local names d rows n
+    local names d all rows n
     names=$(printf '%s\n' "$sel" | jq -c '[.selected[].vnet]')
     d=$(_r42_networks_gather) || return 1
-    rows=$(_r42_networks_join "$d" | jq --argjson n "$names" '[ .[] | select(.vnet as $v | $n | index($v)) ]')
-    rm -rf "$d"
+    ## the whole set is kept, not only the scope : step 3 normalises every network, because the
+    ## single apply below adds a rule to all of them and only the scope would get cleaned up
+    all=$(_r42_networks_join "$d") ; rm -rf "$d"
+    rows=$(printf '%s\n' "$all" | jq --argjson n "$names" '[ .[] | select(.vnet as $v | $n | index($v)) ]')
     n=$(printf '%s\n' "$rows" | jq 'length')
     [[ "$n" -eq 0 ]] && { _r42_print_fail "the scope selects no network" >&2 ; return 1 ; }
 
@@ -1399,10 +1401,23 @@ _r42_networks_internet_toggle() {
     proxmox_network.datacenter.apply_sdn.to.jsons.sh --json >/dev/null || {
         _r42_print_fail "the apply failed - the declaration is set but the live rules are not reconciled" ; return 1 ; }
 
-    ## 3. reconcile the live rules of each vnet to want
-    _r42_print_step "reconciling the live rules ..."
-    printf '%s\n' "$rows" | jq -c --arg w "$want" '.[]
-      | {sdn_subnet_cidr: .cidr, sdn_snat_want: $w}' \
+    ## 3. reconcile the live rules of EVERY network, not only the scope. The apply above replays
+    ## every post-up hook, so it adds a rule to each network - measured, +1 from the vnet hook and
+    ## +1 more from a legacy vmbr hook. Cleaning only the scope is what grows a subnet to 152
+    ## rules. Out of scope, the wanted count is the network's OWN declaration, so nothing changes
+    ## for them beyond dropping the surplus. And the primitive only ever DELETES, never creates :
+    ## it cannot cut a network that is meant to be open.
+    ## Networks with no declared subnet are left alone - nothing is declared, so nothing to
+    ## normalise, and their live rules may belong to a pre-SDN deployment.
+    local recon
+    recon=$(printf '%s\n' "$all" | jq -c --arg w "$want" --argjson n "$names" '.[]
+      | select((.vnet as $v | $n | index($v)) or .nat != "no-subnet")
+      | { sdn_subnet_cidr: .cidr,
+          sdn_snat_want: (if   (.vnet as $v | $n | index($v)) then $w
+                          elif .nat == "on"                   then "1"
+                          else                                     "0" end) }')
+    _r42_print_step "reconciling the live rules on $(printf '%s\n' "$recon" | grep -c .) network(s) ..."
+    printf '%s\n' "$recon" \
       | proxmox_network.sdn_subnet_cidr.delete_extra_snat_rules.to.jsons.sh --json >/dev/null || {
           _r42_print_fail "the reconciliation failed - check with networks-internet-list" ; return 1 ; }
 
