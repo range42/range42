@@ -1159,7 +1159,9 @@ _r42_networks_resolve() {
 #                         Local, no hypervisor, no network call.
 #   list_sdn_subnets      what the CLUSTER holds : the snat flag as the last deploy or the last
 #                         internet-on|off wrote it.
-#   list_snat_rules       what actually FORWARDS : the live rule count and its target.
+#   list_snat_rules       what actually FORWARDS : the live rule count, its target, and the
+#                         interface it leaves through - the last one is readable nowhere else,
+#                         Proxmox auto-detects it from the default route.
 #   list_interfaces_node  the node's configured interfaces, to catch a legacy bridge holding a
 #                         vnet's own gateway address.
 #
@@ -1208,7 +1210,7 @@ _r42_networks_gather() {
     ## ON STDERR, and this is not cosmetic : this function ECHOES THE TEMP DIRECTORY on stdout,
     ## so a caller does d=$(_r42_networks_gather). Anything else printed on stdout would be
     ## captured into that variable and the path would no longer exist.
-    _r42_print_step "reading the cluster and the node (one playbook run each) ..." >&2
+    _r42_print_step "reading the cluster and the node ..." >&2
     proxmox_network.datacenter.list_sdn_subnets.to.jsons.sh  2>/dev/null | jq -c . > "$d/subnets.jsonl"
     proxmox_network.datacenter.list_snat_rules.to.jsons.sh   2>/dev/null | jq -c . > "$d/rules.jsonl"
     proxmox_network.node_name.list_interfaces_node.to.jsons.sh 2>/dev/null | jq -c . > "$d/ifaces.jsonl"
@@ -1269,6 +1271,9 @@ _r42_networks_join() {
               zone:      ($s.subnet_zone // "-"),
               live:      ([ $r[] | .snat_count ] | add // 0),
               targets:   ([ $r[] | .snat_target ] | unique),
+              # the device the traffic actually leaves through. Proxmox auto-detects it from the
+              # default route, so no declaration holds it - it is readable nowhere else.
+              out:       ([ $r[] | .snat_out_iface ] | unique),
               shadow:    $shadow,
               isolation: (([ $vnets[] | select(.vnet == $v.vnet) ] | first | .vnet_isolate_ports) // null)
             }
@@ -1281,13 +1286,14 @@ _r42_networks_internet_list() {
     out=$(_r42_networks_join "$d") ; rm -rf "$d"
 
     _r42_print_section "egress per network  (scenario: $(_r42_active_scenario_name))"
-    printf "  %-10s %-20s %-9s %-6s %-12s %s\n" "VNET" "CIDR" "DECLARED" "LIVE" "TARGET" "ROLES"
+    printf "  %-10s %-20s %-9s %-6s %-12s %-10s %s\n" "VNET" "CIDR" "DECLARED" "LIVE" "TARGET" "OUT" "ROLES"
     printf '%s\n' "$out" | jq -r '.[]
       | [ .vnet, .cidr, .declared, (.live|tostring),
           (if (.targets|length) == 0 then "-" else (.targets|join(",")) end),
+          (if (.out|length)     == 0 then "-" else (.out|join(","))     end),
           (.roles|join(",")) ] | @tsv' \
-      | while IFS=$'\t' read -r v c dc lv tg rl ; do
-          printf "  %-10s %-20s %-9s %-6s %-12s %s\n" "$v" "$c" "$dc" "$lv" "$tg" "$rl"
+      | while IFS=$'\t' read -r v c dc lv tg og rl ; do
+          printf "  %-10s %-20s %-9s %-6s %-12s %-10s %s\n" "$v" "$c" "$dc" "$lv" "$tg" "$og" "$rl"
         done
 
     _r42_networks_warn "$out"
