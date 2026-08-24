@@ -1151,51 +1151,18 @@ _r42_networks_resolve() {
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # networks-internet-list / networks-show-sdn
 #
-# The two read views of the network state. They exist because the declared state and the live
-# state disagree far more often than one expects, and telling them apart by hand costs an hour.
-#
-# THREE SOURCES, and each answers something the other two cannot :
-#   the resolver          what the SCENARIO declares : vnets, cidrs, roles, scope labels.
-#                         Local, no hypervisor, no network call.
-#   list_sdn_subnets      what the CLUSTER holds : the snat flag as the last deploy or the last
-#                         internet-on|off wrote it.
-#   list_snat_rules       what actually FORWARDS : the live rule count, its target, and the
-#                         interface it leaves through - the last one is readable nowhere else,
-#                         Proxmox auto-detects it from the default route.
-#   list_interfaces_node  the node's configured interfaces, to catch a legacy bridge holding a
-#                         vnet's own gateway address.
-#
-# TWO TRAPS, both measured, both able to make these views lie :
-#
-#   1. `subnet_snat` IS OMIT-GUARDED. 9 of the 14 fields of list_sdn_subnets are built as
-#      "(x if x is defined else omit)", and omit inside a set_fact dict DELETES the key. Proxmox
-#      omits snat when it is off, so an ABSENT snat means OFF, never unknown. Read as unknown,
-#      every switched-off network would show unknown and the column would be worthless.
-#
-#   2. `subnet_cidr` IS OMIT-GUARDED TOO, so it is not a safe join key. The join runs on
-#      `subnet_vnet`, one of the five fields that are always present, and the cidr comes from the
-#      resolver, which derives it from the manifest and always has one.
-#
-# EACH DEVKIT CALL IS ONE ANSIBLE RUN, so each is called exactly ONCE and its output reused.
-# Looping a devkit per vnet would turn a four-network listing into four playbook runs.
-#
-# All joining is done in jq rather than shell, for the same reason as the resolver : this file is
-# sourced by zsh and by bash, whose arrays disagree on where they start.
+# Three reads, each called ONCE : one devkit call is one playbook run.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-# Fills three or four temp files with the raw devkit output. Echoes the directory holding them.
-# usage: _r42_networks_gather [--with-vnets]
-#
-# STDOUT IS THE RETURN VALUE. Every human-facing line inside this function must go to stderr, or
-# it lands in the caller's $(...) and corrupts the path.
+# Echoes the temp directory holding the raw devkit output.
+# STDOUT IS THE RETURN VALUE : every human-facing line here must go to stderr.
 _r42_networks_gather() {
     local want_vnets="${1:-}"
     local d
     d=$(mktemp -d) || return 1
 
     for cmd in proxmox_network.datacenter.list_sdn_subnets.to.jsons.sh \
-               proxmox_network.datacenter.list_snat_rules.to.jsons.sh \
-               proxmox_network.node_name.list_interfaces_node.to.jsons.sh ; do
+               proxmox_network.datacenter.list_snat_rules.to.jsons.sh ; do
         command -v "$cmd" >/dev/null 2>&1 || {
             _r42_print_fail "devkit not on PATH: $cmd" >&2
             echo "  the devkits are activated by sourcing their _activate.sh" >&2
@@ -1203,22 +1170,14 @@ _r42_networks_gather() {
         }
     done
 
-    ## the resolver first : it is local, so a broken context fails here rather than after three
-    ## playbook runs
+    ## local, so a broken context fails before any playbook run
     _r42_networks_resolve inventory "" > "$d/resolved.json" || { rm -rf "$d" ; return 1; }
 
-    ## ON STDERR, and this is not cosmetic : this function ECHOES THE TEMP DIRECTORY on stdout,
-    ## so a caller does d=$(_r42_networks_gather). Anything else printed on stdout would be
-    ## captured into that variable and the path would no longer exist.
     _r42_print_step "reading the cluster and the node ..." >&2
     proxmox_network.datacenter.list_sdn_subnets.to.jsons.sh  2>/dev/null | jq -c . > "$d/subnets.jsonl"
     proxmox_network.datacenter.list_snat_rules.to.jsons.sh   2>/dev/null | jq -c . > "$d/rules.jsonl"
-    proxmox_network.node_name.list_interfaces_node.to.jsons.sh 2>/dev/null | jq -c . > "$d/ifaces.jsonl"
     if [[ "$want_vnets" == "--with-vnets" ]]; then
-        ## guarded HERE and not with the other three : this one is only needed by show-sdn, and
-        ## demanding it up front would break internet-list on a host that does not have it.
-        ## Unguarded it would leave vnets.jsonl empty and the isolation column would read "-"
-        ## everywhere without saying why.
+        ## only show-sdn needs it, so requiring it up front would break internet-list without it
         command -v proxmox_network.datacenter.list_sdn_vnets.to.jsons.sh >/dev/null 2>&1 || {
             _r42_print_fail "devkit not on PATH: proxmox_network.datacenter.list_sdn_vnets.to.jsons.sh" >&2
             rm -rf "$d" ; return 1
@@ -1231,51 +1190,44 @@ _r42_networks_gather() {
     echo "$d"
 }
 
-# The join, shared by both views. Emits one enriched record per vnet the scenario declares.
-# usage: _r42_networks_join <gather_dir>
+# One record per vnet the scenario declares, ready to print.
 _r42_networks_join() {
     local d="$1"
-    ## --slurpfile already turns a jsonl file into an array, so no `jq -s` and no process
-    ## substitution is needed. resolved.json holds ONE object, hence $res[0] there only.
     jq -n \
       --slurpfile res "$d/resolved.json" \
       --slurpfile sub "$d/subnets.jsonl" \
       --slurpfile rul "$d/rules.jsonl" \
-      --slurpfile ifc "$d/ifaces.jsonl" \
       --slurpfile vnt "$d/vnets.jsonl" '
-        $sub as $subnets
-      | $rul as $rules
-      | $ifc as $ifaces
-      | $vnt as $vnets
-      | [ $res[0].selected[]
+        [ $res[0].selected[]
           | . as $v
-          # JOIN ON subnet_vnet : always present. NOT on subnet_cidr, which is omit-guarded.
-          | ([ $subnets[] | select(.subnet_vnet == $v.vnet) ] | first) as $s
-          # every live rule whose source is this vnet cidr
-          | [ $rules[] | select(.snat_source == $v.cidr) ] as $r
-          # a legacy bridge carrying this vnet own gateway is what silently steals the route
-          | ([ $ifaces[]
-               | select((.ip_settings_address // "") == $v.gateway)
-               | select(.iface != $v.vnet)
-               | .iface ]) as $shadow
+          # join on subnet_vnet : subnet_cidr is omit-guarded and can be absent
+          | ([ $sub[] | select(.subnet_vnet == $v.vnet) ] | first) as $s
+          | [ $rul[] | select(.snat_source == $v.cidr) ] as $r
+          | ([ $r[] | .snat_target ] | unique) as $t
+          | ([ $r[] | .snat_count ] | add // 0) as $n
           | {
-              vnet:      $v.vnet,
-              cidr:      $v.cidr,
-              gateway:   $v.gateway,
-              roles:     $v.roles,
-              labels:    $v.labels,
-              templating: $v.is_templating,
-              # ABSENT snat means OFF. This is the trap : never render it as unknown.
-              declared:  (if $s == null then "no-subnet"
-                          elif ($s.subnet_snat // 0) == 1 then "on" else "off" end),
-              zone:      ($s.subnet_zone // "-"),
-              live:      ([ $r[] | .snat_count ] | add // 0),
-              targets:   ([ $r[] | .snat_target ] | unique),
-              # the device the traffic actually leaves through. Proxmox auto-detects it from the
-              # default route, so no declaration holds it - it is readable nowhere else.
-              out:       ([ $r[] | .snat_out_iface ] | unique),
-              shadow:    $shadow,
-              isolation: (([ $vnets[] | select(.vnet == $v.vnet) ] | first | .vnet_isolate_ports) // null)
+              vnet:     $v.vnet,
+              cidr:     $v.cidr,
+              roles:    ($v.roles | join(",")),
+              labels:   ($v.labels | join(",")),
+              zone:     ($s.subnet_zone // "-"),
+              # an absent snat means off, never unknown
+              nat:      (if $s == null then "no-subnet"
+                         elif ($s.subnet_snat // 0) == 1 then "on" else "off" end),
+              rules:    $n,
+              # SNAT is written by the SDN, MASQUERADE by the legacy bridge hook
+              origin:   (if   ($t | length) == 0 then "-"
+                         elif ($t | index("SNAT")) and ($t | index("MASQUERADE")) then "mixed"
+                         elif ($t | index("SNAT"))       then "sdn"
+                         elif ($t | index("MASQUERADE")) then "legacy"
+                         else ($t | join(",")) end),
+              out:      (if ([ $r[] | .snat_out_iface ] | unique | length) == 0
+                         then "-" else ([ $r[] | .snat_out_iface ] | unique | join(",")) end),
+              # an absent isolate-ports means no, same guard as snat
+              isolated: (if (([ $vnt[] | select(.vnet == $v.vnet) ] | first | .vnet_isolate_ports) // 0) == 1
+                         then "yes" else "no" end),
+              # the verdict follows the LIVE rules, not the declaration : legacy rules forward too
+              internet: (if $n > 0 then "YES" else "NO" end)
             }
         ]'
 }
@@ -1286,17 +1238,14 @@ _r42_networks_internet_list() {
     out=$(_r42_networks_join "$d") ; rm -rf "$d"
 
     _r42_print_section "egress per network  (scenario: $(_r42_active_scenario_name))"
-    printf "  %-10s %-20s %-9s %-6s %-12s %-10s %s\n" "VNET" "CIDR" "DECLARED" "LIVE" "TARGET" "OUT" "ROLES"
+    printf "  %-10s %-20s %-13s %-10s %-8s %-8s %-14s %s\n" \
+      "VNET" "CIDR" "OUTGOING NAT" "NAT RULES" "ORIGIN" "OUT" "ROLES" "INTERNET"
     printf '%s\n' "$out" | jq -r '.[]
-      | [ .vnet, .cidr, .declared, (.live|tostring),
-          (if (.targets|length) == 0 then "-" else (.targets|join(",")) end),
-          (if (.out|length)     == 0 then "-" else (.out|join(","))     end),
-          (.roles|join(",")) ] | @tsv' \
-      | while IFS=$'\t' read -r v c dc lv tg og rl ; do
-          printf "  %-10s %-20s %-9s %-6s %-12s %-10s %s\n" "$v" "$c" "$dc" "$lv" "$tg" "$og" "$rl"
+      | [ .vnet, .cidr, .nat, (.rules|tostring), .origin, .out, .roles, .internet ] | @tsv' \
+      | while IFS=$'\t' read -r v c na ru og ou rl it ; do
+          printf "  %-10s %-20s %-13s %-10s %-8s %-8s %-14s %s\n" "$v" "$c" "$na" "$ru" "$og" "$ou" "$rl" "$it"
         done
-
-    _r42_networks_warn "$out"
+    echo ""
 }
 
 _r42_networks_show_sdn() {
@@ -1305,54 +1254,14 @@ _r42_networks_show_sdn() {
     out=$(_r42_networks_join "$d") ; rm -rf "$d"
 
     _r42_print_section "sdn state  (scenario: $(_r42_active_scenario_name))"
-    printf "  %-10s %-20s %-10s %-9s %-6s %-9s %s\n" "VNET" "CIDR" "ZONE" "DECLARED" "LIVE" "ISOLATED" "SCOPE LABELS"
+    printf "  %-10s %-20s %-10s %-13s %-10s %-9s %-14s %s\n" \
+      "VNET" "CIDR" "ZONE" "OUTGOING NAT" "NAT RULES" "ISOLATED" "SCOPE LABELS" "INTERNET"
     printf '%s\n' "$out" | jq -r '.[]
-      | [ .vnet, .cidr, .zone, .declared, (.live|tostring),
-          (if .isolation == null then "-" elif .isolation == 1 then "yes" else "no" end),
-          (.labels|join(",")) ] | @tsv' \
-      | while IFS=$'\t' read -r v c z dc lv is lb ; do
-          printf "  %-10s %-20s %-10s %-9s %-6s %-9s %s\n" "$v" "$c" "$z" "$dc" "$lv" "$is" "$lb"
+      | [ .vnet, .cidr, .zone, .nat, (.rules|tostring), .isolated, .labels, .internet ] | @tsv' \
+      | while IFS=$'\t' read -r v c z na ru is lb it ; do
+          printf "  %-10s %-20s %-10s %-13s %-10s %-9s %-14s %s\n" "$v" "$c" "$z" "$na" "$ru" "$is" "$lb" "$it"
         done
-
-    _r42_networks_warn "$out"
-}
-
-# Everything worth acting on, and nothing else. A clean host prints nothing here.
-# usage: _r42_networks_warn <joined_json>
-_r42_networks_warn() {
-    local out="$1" n
-    n=$(printf '%s\n' "$out" | jq '[ .[]
-        | select(.declared == "no-subnet"
-              or (.declared == "on"  and .live == 0)
-              or (.declared == "off" and .live  > 0)
-              or .live > 1
-              or ((.targets | index("MASQUERADE")) != null)
-              or ((.shadow | length) > 0)) ] | length')
-    [[ "$n" -eq 0 ]] && { echo "" ; _r42_print_check "nothing to flag" ; return 0 ; }
-
     echo ""
-    _r42_print_section "what to look at"
-    ## the declared/live disagreements first : they are the ones that change what an operator does
-    printf '%s\n' "$out" | jq -r '.[]
-      | select(.declared == "on" and .live == 0)
-      | "  declared ON but NOTHING forwards : \(.vnet) \(.cidr) - run networks-apply, or a deploy"'
-    printf '%s\n' "$out" | jq -r '.[]
-      | select(.declared == "off" and .live > 0)
-      | "  declared OFF but \(.live) rule(s) still forward : \(.vnet) \(.cidr)"'
-    printf '%s\n' "$out" | jq -r '.[]
-      | select(.declared == "no-subnet")
-      | "  the scenario declares \(.vnet) but the cluster has no subnet for it : \(.cidr)"'
-    ## then the two producers of live rules, told apart by their target
-    printf '%s\n' "$out" | jq -r '.[]
-      | select(.live > 1)
-      | "  \(.live) rules where 1 is expected : \(.vnet) \(.cidr) - each apply appends one, they accumulate"'
-    printf '%s\n' "$out" | jq -r '.[]
-      | select((.targets | index("MASQUERADE")) != null)
-      | "  MASQUERADE on \(.vnet) \(.cidr) : a legacy bridge hook, it comes back at the next ifreload whatever the SDN says"'
-    ## and the one that makes a VM unreachable while every API view stays correct
-    printf '%s\n' "$out" | jq -r '.[]
-      | select((.shadow | length) > 0)
-      | "  \(.shadow|join(",")) carries \(.gateway), the gateway of \(.vnet) : the host may route this subnet to the wrong device"'
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
