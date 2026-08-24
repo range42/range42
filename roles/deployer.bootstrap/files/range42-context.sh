@@ -1211,6 +1211,9 @@ _r42_networks_join() {
               roles:    ($v.roles | join(",")),
               labels:   ($v.labels | join(",")),
               zone:     ($s.subnet_zone // "-"),
+              # <zone>-<network>-<mask>, the key the update and delete actions take
+              subnet_id: ($s.subnet // null),
+              vms:      $v.vm_count,
               # an absent snat means off, never unknown
               nat:      (if $s == null then "no-subnet"
                          elif ($s.subnet_snat // 0) == 1 then "on" else "off" end),
@@ -1263,6 +1266,175 @@ _r42_networks_show_sdn() {
         done
     echo ""
 }
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-internet-on / networks-internet-off
+#
+# Calls the same three devkits the per-subnet wrapper calls, in the same order, but hoists
+# the apply OUT of the loop : one apply for the whole scope. Each extra apply appends one
+# rule per subnet on the host and the wrapper only reconciles its own.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# usage: _r42_networks_internet_toggle <on|off> [--roles all|all-and-templating]
+#                                               [--role|--roles <r>,..] [--vnet <v>,..]
+#                                               [--cidr <c>,..] [--yes]
+_r42_networks_internet_toggle() {
+    local action="$1" ; shift
+    local kind="all" spec="" assume_no_ask=false want scoped=""
+    [[ "$action" == "on" ]] && want=1 || want=0
+
+    ## two scopes at once used to let the last one win in silence, which is how an operator
+    ## ends up cutting a network they did not name
+    _scope_once() {
+        [[ -z "$scoped" ]] || {
+            _r42_print_fail "two scopes given at once: ${scoped} and ${1}" >&2
+            return 1
+        }
+        scoped="$1"
+    }
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            ## --role and --roles are aliases : both come naturally and the tool should not
+            ## correct the operator on it
+            --role|--roles)
+                _scope_once "$1" || return 1
+                case "${2:-}" in
+                    all)                    kind="all" ;;
+                    all-and-templating)     kind="all-and-templating" ;;
+                    "")  _r42_print_fail "$1 needs a value" >&2 ; return 1 ;;
+                    *)   kind="role" ; spec="$2" ;;
+                esac
+                shift 2 ;;
+            --vnet) _scope_once "$1" || return 1
+                    [[ -n "${2:-}" ]] || { _r42_print_fail "--vnet needs a value" >&2 ; return 1; }
+                    kind="vnet" ; spec="$2" ; shift 2 ;;
+            --cidr) _scope_once "$1" || return 1
+                    [[ -n "${2:-}" ]] || { _r42_print_fail "--cidr needs a value" >&2 ; return 1; }
+                    kind="cidr" ; spec="$2" ; shift 2 ;;
+            --yes|-y) assume_no_ask=true ; shift ;;
+            -*) _r42_print_fail "unknown option: $1" >&2
+                echo "  networks-internet-${action} [--roles all|all-and-templating|<r>,..] [--vnet <v>,..] [--cidr <c>,..] [--yes]" >&2
+                return 1 ;;
+            ## no bare argument : the scope is always named by its flag, so `admin` can never be
+            ## read as a network when it is a role, nor the reverse
+            *)  _r42_print_fail "unexpected argument: $1" >&2
+                echo "  the scope is always named by a flag, for instance  --vnet $1" >&2
+                return 1 ;;
+        esac
+    done
+
+    unset -f _scope_once
+
+    ## the bare form means --roles all, which is convenient and safe BECAUSE the recap and the
+    ## question stand between the operator and the change. Take the question away and it becomes
+    ## a silent cut of every network, the admin subnet included - wazuh pulling, the deployer
+    ## VMs, apt. So --yes and an implicit scope cannot be combined.
+    if $assume_no_ask && [[ -z "$scoped" ]]; then
+        _r42_print_fail "--yes needs an explicit scope" >&2
+        echo "  say which networks, out loud :" >&2
+        echo "    --roles all                  every network carrying vms" >&2
+        echo "    --roles all-and-templating   and the one the templates are built on" >&2
+        echo "    --roles teams                every network carrying that role" >&2
+        echo "    --vnet net143,net144         by network name" >&2
+        echo "    --cidr 192.168.143.0/24      by subnet" >&2
+        return 1
+    fi
+
+    local sel unmatched
+    sel=$(_r42_networks_resolve "$kind" "$spec") || return 1
+    unmatched=$(printf '%s\n' "$sel" | jq -r '.unmatched | join(", ")')
+    if [[ -n "$unmatched" ]]; then
+        _r42_print_fail "nothing matches: ${unmatched}" >&2
+        echo "  known scope labels : $(printf '%s\n' "$sel" | jq -r '[.selected[].labels[]] | unique | join(", ")')" >&2
+        return 1
+    fi
+
+    local names d rows n
+    names=$(printf '%s\n' "$sel" | jq -c '[.selected[].vnet]')
+    d=$(_r42_networks_gather) || return 1
+    rows=$(_r42_networks_join "$d" | jq --argjson n "$names" '[ .[] | select(.vnet as $v | $n | index($v)) ]')
+    rm -rf "$d"
+    n=$(printf '%s\n' "$rows" | jq 'length')
+    [[ "$n" -eq 0 ]] && { _r42_print_fail "the scope selects no network" >&2 ; return 1 ; }
+
+    _r42_print_section "about to $( [[ $want -eq 1 ]] && echo ENABLE || echo DISABLE ) outgoing nat on ${n} network(s)"
+    printf '%s\n' "$rows" | jq -r '.[]
+      | "  \(.vnet)\t\(.cidr)\troles : \(.roles)\t\(.vms) vm(s)\tnat now : \(.nat)"' \
+      | while IFS=$'\t' read -r v c r m na ; do
+          printf "  %-10s %-20s %-26s %-10s %s\n" "$v" "$c" "$r" "$m" "$na"
+        done
+
+    ## the templating vnet feeds apt during the template build, so cutting it is almost never
+    ## what the operator means. `all` never selects it - only an explicit scope can.
+    if [[ "$want" -eq 0 ]]; then
+        local tpl
+        tpl=$(printf '%s\n' "$sel" | jq -r --argjson n "$names" '[ .templating_vnets[] | select(. as $t | $n | index($t)) ] | join(", ")')
+        [[ -n "$tpl" ]] && { echo "" ; _r42_print_warning "this scope includes the templating network (${tpl}) - the template build runs apt through it" ; }
+    fi
+
+    _r42_networks_legacy_notice "$rows"
+
+    if ! $assume_no_ask ; then
+        echo ""
+        printf "  proceed ? [y/N] "
+        local answer ; read -r answer
+        case "$answer" in
+            y|Y|yes|YES) : ;;
+            *) _r42_print_fail "aborted - nothing was changed" ; return 1 ;;
+        esac
+    fi
+
+    ## 1. the declaration, per vnet, WITHOUT applying
+    echo ""
+    _r42_print_step "setting snat=${want} on ${n} subnet(s) ..."
+    printf '%s\n' "$rows" | jq -c --arg w "$want" '.[]
+      | select(.subnet_id != null)
+      | {sdn_vnet: .vnet, sdn_subnet_id: .subnet_id, sdn_subnet_snat: $w}' \
+      | proxmox_network.sdn_vnet.update_sdn_subnet.to.jsons.sh --json >/dev/null || {
+          _r42_print_fail "the subnet update failed - no apply was run" ; return 1 ; }
+
+    ## 2. ONE apply for the whole scope
+    _r42_print_step "applying, once ..."
+    proxmox_network.datacenter.apply_sdn.to.jsons.sh --json >/dev/null || {
+        _r42_print_fail "the apply failed - the declaration is set but the live rules are not reconciled" ; return 1 ; }
+
+    ## 3. reconcile the live rules of each vnet to want
+    _r42_print_step "reconciling the live rules ..."
+    printf '%s\n' "$rows" | jq -c --arg w "$want" '.[]
+      | {sdn_subnet_cidr: .cidr, sdn_snat_want: $w}' \
+      | proxmox_network.sdn_subnet_cidr.delete_extra_snat_rules.to.jsons.sh --json >/dev/null || {
+          _r42_print_fail "the reconciliation failed - check with networks-internet-list" ; return 1 ; }
+
+    echo ""
+    _r42_print_check "done - verify with : range42-context networks-internet-list"
+}
+
+# Printed only when the scope carries rules the SDN did not write. Says what is true : hybrid
+# hosts are supported, but an ifreload replays the old hooks and undoes this command.
+_r42_networks_legacy_notice() {
+    local rows="$1" legacy
+    legacy=$(printf '%s\n' "$rows" | jq -r '[ .[] | select(.origin == "legacy" or .origin == "mixed") | .vnet ] | join(", ")')
+    [[ -z "$legacy" ]] && return 0
+
+    echo ""
+    _r42_print_section "this host still carries pre-SDN nat rules"
+    echo "  on : ${legacy}"
+    echo ""
+    echo "  Those rules were written by the pre-SDN setup, from a vmbr stanza in"
+    echo "  /etc/network/interfaces. The SDN is what decides outgoing nat now, and a mixed host"
+    echo "  is fully supported - this command works on both kinds of rule."
+    echo ""
+    echo "  What to expect : the old rules are still physically on disk, and any 'ifreload -a'"
+    echo "  replays them - including one triggered by another scenario. So this command holds"
+    echo "  until that happens, not longer."
+    echo ""
+    echo "  Making it permanent means clearing those lines from /etc/network/interfaces, once"
+    echo "  per scenario, as part of the move to SDN. That step is not wired into this tool yet." 
+}
+
+_r42_networks_internet_on()  { _r42_networks_internet_toggle on  "$@" ; }
+_r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context snapshot — snapshot all VMs of the active scenario
@@ -2158,6 +2330,15 @@ _r42_help() {
     printf "  ${C}networks (sdn state and egress)${R}\n"
     printf "    ${N}networks-show-sdn${R}              ${D}zone / vnet / subnet / snat / isolation, per network of the active scenario${R}\n"
     printf "    ${N}networks-internet-list${R}         ${D}where egress is actually active : declared vs live rules${R}\n"
+    printf "    ${N}networks-internet-on${R}|${N}off${R}      ${D}enable / disable outgoing nat, with a recap and a confirmation${R}\n"
+    printf "      ${D}no argument                  same as --roles all${R}\n"
+    printf "      ${D}--roles all                  every network carrying vms, never the templating one${R}\n"
+    printf "      ${D}--roles all-and-templating   adds the network the templates are built on${R}\n"
+    printf "      ${D}--roles teams                every network carrying that role${R}\n"
+    printf "      ${D}--roles team-143,team-144    by scope label, as networks-show-sdn lists them${R}\n"
+    printf "      ${D}--vnet net143,net144         by network name${R}\n"
+    printf "      ${D}--cidr 192.168.143.0/24      by subnet${R}\n"
+    printf "      ${D}--yes                        skip the confirmation - needs an explicit scope${R}\n"
     echo ""
 }
 
@@ -2203,6 +2384,8 @@ range42-context() {
 
         networks-show-sdn)       _r42_networks_show_sdn ;;
         networks-internet-list)  _r42_networks_internet_list ;;
+        networks-internet-on)    _r42_networks_internet_on "$@" ;;
+        networks-internet-off)   _r42_networks_internet_off "$@" ;;
         help|--help|-h) _r42_help ;;
         --tui)
             # Launch the Textual TUI in a while-loop so `use` (eval-on-exit, code 42)
