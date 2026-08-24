@@ -998,6 +998,157 @@ _r42_pause()     { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.pause.to.jsons.s
 _r42_resume()    { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.resume.to.jsons.sh"     "resuming"; }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-* : THE SCOPE RESOLVER
+#
+# Shared by networks-internet-list and networks-internet-on|off, so the two can never disagree
+# about what `--role teams` means. Resolving the scope twice is how they would drift apart.
+#
+# EVERYTHING IS DERIVED FROM THE ACTIVE SCENARIO'S MANIFEST, never from a list written here : the
+# repo already carries 11 distinct `role` values and a new one must work without editing this
+# file. A vnet the manifest cannot explain is still emitted, with role `unknown` - a silently
+# dropped vnet is exactly what makes an egress bug undebuggable.
+#
+# WHAT IS DERIVED FROM WHAT :
+#   vnet     the `bridge` field, verbatim. NOT the IP third octet : two template entries in the
+#            repo intentionally carry bridge=vmbr140 with a 192.168.142.x address, so deriving
+#            from the IP would invent a vnet that does not exist.
+#   cidr     192.168.<octet>.0/24, octet taken from the vnet name. Every subnet declared in the
+#            repo is a /24 - checked, a single prefix across both SDN scenarios.
+#   gateway  the .1 of that cidr.
+#   roles    the `role` of the VMs on the vnet. `.templates[]` entries have NO role field at all,
+#            which is why the templating vnet is found by its PRESENCE in `.templates[]` and never
+#            by `role == template`, a value that does not exist anywhere.
+#   labels   <role>-<octet>, e.g. team-143. Emitted for `netNNN` only : during the migration
+#            `team-143` would otherwise match both net143 and vmbr143, and the label would be
+#            ambiguous precisely while both exist.
+#
+# `snat_declared` is reported "unknown" ON PURPOSE. The declaration lives in the scenario's
+# Ansible playbook - `_sdn_vnets` in 00_sdn_bootstrap/_main.yml - which no shell can read. Where
+# that value should come from is a decision still to take, and it belongs to the command that
+# consumes it, not to the resolver.
+#
+# THE WHOLE SELECTION IS DONE IN JQ, deliberately. This file is sourced by both zsh and bash, and
+# zsh arrays are 1-indexed while bash arrays are 0-indexed : any shell loop over a token list
+# would work in one and quietly skip an element in the other.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# usage: _r42_networks_resolve <kind> [spec]
+#   kind : inventory | all | all-and-templating | role | vnet | cidr
+#   spec : comma-separated tokens, for role / vnet / cidr
+#
+# Emits ONE json object : { kind, requested, selected[], selected_count, unmatched[],
+# collateral_roles[], inventory_count, templating_vnets[], legacy_vnets[] }.
+#
+# `unmatched` is what makes a typo visible : `--role teasm` selects nothing, and without it the
+# command would report a cheerful success having touched no network at all.
+#
+# `collateral_roles` is what a subnet-wide rule forces us to say out loud. A SNAT rule is per
+# subnet, so the blast radius of an internet-off is always the WHOLE vnet : on this repo
+# `--role admin` also hits `student` on vmbr142, in 5 scenarios. The caller must announce them.
+_r42_networks_resolve() {
+    local kind="${1:-all}"
+    local spec="${2:-}"
+    local manifest
+
+    case "$kind" in
+        inventory|all|all-and-templating|role|vnet|cidr) : ;;
+        *)
+            _r42_print_fail "unknown scope kind: $kind" >&2
+            echo "  expected one of : inventory | all | all-and-templating | role | vnet | cidr" >&2
+            return 1
+            ;;
+    esac
+
+    manifest=$(_r42_active_scenario_manifest) || return 1
+
+    jq -c --arg kind "$kind" --arg spec "$spec" '
+        [ ((.vms       // []) | map(. + {_sec: "vms"})),
+          ((.templates // []) | map(. + {_sec: "templates"}))
+        ] | add
+        | map(select(.bridge != null and .bridge != ""))
+        | group_by(.bridge)
+        | map(
+            (.[0].bridge)                          as $b
+          | ($b | sub("^(net|vmbr)"; ""))          as $oct
+          | (map(select(._sec == "vms")))          as $vms
+          | (map(select(._sec == "templates")))    as $tpl
+          | ([ $vms[] | .role // empty ] | unique) as $rr
+          | ($oct | test("^[0-9]{1,3}$"))          as $num
+          | (if ($rr | length) == 0 then ["unknown"] else $rr end) as $r
+          | {
+              vnet:           $b,
+              is_sdn:         ($b | startswith("net")),
+              octet:          $oct,
+              cidr:           (if $num then "192.168." + $oct + ".0/24" else null end),
+              gateway:        (if $num then "192.168." + $oct + ".1"    else null end),
+              roles:          $r,
+              labels:         (if ($b | startswith("net")) and $num then ($r | map(. + "-" + $oct)) else [] end),
+              is_templating:  (($tpl | length) > 0),
+              vm_count:       ($vms | length),
+              template_count: ($tpl | length),
+              snat_declared:  "unknown"
+            }
+          )
+        | sort_by(.vnet)
+        | . as $inv
+
+        | ( if ($spec | length) == 0 then []
+            else ($spec | ascii_downcase | gsub("[[:space:]]"; "") | split(",") | map(select(length > 0)))
+            end ) as $tok
+
+        # a token may be a bare role (team), its plural (teams) or a label (team-143). All three
+        # count as "this role was asked for", so none of them is reported back as collateral.
+        | ( [ $tok[] | rtrimstr("s") ] + [ $tok[] | sub("-[0-9]+$"; "") ] | unique ) as $req_roles
+
+        | ( if   $kind == "inventory"          then $inv
+            # `all` never includes the templating vnet : the ubuntu template build runs apt, and
+            # cutting its egress leaves the templates empty and out of date.
+            elif $kind == "all"                then [ $inv[] | select(.vm_count > 0 and (.is_templating | not)) ]
+            elif $kind == "all-and-templating" then [ $inv[] | select(.vm_count > 0 or .is_templating) ]
+            elif $kind == "vnet"               then [ $inv[] | select(. as $e | $tok | index($e.vnet)) ]
+            elif $kind == "cidr"               then [ $inv[] | select(. as $e | $tok | index($e.cidr)) ]
+            elif $kind == "role"               then
+              [ $inv[] | select(
+                  . as $e
+                  | [ $tok[]
+                      | . as $t
+                      | ($e.roles  | index($t))
+                        // ($e.roles  | index($t | rtrimstr("s")))
+                        // ($e.labels | index($t))
+                    ] | any
+                ) ]
+            else null end ) as $sel
+
+        | ( if   $kind == "role" then
+                 [ $tok[] | . as $t
+                   | select( [ $inv[]
+                               | (.roles  | index($t))
+                                 // (.roles  | index($t | rtrimstr("s")))
+                                 // (.labels | index($t))
+                             ] | any | not ) ]
+            elif $kind == "vnet" then [ $tok[] | select(. as $t | ([ $inv[].vnet ] | index($t)) == null) ]
+            elif $kind == "cidr" then [ $tok[] | select(. as $t | ([ $inv[].cidr ] | index($t)) == null) ]
+            else [] end ) as $unmatched
+
+        | ( if $kind == "role"
+            then ([ $sel[].roles[] ] | unique | map(select(. as $r | ($req_roles | index($r)) == null)))
+            else [] end ) as $collateral
+
+        | {
+            kind:             $kind,
+            requested:        $tok,
+            selected:         $sel,
+            selected_count:   ($sel | length),
+            unmatched:        $unmatched,
+            collateral_roles: $collateral,
+            inventory_count:  ($inv | length),
+            templating_vnets: [ $inv[] | select(.is_templating) | .vnet ],
+            legacy_vnets:     [ $inv[] | select(.is_sdn | not)  | .vnet ]
+          }
+    ' "$manifest"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context snapshot — snapshot all VMs of the active scenario
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
