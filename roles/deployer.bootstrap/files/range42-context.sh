@@ -807,7 +807,7 @@ _r42_deploy() {
 
     # Extra args (typically -e enable_<feature>=<bool> from the TUI deploy modal)
     # propagate as-is to the scenario's setup.sh which forwards to ansible-playbook.
-    cd "$scenario_target" && bash "$setup_script" "$@"
+    ( cd "$scenario_target" && bash "$setup_script" "$@" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -836,7 +836,7 @@ _r42_deploy_vms() {
 
     # Extra args (typically -e enable_<feature>=<bool> from the TUI deploy modal)
     # propagate as-is to the scenario's setup_vms_only.sh which forwards to ansible-playbook.
-    cd "$scenario_target" && bash "$script" "$@"
+    ( cd "$scenario_target" && bash "$script" "$@" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -859,7 +859,7 @@ _r42_delete() {
     _r42_print_step "running: $delete_script"
     echo ""
 
-    cd "$scenario_target" && bash "$delete_script"
+    ( cd "$scenario_target" && bash "$delete_script" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -882,7 +882,7 @@ _r42_reset() {
     _r42_print_step "running: $reset_script"
     echo ""
 
-    cd "$scenario_target" && bash "$reset_script"
+    ( cd "$scenario_target" && bash "$reset_script" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -904,7 +904,7 @@ _r42_delete_vms() {
     _r42_print_step "running: $script"
     echo ""
 
-    cd "$scenario_target" && bash "$script"
+    ( cd "$scenario_target" && bash "$script" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -1022,10 +1022,11 @@ _r42_resume()    { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.resume.to.jsons.
 #            `team-143` would otherwise match both net143 and vmbr143, and the label would be
 #            ambiguous precisely while both exist.
 #
-# `snat_declared` is reported "unknown" ON PURPOSE. The declaration lives in the scenario's
-# Ansible playbook - `_sdn_vnets` in 00_sdn_bootstrap/_main.yml - which no shell can read. Where
-# that value should come from is a decision still to take, and it belongs to the command that
-# consumes it, not to the resolver.
+# `snat_declared` is reported "unknown" ON PURPOSE, and stays that way. The declaration lives in
+# the scenario playbook that imports sdn_network.bootstrap - decided 2026-08-25 - and it is read by
+# the scenario's own setup_networks / delete_networks scripts, never here. The two answer different
+# questions : the resolver says WHICH networks and who is on them, the declaration says how they
+# are configured.
 #
 # THE WHOLE SELECTION IS DONE IN JQ, deliberately. This file is sourced by both zsh and bash, and
 # zsh arrays are 1-indexed while bash arrays are 0-indexed : any shell loop over a token list
@@ -1445,11 +1446,68 @@ _r42_networks_legacy_notice() {
     echo "  until that happens, not longer."
     echo ""
     echo "  Making it permanent means clearing those lines from /etc/network/interfaces, once"
-    echo "  per scenario, as part of the move to SDN. That step is not wired into this tool yet." 
+    echo "  per scenario, as part of the move to SDN :"
+    echo "    range42-context networks-legacy-clean"
 }
 
 _r42_networks_internet_on()  { _r42_networks_internet_toggle on  "$@" ; }
 _r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-apply / networks-delete-sdn
+#
+# THIN WRAPPERS, like deploy / delete / delete-vms / reset. The logic lives in the scenario, in
+# <scenario>.setup_networks.sh and <scenario>.delete_networks.sh.
+#
+# WHAT EACH ONE READS, decided 2026-08-25 : setup runs the scenario's declaration playbook, the
+# only place `snat` and the zone name exist ; delete derives its scope from the manifest's `net*`
+# bridges, like every other delete script here.
+#
+# NAMES ARE THE ONES FROZEN IN 3.4 : networks-apply, not networks-setup.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# usage: _r42_networks_apply [--dry-run] [extra ansible-playbook args]
+_r42_networks_apply() {
+    local scenario_target scenario_name script
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    scenario_name="${scenario_target##*/}"
+    script="${scenario_target}/${scenario_name}.setup_networks.sh"
+
+    if [[ ! -f "$script" ]]; then
+        _r42_print_fail "script not found: $script"
+        _r42_print_step "${scenario_name} declares no SDN network yet - the declaration and this"
+        _r42_print_step "script live in the scenario, not in range42-context"
+        return 1
+    fi
+
+    _r42_print_section "creating the SDN networks this scenario declares"
+    _r42_print_step "running: $script"
+    echo ""
+
+    ( cd "$scenario_target" && bash "$script" "$@" )
+}
+
+# usage: _r42_networks_delete_sdn [extra args]
+_r42_networks_delete_sdn() {
+    local scenario_target scenario_name script
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    scenario_name="${scenario_target##*/}"
+    script="${scenario_target}/${scenario_name}.delete_networks.sh"
+
+    if [[ ! -f "$script" ]]; then
+        _r42_print_fail "script not found: $script"
+        _r42_print_step "${scenario_name} declares no SDN network yet - nothing to remove"
+        return 1
+    fi
+
+    _r42_print_section "removing the SDN networks of this scenario"
+    _r42_print_warning "the subnets and vnets it declares are destroyed - the shared zone is kept"
+    _r42_print_step "running: $script"
+    echo ""
+
+    ( cd "$scenario_target" && bash "$script" "$@" )
+}
+
 
 # networks-legacy-clean : disarm the pre-SDN stanzas of the active scenario's networks.
 #
@@ -2404,6 +2462,9 @@ _r42_help() {
     printf "    ${N}catalog-try-list-admin${R}         ${D}list catalog-try elements (L1/L2) under docker/admin/* only${R}\n"
     echo ""
     printf "  ${C}networks (sdn state and egress)${R}\n"
+    printf "    ${N}networks-apply${R}                 ${D}create what this scenario declares - idempotent, a conforming host is a no-op${R}\n"
+    printf "      ${D}--dry-run                    declared versus live, writes nothing${R}\n"
+    printf "    ${N}networks-delete-sdn${R}            ${D}remove this scenario's subnets and vnets - the shared zone is kept${R}\n"
     printf "    ${N}networks-show-sdn${R}              ${D}zone / vnet / subnet / snat / isolation, per network of the active scenario${R}\n"
     printf "    ${N}networks-internet-list${R}         ${D}where egress is actually active : declared vs live rules${R}\n"
     printf "    ${N}networks-internet-on${R}|${N}off${R}      ${D}enable / disable outgoing nat, with a recap and a confirmation${R}\n"
@@ -2459,6 +2520,8 @@ range42-context() {
         catalog-try-list)        _r42_catalog_try_list "" "docker/admin/" ;;
         catalog-try-list-admin)  _r42_catalog_try_list_admin ;;
 
+        networks-apply)          _r42_networks_apply "$@" ;;
+        networks-delete-sdn)     _r42_networks_delete_sdn "$@" ;;
         networks-show-sdn)       _r42_networks_show_sdn ;;
         networks-internet-list)  _r42_networks_internet_list ;;
         networks-internet-on)    _r42_networks_internet_on "$@" ;;
