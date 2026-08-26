@@ -1446,7 +1446,8 @@ _r42_networks_legacy_notice() {
     echo "  until that happens, not longer."
     echo ""
     echo "  Making it permanent means clearing those lines from /etc/network/interfaces, once"
-    echo "  per scenario, as part of the move to SDN :"
+    echo "  per HYPERVISOR - it covers the twelve bridges the provisioning creates, not just this"
+    echo "  scenario's :"
     echo "    range42-context networks-legacy-clean"
 }
 
@@ -1514,8 +1515,21 @@ _r42_networks_delete_sdn() {
 # The FIRST direct ansible-playbook call from this file - everything else goes through a scenario
 # script or a devkit. It is a bundle, so the form is the one the debug_sdn_tests README documents.
 #
-# Scope is the active scenario, deliberately : networks no scenario claims are left alone.
-# Only netNNN entries are passed - a legacy vmbrNNN has no shadowing counterpart to disarm.
+# SCOPE IS THE HYPERVISOR, NOT THE ACTIVE SCENARIO - widened 2026-08-25. Per scenario meant
+# repeating the operation for each one and never getting a host clean in a single pass, and left
+# every bridge no active scenario claimed still armed. This is the ONE exception to the scope rule
+# every other networks-* command follows, and it is an exception because a MIGRATION is wide by
+# nature and runs once.
+#
+# THE LIST IS DERIVED FROM range42_lab_bridges, in proxmox.init's defaults - never from a `vmbr14*`
+# glob, which would miss 150 and 151, nor from the manifests, which only cover the vnets in use.
+# The wizard rewrites that list into the workspace inventory, but only to toggle `nat` per bridge :
+# the NAMES are fixed at vmbr140..vmbr151 in both places (range42-init.py, range(140, 152)). And
+# `nat` does not matter here, since the disarm removes the address AND any MASQUERADE hook.
+#
+# The bundle takes the SAME shape as sdn_network.bootstrap and derives vmbrNNN from netNNN itself,
+# so the twelve are expressed as netNNN even where no vnet of that name exists. That is safe : this
+# bundle has no route assertion, and a bridge absent from the host is reported and skipped.
 _r42_networks_legacy_clean() {
     local assume_no_ask=false
     while [[ $# -gt 0 ]]; do
@@ -1527,14 +1541,23 @@ _r42_networks_legacy_clean() {
         esac
     done
 
-    local sel vnets n
-    sel=$(_r42_networks_resolve inventory "") || return 1
-    vnets=$(printf '%s\n' "$sel" | jq -c '[ .selected[]
-              | select(.is_sdn)
-              | {vnet: .vnet, subnet: .cidr, gateway: .gateway} ]')
-    n=$(printf '%s\n' "$vnets" | jq 'length')
+    command -v yq >/dev/null 2>&1 || {
+        _r42_print_fail "yq is not on PATH - the bridge list lives in a yaml file" >&2 ; return 1 ; }
+
+    local defaults bridges n
+    defaults="${RANGE42_GITDIR__ROOT_DIR%/}/range42/roles/proxmox.init/defaults/main.yml"
+    [[ -f "$defaults" ]] || {
+        _r42_print_fail "the provisioning bridge list was not found: $defaults" >&2 ; return 1 ; }
+
+    ## gateway is the address to remove ; subnet only carries the mask, and the provisioning
+    ## writes 255.255.255.0 for every one of them
+    bridges=$(yq -c '[ .range42_lab_bridges[]
+                       | { vnet:    ("net" + (.name | ltrimstr("vmbr"))),
+                           subnet:  ((.ip | sub("\\.[0-9]+$"; ".0")) + "/24"),
+                           gateway: .ip } ]' "$defaults" 2>/dev/null)
+    n=$(printf '%s\n' "$bridges" | jq 'length' 2>/dev/null || echo 0)
     if [[ "$n" -eq 0 ]]; then
-        _r42_print_fail "this scenario declares no SDN network - nothing to disarm" >&2
+        _r42_print_fail "range42_lab_bridges is empty or unreadable in $defaults" >&2
         return 1
     fi
 
@@ -1547,15 +1570,22 @@ _r42_networks_legacy_clean() {
         [[ -f "$f" ]] || { _r42_print_fail "not found: $f" >&2 ; return 1 ; }
     done
 
-    _r42_print_section "disarm the pre-SDN stanzas  (scenario: $(_r42_active_scenario_name))"
-    _r42_print_step "networks in scope : $(printf '%s\n' "$vnets" | jq -r 'map(.vnet) | join(" ")')"
+    _r42_print_section "disarm the pre-SDN stanzas of this hypervisor"
+    _r42_print_step "bridges in scope : ${n}, $(printf '%s\n' "$bridges" | jq -r '[.[].vnet | sub("^net"; "vmbr")] | join(" ")')"
     echo ""
-    echo "  This is a MIGRATION step, run once per scenario. It edits /etc/network/interfaces on"
-    echo "  the hypervisor so that no ifreload can bring the pre-SDN hooks back. A clean host is a"
-    echo "  no-op : nothing is detected, nothing is asked. Where something IS found, the bundle"
-    echo "  shows the exact lines and asks before writing, after taking a timestamped backup."
+    echo "  This is a MIGRATION step, run ONCE PER HYPERVISOR - not per scenario. It covers every"
+    echo "  bridge the provisioning creates, so one pass leaves the host clean instead of leaving"
+    echo "  behind the ones no active scenario happens to claim."
     echo ""
-    echo "  It refuses outright if a running VM is still attached to one of those bridges."
+    echo "  It edits /etc/network/interfaces so that no ifreload can bring the pre-SDN hooks back."
+    echo "  A clean host is a no-op : nothing is detected, nothing is asked. Where something IS"
+    echo "  found, the bundle shows the exact lines and asks before writing, after taking a"
+    echo "  timestamped backup whose path it prints."
+    echo ""
+    echo "  BEING HOST-WIDE, it refuses while a running guest sits on ANY of those bridges - not"
+    echo "  only the ones this scenario uses. That is the trade : one clean pass over the host, at"
+    echo "  the price of dealing with every legacy guest together."
+    echo ""
     echo "  The live addresses and rules are NOT touched - reconcile them with"
     echo "  networks-internet-on afterwards."
     echo ""
@@ -1563,7 +1593,7 @@ _r42_networks_legacy_clean() {
     ## the pause inside the bundle needs a terminal, which is where this command is run from
     ansible-playbook -i "$inv" "$bundle" \
         --vault-password-file "$vault" \
-        -e "{\"BUNDLE_SDN_VNETS\": ${vnets}, \"BUNDLE_LEGACY_BUNDLE_DIR\": \"${bdir}\"$( $assume_no_ask && printf ', "BUNDLE_LEGACY_ASSUME_YES": true' )}" \
+        -e "{\"BUNDLE_SDN_VNETS\": ${bridges}, \"BUNDLE_LEGACY_BUNDLE_DIR\": \"${bdir}\"$( $assume_no_ask && printf ', "BUNDLE_LEGACY_ASSUME_YES": true' )}" \
       || { _r42_print_fail "nothing was written - see the output above" ; return 1 ; }
 
     echo ""
@@ -2476,7 +2506,7 @@ _r42_help() {
     printf "      ${D}--vnet net143,net144         by network name${R}\n"
     printf "      ${D}--cidr 192.168.143.0/24      by subnet${R}\n"
     printf "      ${D}--yes                        skip the confirmation - needs an explicit scope${R}\n"
-    printf "    ${N}networks-legacy-clean${R}         ${D}migration : disarm the pre-SDN stanzas of this scenario's networks${R}\n"
+    printf "    ${N}networks-legacy-clean${R}         ${D}migration : disarm the pre-SDN stanzas of ALL 12 provisioning bridges, once per host${R}\n"
     echo ""
 }
 
