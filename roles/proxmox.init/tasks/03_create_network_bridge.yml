@@ -1,10 +1,23 @@
 ---
-# proxmox init - create network bridges for lab VMs (vmbr140-vmbr150)
+# proxmox init - LEGACY lab bridges (vmbr140-vmbr150), gated by INIT_LEGACY_BRIDGES
+#
+# DISABLED BY DEFAULT on this branch, maintainer decision 2026-09-04 : the SDN scenarios own
+# their networks (zones, vnets, subnets and SNAT come from sdn_network.bootstrap, per
+# scenario). An infrastructure meant for the NON-migrated scenarios re-enables this whole
+# file with -e INIT_LEGACY_BRIDGES=YES - the when: sits on the import in main.yml.
 #
 # uses pvesh to create bridges (visible in Proxmox web UI)
 # injects NAT post-up/post-down rules for bridges with nat: true
 #
-# idempotent: safe to re-run
+# KNOWN LIMITATION, documented and DELIBERATELY not auto-tolerated : the existence check
+# below can miss a bridge the node really has (seen live : vmbr143 existed, was not
+# skipped, and pvesh answered "iface: interface already exists", rc 255, killing the run).
+# Tolerating that answer would also silence a bridge existing with a DIVERGENT config,
+# and a divergent bridge must keep failing loudly. Fix it only with a legacy bench to
+# measure against.
+#
+# ip forwarding and the network reload used to live here : moved to 03_ip_forwarding.yml,
+# ALWAYS played - both modes need routing.
 
 - name: PROXMOX INIT - CHECK EXISTING BRIDGES
   ansible.builtin.shell: >
@@ -83,23 +96,6 @@
   changed_when: true
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-
-- name: PROXMOX INIT - ENABLE IP FORWARDING
-  ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
-    "echo 1 > /proc/sys/net/ipv4/ip_forward &&
-    (grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf &&
-    sed -i 's/^#*net.ipv4.ip_forward=.*/net.ipv4.ip_forward=1/' /etc/sysctl.conf ||
-    echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf)"
-  changed_when: false
-
-#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-
-- name: PROXMOX INIT - RELOAD NETWORK
-  ansible.builtin.shell: >
-    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
-    "ifreload -a 2>/dev/null || true"
-  changed_when: false
 
 - name: PROXMOX INIT - DISPLAY BRIDGE STATUS
   ansible.builtin.debug:

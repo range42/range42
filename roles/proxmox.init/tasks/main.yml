@@ -35,7 +35,12 @@
 - import_tasks: ./01_install_root_pubkey_on_proxmox.yml
 - import_tasks: ./02_fix_remote_locale.yml
 - import_tasks: ./06_check_proxmox_node.yml     # preflight: fail early if proxmox_node mismatches actual cluster node
+## LEGACY ONLY : the SDN scenarios create their own networks. Default NO on this branch.
 - import_tasks: ./03_create_network_bridge.yml
+  when: INIT_LEGACY_BRIDGES | default("NO") | upper == "YES"
+
+## BOTH MODES : legacy NAT and sdn SNAT both route through the node.
+- import_tasks: ./03_ip_forwarding.yml
 - import_tasks: ./04_apt_proxy_snippet.yml      # cloud-init cicustom snippet (no-op if apt_proxy_url empty)
 - import_tasks: ./05_check_iso_storage.yml     # preflight: fail early if no storage supports ISO content type
 - import_tasks: ./05_fetch_ca_cert.yml          # fetch Proxmox CA cert for TLS distribution
