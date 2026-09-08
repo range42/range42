@@ -1,0 +1,56 @@
+################################################################################
+# 90 - Patch the shell tools of an ALREADY bootstrapped deployer-cli
+#
+# Runs ON the deployer-cli, against itself. The 9x prefix says it is NOT a step
+# of site.yml : the pipeline (01, 02, 03) creates a deployer, this playbook
+# refreshes one that exists.
+#
+# WHAT IT DOES
+#   Replays the exact tasks the bootstrap plays for the shell tools, nothing
+#   else : deployer.bootstrap/tasks/05_range42_context.yml, which copies
+#     roles/deployer.bootstrap/files/range42-context.sh   -> ~/range42-context.sh
+#     roles/deployer.bootstrap/files/range42-workspace.sh -> ~/range42-workspace.sh
+#   and keeps their `source` block in ~/.zshrc. Same tasks, same result as a
+#   fresh `range42-context init`, without re-running packages, dotfiles, repos
+#   or the workspace.
+#
+# WHY IT EXISTS
+#   Those two files are COPIED, so the copy in ~/ lags behind the clone until
+#   the bootstrap is replayed. Everything else the shell tools run (the wizard
+#   range42-init.py, the TUI range42-context-tui.py, the devkits, the bundles)
+#   executes in place from the clone and needs no such step.
+#
+# WHAT IT DOES NOT DO
+#   - no git pull : the source is the LOCAL clone as it stands. Pull first if
+#     you want upstream changes, edit the clone if you want local ones. Edits
+#     made directly in ~/range42-context.sh are overwritten by this playbook.
+#   - no ~/.zshrc refresh (deployer.bootstrap/tasks/04_dot_files.yml) : that
+#     task copies the template over the file and would erase the per-workspace
+#     RANGE42 ENV blocks that `range42-context use` toggles. It stays out until
+#     it is made non-destructive.
+#   - never the whole deployer.bootstrap role, for the same reason.
+#
+# USAGE (on the deployer-cli, no active workspace needed)
+#   range42-context tools-update                # the wrapper does exactly this :
+#   ANSIBLE_ROLES_PATH=./roles ansible-playbook playbooks/90_patch_deployer_tools.yml \
+#     -i localhost, -e DEPLOYER_CLI_USER=$USER
+#   then reload the shell : source ~/.zshrc (or open a new one).
+#
+# For a REMOTE deployer-cli (driven from an operator machine), replay
+# playbooks/03_deploy_deployer_cli.yml instead : it needs the inventory anyway.
+################################################################################
+
+- name: 90 patch deployer-cli - shell tools
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # the operator running this IS the deployer user ; -e overrides it
+    DEPLOYER_CLI_USER: "{{ lookup('env', 'USER') }}"
+
+  tasks:
+    - name: PATCH DEPLOYER TOOLS - REPLAY THE BOOTSTRAP TASKS OF THE SHELL TOOLS
+      ansible.builtin.import_role:
+        name: deployer.bootstrap
+        tasks_from: 05_range42_context.yml

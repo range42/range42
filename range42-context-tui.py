@@ -240,6 +240,9 @@ COMMANDS: list = [
     CommandSpec("use",     "workspace", "use",     "switch to a workspace",             "eval-on-exit", arg_ui="workspace-picker"),
     CommandSpec("status",  "workspace", "status",  "check workspace health",            "subprocess"),
     CommandSpec("init",    "workspace", "init",    "launch setup wizard",               "suspend"),
+    # eval-on-exit : the copy must be re-sourced in the PARENT shell, which only the
+    # sentinel path can do ; the TUI re-launches on top of the refreshed function.
+    CommandSpec("tools-update", "workspace", "tools-update", "re-copy the shell tools from the local clone (no git pull)", "eval-on-exit"),
     CommandSpec("current", "workspace", "current", "show active workspace",             "subprocess"),
     # operations
     CommandSpec("deploy",            "operations", "deploy",            "run full scenario setup (templates + VMs)", "subprocess", arg_ui="deploy-options"),
@@ -1272,8 +1275,17 @@ class ContextTUI(App):
         elif cmd.dispatch == "suspend":
             self._run_suspended(cmd, args)
         elif cmd.dispatch == "eval-on-exit":
-            # only `use` reaches here, and it goes through the picker above
-            self._log_line(f"[error] {cmd.id}: eval-on-exit without picker")
+            # `use` never reaches here (its picker writes the sentinel itself). Any
+            # other eval-on-exit command runs verbatim in the parent shell : the zsh
+            # wrapper evals the sentinel on exit code 42, then re-launches the TUI.
+            quoted_args = " ".join(shlex.quote(a) for a in args)
+            payload = f"range42-context {cmd.id} {quoted_args}".strip() + "\n"
+            try:
+                _sentinel_path().write_text(payload)
+            except OSError as exc:
+                self._log_line(f"[error] cannot write sentinel: {exc}")
+                return
+            self.exit(EXIT_EVAL)
 
     # ─── subprocess runner (stream-safe path) ────────────────────────────────
     def _run_subprocess(self, cmd: CommandSpec, args: list) -> None:

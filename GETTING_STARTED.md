@@ -1070,7 +1070,8 @@ range42/
 ├── playbooks/
 │   ├── 01_generate_credentials.yml
 │   ├── 02_configure_proxmox.yml
-│   └── 03_deploy_deployer_cli.yml
+│   ├── 03_deploy_deployer_cli.yml
+│   └── 90_patch_deployer_tools.yml   - maintenance, not a pipeline step (see below)
 ├── inventories/
 │   └── example/              — copy and customize for your infra
 ├── roles/                    — 11 modular roles
@@ -1081,6 +1082,16 @@ The other 4 repos (`range42-playbooks`, `range42-catalog`,
 `range42-ansible_roles-proxmox_controller`, `range42-ansible_roles-debug-devkit`)
 are cloned by the wizard onto the deployer-cli during the deploy. You don't
 need them on your operator machine.
+
+### Updating the shell tools on an existing deployer-cli
+
+`range42-context.sh` and `range42-workspace.sh` are **copied** into `~/` by the bootstrap, and `.zshrc` sources the copy. After a `git pull` of the range42 clone on the deployer-cli, the copy still holds the previous version until the bootstrap task is replayed. One command does exactly that, on the deployer-cli, with no active workspace needed:
+
+```bash
+range42-context tools-update
+```
+
+It replays the bootstrap task through `playbooks/90_patch_deployer_tools.yml`, then reloads the two files in the current shell. Other open shells need `source ~/.zshrc` or a new shell. It does **not** `git pull`: the source is the local clone as it stands, so pull first for upstream changes, and edit the clone (not `~/range42-context.sh`, which gets overwritten) for local ones. The wizard and the TUI run in place from the clone and need no such step.
 
 ---
 

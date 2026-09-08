@@ -2403,6 +2403,55 @@ _r42_init() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context tools-update - re-copy the shell tools from the local clone
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+# THIS FILE IS A COPY. The bootstrap copies roles/deployer.bootstrap/files/range42-context.sh
+# (and range42-workspace.sh) into ~/ and .zshrc sources the copy, so the copy lags behind the
+# clone until the bootstrap task is replayed. This command replays exactly that task, through
+# playbooks/90_patch_deployer_tools.yml - same tasks, same result as `range42-context init`,
+# without packages, dotfiles, repos or the workspace.
+#
+# It does NOT git pull : the source is the local clone as it stands. Pull first for upstream
+# changes ; edit the clone for local ones. Edits made in ~/range42-context.sh itself are lost.
+# The wizard and the TUI are not concerned : they execute in place from the clone.
+#
+# No active workspace is needed : the replayed task consumes DEPLOYER_CLI_USER only, and the
+# operator running this IS that user. ANSIBLE_ROLES_PATH is set for this call only, because
+# the sourced workspace env that normally provides it may be absent.
+_r42_tools_update() {
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+    local repo="${git_dir%/}/range42"
+    local playbook="${repo}/playbooks/90_patch_deployer_tools.yml"
+    local roles="${repo}/roles"
+
+    for p in "$playbook" "${roles}/deployer.bootstrap/files/range42-context.sh" \
+             "${roles}/deployer.bootstrap/files/range42-workspace.sh" ; do
+        [[ -f "$p" ]] || { _r42_print_fail "not found: $p" >&2
+                           _r42_print_warning "is the range42 clone at ${repo} up to date ?" >&2
+                           return 1 ; }
+    done
+
+    _r42_print_section "re-copy the shell tools from the local clone"
+    _r42_print_step "source : ${repo} ($(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?') @ $(git -C "$repo" log -1 --format=%h 2>/dev/null || echo '?'))"
+    _r42_print_step "target : ~/range42-context.sh, ~/range42-workspace.sh"
+    _r42_print_step "no git pull is done here - pull the clone first for upstream changes"
+    echo ""
+
+    ANSIBLE_ROLES_PATH="$roles" ansible-playbook -i localhost, "$playbook" \
+        -e "DEPLOYER_CLI_USER=${USER}" \
+      || { _r42_print_fail "the copy did not run - see the output above" ; return 1 ; }
+
+    echo ""
+    ## local, so the banner guard sees it in bash and zsh alike, and nothing leaks to the shell
+    local RANGE42_QUIET=1
+    source "$HOME/range42-context.sh"
+    [[ -f "$HOME/range42-workspace.sh" ]] && source "$HOME/range42-workspace.sh"
+    _r42_print_check "reloaded in this shell"
+    _r42_print_warning "other open shells still hold the previous version : open a new one, or : source ~/.zshrc"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context debug — toggle verbose/skip output in ansible.cfg
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -2452,6 +2501,7 @@ _r42_help() {
     printf "    ${N}use${R} <codename> <scenario>      ${D}switch to a workspace${R}\n"
     printf "    ${N}status${R}                         ${D}check workspace health${R}\n"
     printf "    ${N}init${R}                           ${D}launch setup wizard${R}\n"
+    printf "    ${N}tools-update${R}                   ${D}re-copy range42-context.sh + range42-workspace.sh from the local clone (no git pull)${R}\n"
     printf "    ${N}--tui${R}                          ${D}launch the interactive TUI dashboard${R}\n"
     echo ""
     printf "  ${C}navigation${R}\n"
@@ -2525,6 +2575,7 @@ range42-context() {
         use)            _r42_use "$@" ;;
         status)         _r42_status ;;
         init)           _r42_init ;;
+        tools-update)   _r42_tools_update ;;
         deploy)             _r42_deploy "$@" ;;
         deploy-vms)         _r42_deploy_vms "$@" ;;
         delete)             _r42_delete ;;
