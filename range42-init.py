@@ -1892,6 +1892,33 @@ def _print_cmd(msg):  print(f"  \033[36m       {msg}\033[0m")
 def _print_bold(msg): print(f"\n  \033[1;32m  ##  {msg}\033[0m\n")
 
 
+def _inventory_is_legacy(codename) -> bool:
+    """
+    Network mode of a codename, read from the inventory the wizard wrote :
+    INIT_LEGACY_BRIDGES "YES" in group_vars/all/vars.yml means legacy vmbr bridges,
+    anything else (or an inventory written before the key existed) means SDN.
+    """
+    vars_path = INVENTORIES / codename / "group_vars" / "all" / "vars.yml"
+    try:
+        m = re.search(r'^INIT_LEGACY_BRIDGES:\s*["\']?([A-Za-z]+)', vars_path.read_text(), re.M)
+    except OSError:
+        return False
+    return bool(m) and m.group(1).upper() == "YES"
+
+
+def _sdn_step_cmd_lines(codename, scenario):
+    """The copy-paste form of the SDN step, as GETTING_STARTED documents it (step 5b)."""
+    return [
+        f"export RANGE42_ACTIVE_CONFIG_DIR=\"$PWD/config/{codename}-{scenario}\"",
+        "ANSIBLE_ROLES_PATH=\"./roles:../range42-ansible_roles-proxmox_controller/roles\" \\",
+        "ansible-playbook playbooks/04_configure_sdn.yml \\",
+        f"  -i inventories/{codename}/hosts.yml \\",
+        f"  -e @inventories/{codename}/group_vars/{scenario}/vars.yml \\",
+        f"  -e INFRASTRUCTURE_SCENARIO={scenario} \\",
+        f"  --vault-password-file ./config/{codename}-{scenario}/secrets/vault_pass.txt",
+    ]
+
+
 def post_wizard():
     """Runs after Textual exits — deploy in native terminal."""
     if not S.codename:
@@ -1910,6 +1937,14 @@ def post_wizard():
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
         _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
+        if not _inventory_is_legacy(S.codename):
+            # the SDN step is a separate run on purpose : it loads the encrypted vault, whose
+            # password file is created by site.yml itself
+            _print_info("then, once site.yml is through, create the SDN lab networks:")
+            _print_cmd("")
+            for line in _sdn_step_cmd_lines(S.codename, S.scenario):
+                _print_cmd(line)
+            print()
         return
 
     # ── deploy now — native terminal ──
@@ -1967,6 +2002,38 @@ def post_wizard():
         cwd=str(SCRIPT_DIR), env=env
     ).returncode
 
+    # ── the SDN lab networks (playbook 04) - a SECOND run, on purpose ──
+    # The bundle behind it loads the encrypted vault (the api token lives there), so the
+    # run needs the vault password file, and that file is created by playbook 01 DURING
+    # site.yml above : ansible reads vault secrets at startup, so it cannot be part of the
+    # same run on a first init. Legacy mode (INIT_LEGACY_BRIDGES YES in the written
+    # inventory) creates its bridges in playbook 02 and skips this entirely.
+    rc_sdn = None
+    legacy = _inventory_is_legacy(S.codename)
+    if rc == 0 and not legacy:
+        config_dir = SCRIPT_DIR / "config" / f"{S.codename}-{S.scenario}"
+        siblings = SCRIPT_DIR.parent
+        env_sdn = env.copy()
+        # the bundle dir : the operator's env when it has one (a deployer-cli with an active
+        # workspace), the sibling clone otherwise (the preflight guarantees it)
+        env_sdn["RANGE42_BUNDLE_DIR"] = env.get("RANGE42_BUNDLE_DIR") or str(siblings / "range42-playbooks" / "bundles")
+        # the bundle reads its vault under RANGE42_ACTIVE_CONFIG_DIR/secrets/ : at init the
+        # source of truth is the config dir playbooks 01 and 02 just wrote, not a workspace
+        env_sdn["RANGE42_ACTIVE_CONFIG_DIR"] = str(config_dir)
+        # the bundle includes the proxmox controller role, cloned as a sibling by the preflight
+        env_sdn["ANSIBLE_ROLES_PATH"] = f"{env['ANSIBLE_ROLES_PATH']}:{siblings}/range42-ansible_roles-proxmox_controller/roles"
+        print()
+        _print_info(f"running: ansible-playbook playbooks/04_configure_sdn.yml -i inventories/{S.codename}/hosts.yml  (the SDN lab networks)")
+        print()
+        rc_sdn = subprocess.run(
+            ["ansible-playbook", "playbooks/04_configure_sdn.yml",
+             "-i", f"inventories/{S.codename}/hosts.yml",
+             "-e", f"@{scenario_vars_file}",
+             "-e", f"INFRASTRUCTURE_SCENARIO={S.scenario}",
+             "--vault-password-file", str(config_dir / "secrets" / "vault_pass.txt")],
+            cwd=str(SCRIPT_DIR), env=env_sdn
+        ).returncode
+
     # clear passwords
     S.proxmox_root_pw = S.sudo_pw = S.deployer_cli_pw = ""
 
@@ -1976,6 +2043,15 @@ def post_wizard():
         _print_ok("credentials generated")
         _print_ok("proxmox configured")
         _print_ok("deployer-cli deployed")
+        if legacy:
+            _print_info("legacy network mode (INIT_LEGACY_BRIDGES is YES): the SDN step was skipped")
+        elif rc_sdn == 0:
+            _print_ok("sdn lab networks configured")
+        else:
+            _print_fail("sdn lab networks NOT configured - check the error above and re-run:")
+            _print_cmd("")
+            for line in _sdn_step_cmd_lines(S.codename, S.scenario):
+                _print_cmd(line)
         print()
         _print_info(f"repos cloned to:     {S.install_dir}/")
         _print_info(f"workspace config in: ~/range42.config/")

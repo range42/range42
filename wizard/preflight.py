@@ -341,6 +341,18 @@ def run_all_checks(example_dir):
         "required": True,
     })
 
+    # range42-ansible_roles-proxmox_controller repo check (auto-clone if missing) :
+    # playbook 04 (the SDN lab networks) runs a bundle that includes this role.
+    badge, detail = ensure_proxmox_controller_repo(script_dir)
+    if badge == "FAIL":
+        fail = True
+    results.append({
+        "badge": badge,
+        "label": PROXMOX_CONTROLLER_REPO,
+        "detail": detail,
+        "required": True,
+    })
+
     # ssh-agent — STARTED here when absent, not merely reported.
     # Playbook 02 needs a reachable agent and nothing earlier in the run can
     # provide one on a fresh VM. See ensure_ssh_agent_running() for why the
@@ -462,6 +474,56 @@ def ensure_playbooks_repo(script_dir):
         if not _has_deployable_scenario(scenarios_dir):
             return "FAIL", f"  cloned but no deployable scenario found in {scenarios_dir}"
         return "PASS", f"  cloned → {playbooks_dir}"
+    except subprocess.CalledProcessError as e:
+        err = e.stderr.strip().splitlines()[-1] if e.stderr else "unknown error"
+        return "FAIL", f"  clone failed: {err}"
+    except subprocess.TimeoutExpired:
+        return "FAIL", "  clone timed out (check network)"
+    except FileNotFoundError:
+        return "FAIL", "  git not found (install git first)"
+
+
+PROXMOX_CONTROLLER_REPO = "range42-ansible_roles-proxmox_controller"
+
+
+def ensure_proxmox_controller_repo(script_dir):
+    """
+    Ensure range42-ansible_roles-proxmox_controller is cloned as a sibling of the range42
+    repo, next to range42-playbooks.
+
+    Playbook 04 (the SDN lab networks of the host) runs the sdn_network.bootstrap bundle
+    of range42-playbooks, and that bundle includes this role. The wizard runs the playbook
+    right after site.yml, so it needs a local clone to put on ANSIBLE_ROLES_PATH. Same
+    rules as range42-playbooks : present -> PASS, missing -> silent clone, never a pull
+    (a pull could clobber local changes of the operator).
+
+    Returns: (badge, detail)
+    """
+    repo_dir = Path(script_dir).parent / PROXMOX_CONTROLLER_REPO
+    role_dir = repo_dir / "roles" / PROXMOX_CONTROLLER_REPO
+
+    # Case 1: dir exists and carries the role
+    if role_dir.is_dir():
+        return "PASS", f"  {repo_dir}"
+
+    # Case 2: dir exists without the role (outdated or broken clone)
+    if repo_dir.exists():
+        return "FAIL", (
+            f"  {repo_dir} exists but has no roles/{PROXMOX_CONTROLLER_REPO}/. "
+            f"Update with: cd {repo_dir} && git pull"
+        )
+
+    # Case 3: dir missing -> try clone
+    try:
+        subprocess.run(
+            ["git", "clone", "--quiet",
+             f"https://github.com/range42/{PROXMOX_CONTROLLER_REPO}.git",
+             str(repo_dir)],
+            check=True, capture_output=True, text=True, timeout=60,
+        )
+        if not role_dir.is_dir():
+            return "FAIL", f"  cloned but roles/{PROXMOX_CONTROLLER_REPO}/ not found in {repo_dir}"
+        return "PASS", f"  cloned → {repo_dir}"
     except subprocess.CalledProcessError as e:
         err = e.stderr.strip().splitlines()[-1] if e.stderr else "unknown error"
         return "FAIL", f"  clone failed: {err}"
