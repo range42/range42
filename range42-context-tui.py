@@ -1388,6 +1388,19 @@ class ContextTUI(App):
             except Exception as exc:
                 self._log_line(f"[error] suspended run failed: {exc}")
                 return
+        # `init` hands the workspace it has just initialized over through the eval
+        # sentinel : the shell function writes a `range42-context use ...` line there
+        # from the child shell. Exit 42 so the zsh wrapper evals it in the PARENT shell
+        # and re-launches the TUI with that workspace active. Any other outcome, and
+        # any other command, resumes the TUI as before.
+        if cmd.id == "init" and rc == 0 and os.environ.get("RANGE42_TUI_SENTINEL"):
+            try:
+                if _sentinel_path().stat().st_size > 0:
+                    self._log_line("> workspace switched by init, re-launching with it active")
+                    self.exit(EXIT_EVAL)
+                    return
+            except OSError:
+                pass
         self._log_workspace_status()
         self._log_line(f"> resumed TUI, exit: {rc}")
 

@@ -337,6 +337,9 @@ class _S:
     setup_mode      = "new"
     preflight_ok    = False
     deploy_now      = False
+    # True once the operator confirmed the overwrite of an existing configuration :
+    # site.yml then regenerates the SSH keys, so the recap tells them to redeploy the VMs.
+    overwrite       = False
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
     # network mode of the host : "sdn" (the default, the supported one) or "legacy" (the
@@ -1704,6 +1707,7 @@ class StepDeploy(Step):
 
     @on(Button.Pressed, "#b-overwrite")
     def do_overwrite(self):
+        S.overwrite = True
         self.query_one("#overwrite-confirm").display = False
         self.create_inventory()
 
@@ -2195,6 +2199,21 @@ def post_wizard():
             cwd=str(SCRIPT_DIR), env=env_sdn
         ).returncode
 
+    # Hand the workspace over to the range42-context shell function when this wizard
+    # runs under it (`range42-context init` exports RANGE42_INIT_SENTINEL). Only that
+    # parent shell can load the ssh-agent and export the workspace environment : it
+    # runs `range42-context use <codename> <scenario>` once this process has exited,
+    # printing that command as it does. Written only when site.yml succeeded ; a failed
+    # SDN step does not hold the switch back, the workspace exists.
+    handed_over = False
+    init_sentinel = os.environ.get("RANGE42_INIT_SENTINEL", "")
+    if rc == 0 and init_sentinel:
+        try:
+            Path(init_sentinel).write_text(f"{S.codename} {S.scenario}\n")
+            handed_over = True
+        except OSError as exc:
+            _print_fail(f"cannot hand the workspace over to range42-context: {exc}")
+
     # clear passwords
     S.proxmox_root_pw = S.sudo_pw = S.deployer_cli_pw = ""
 
@@ -2219,8 +2238,16 @@ def post_wizard():
         print()
         print("  ---- first time setup ----")
         print()
-        _print_info("activate your workspace:")
+        if handed_over:
+            _print_info("your workspace is activated for you right after this recap, range42-context runs:")
+        else:
+            _print_info("activate your workspace:")
         _print_cmd(f"range42-context use {S.codename} {S.scenario}")
+        if S.overwrite:
+            print()
+            _print_info("this run regenerated the SSH keys: VMs deployed before it keep the previous alice key, redeploy them:")
+            _print_cmd("range42-context delete-vms")
+            _print_cmd("range42-context deploy-vms")
         print()
         _print_info("check everything is ready:")
         _print_cmd("range42-context status")

@@ -2399,7 +2399,48 @@ _r42_init() {
         return 1
     fi
 
+    # The wizard is a child process : it can neither load the ssh-agent of THIS shell
+    # nor export the workspace environment into it. So the wizard only reports the
+    # workspace it has just initialized (codename and scenario, one line) through a
+    # sentinel file, and this function, which runs in the operator's shell, switches
+    # to it with the very same `use` the operator would type. Without that switch an
+    # init leaves the agent with the proxmox keys only (playbook 02 unloads every key
+    # and reloads root + jump) and the next deploy fails on the alice key. The wizard
+    # writes the sentinel only when site.yml succeeded : "Deploy later", a cancel or
+    # a failure leave it empty and nothing is switched.
+    local init_sentinel
+    init_sentinel="$(mktemp -t range42-init-workspace.XXXXXX)" || return 1
+    export RANGE42_INIT_SENTINEL="$init_sentinel"
     python3 "$init_script"
+    local rc=$?
+    unset RANGE42_INIT_SENTINEL
+
+    local codename="" scenario=""
+    if [[ $rc -eq 0 && -s "$init_sentinel" ]]; then
+        read -r codename scenario < "$init_sentinel"
+    fi
+    rm -f "$init_sentinel"
+    if [[ -z "$codename" || -z "$scenario" ]]; then
+        return $rc
+    fi
+
+    # Printed as the command it is : the operator must see that range42-context has
+    # just run `use` for them, and which one.
+    _r42_print_section "switching to the workspace you just initialized"
+    printf "    \033[1;36m➜ executed for you: range42-context use %s %s\033[0m\n" "$codename" "$scenario"
+    if ! _r42_use "$codename" "$scenario"; then
+        _r42_print_fail "automatic switch failed, run it yourself:"
+        _r42_print_warning "  range42-context use ${codename} ${scenario}"
+        return 1
+    fi
+    _r42_print_check "workspace ${codename}-${scenario} is active: ssh keys, vault and environment loaded"
+
+    # Launched from the TUI (suspend mode runs this function in a child shell) : hand
+    # the same `use` to the parent shell through the TUI sentinel, so it switches too
+    # and the TUI comes back with this workspace active.
+    if [[ -n "${RANGE42_TUI_SENTINEL:-}" && -w "$RANGE42_TUI_SENTINEL" ]]; then
+        printf 'range42-context use %s %s\n' "$codename" "$scenario" > "$RANGE42_TUI_SENTINEL"
+    fi
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####

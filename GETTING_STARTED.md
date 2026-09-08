@@ -482,7 +482,7 @@ even though it already installed the root SSH key. Two reasons:
 - Inject `source ~/range42.config/range42-context.sh` into `.zshrc`
 - Set the active context to this codename + scenario
 
-After this, `range42-context use <codename> <scenario>` works.
+After this, `range42-context init` switches your shell to the workspace for you: it runs `range42-context use <codename> <scenario>` and prints that command in colour as it does, so the SSH keys, the vault and the environment are loaded without a manual step. `range42-context use` stays the command to switch again later or from another terminal.
 
 ##### The 5 repos cloned on the deployer-cli
 
@@ -500,7 +500,7 @@ This isn't a wizard step - you run it manually after the wizard finishes.
 
 #### 8a. Load your context
 
-Open a new terminal (or `source ~/.zshrc` in the current one), then load the workspace you just created:
+The init has already switched the shell it ran in to this workspace (you saw the `range42-context use ...` line it executed for you). In a new terminal, or to switch again, load the workspace yourself:
 
 ```bash
 range42-context use YOUR_CODENAME_INFRASTRUCTURE blank_scenario_2_subnets
@@ -772,10 +772,7 @@ In step 2, you'll see all your configured contexts listed below `◆ new`.
 Pick the one you want to overwrite — the wizard will pre-fill all the fields
 from the existing config, so you only need to update what changed.
 
-> ⚠️ Overwriting a configuration **does not destroy deployed VMs**. It only
-> regenerates the local files (inventory, vault, SSH keys). If you also want
-> to clean up the running VMs, run `range42-context delete` afterwards (or
-> before, if the existing keys won't work anymore).
+> ⚠️ Overwriting a configuration **does not destroy deployed VMs**. It regenerates the local files (inventory, vault, SSH keys), so the VMs deployed before the overwrite keep the previous `alice` key and can no longer be reached with the new one. The init switches your shell to the workspace for you (it runs `range42-context use` and prints it), then redeploy the VMs with `range42-context delete-vms` and `range42-context deploy-vms`, or run `range42-context delete` to remove everything.
 
 You can also use this flow to:
 - Update the Proxmox API address after migrating the host
