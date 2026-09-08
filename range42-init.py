@@ -339,6 +339,10 @@ class _S:
     deploy_now      = False
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
+    # network mode of the host : "sdn" (the default, the supported one) or "legacy" (the
+    # pre-SDN vmbr bridges, unsupported, on explicit request only). Written to the
+    # inventory as INIT_LEGACY_BRIDGES ; the 12 NAT toggles below serve both modes.
+    network_mode    = "sdn"
     apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
     apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
     apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
@@ -531,6 +535,7 @@ STEPS = [
     (2, "proxmox address"),
     (2, "proxmox node"),
     (2, "connectivity"),
+    (2, "network mode"),
     (3, "scenario"),
     (3, "deployer IP"),
     (3, "deployer user"),
@@ -1178,30 +1183,121 @@ class StepAutoDetectNAT(Step):
 
     def handle_next(self, app):
         S.nat_interface = self.query_one("#i-nat-iface", Input).value.strip() or "vmbr0"
-        app._go(StepNATBridges())
+        app._go(StepNetworkMode())
 
     def handle_back(self, app):
         app._go(StepProxmoxCheck())
 
 
-# ── step 2d — NAT per bridge ─────────────────────────────────────────────────
+# ── step 2c bis - network mode ───────────────────────────────────────────────
+LEGACY_MODE_WARNING = (
+    "  Legacy vmbr bridges are UNSUPPORTED:\n"
+    "    - no network isolation between the labs\n"
+    "    - the new scenarios do not run on them\n"
+    "    - they receive no update\n"
+    "  Keep them only for a private scenario that was never migrated.\n"
+    "  If you go there, you debug alone.")
+
+
+class StepNetworkMode(Step):
+    """
+    SDN or legacy, one choice per Proxmox host. SDN is preselected and is the supported
+    mode ; legacy needs an explicit click AND an acknowledgement switch before the wizard
+    lets the operator through. The choice drives the NAT panel that follows (net140..151 or
+    vmbr140..151), the scenario compatibility warning, and INIT_LEGACY_BRIDGES in the
+    written inventory.
+    """
+    STEP_NUM  = 2
+    SHOW_BACK = True
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  network mode", classes="title")
+        yield Rule()
+        yield Static(
+            "  How the lab networks are created on this Proxmox host. One choice per host.\n\n"
+            "  SDN (recommended): the init creates one SDN zone and the 12 lab networks\n"
+            "  net140 .. net151, with outbound NAT per network. Every scenario declares its\n"
+            "  own networks on top of them. This is the supported mode.\n\n"
+            "  Legacy: the 12 Linux bridges vmbr140 .. vmbr151 of the pre-SDN era.\n",
+            classes="muted")
+        with Horizontal(id="mode-choices"):
+            yield Button(self._btn_label("sdn"),    id="mode-sdn",    classes="-ok")
+            yield Button(self._btn_label("legacy"), id="mode-legacy", classes="-danger")
+        yield Static("")
+        yield Label("", id="mode-warn", classes="warn")
+        with Horizontal(id="mode-confirm"):
+            yield Switch(value=False, id="sw-legacy-ack")
+            yield Label("  I understand: legacy is unsupported, I debug alone", classes="muted")
+
+    def _btn_label(self, mode):
+        mark = "●" if S.network_mode == mode else "○"
+        return (f" {mark}  SDN networks  (recommended) " if mode == "sdn"
+                else f" {mark}  Legacy vmbr bridges  (unsupported) ")
+
+    def on_mount(self):
+        self._refresh()
+
+    def _refresh(self):
+        legacy = S.network_mode == "legacy"
+        self.query_one("#mode-sdn", Button).label    = self._btn_label("sdn")
+        self.query_one("#mode-legacy", Button).label = self._btn_label("legacy")
+        self.query_one("#mode-warn", Label).update(LEGACY_MODE_WARNING if legacy else "")
+        self.query_one("#mode-confirm").display = legacy
+        self._gate()
+
+    def _gate(self):
+        # legacy passes only with the acknowledgement on ; SDN passes as is
+        legacy = S.network_mode == "legacy"
+        ack = self.query_one("#sw-legacy-ack", Switch).value
+        self.app.query_one("#btn-next", Button).disabled = legacy and not ack
+
+    @on(Button.Pressed, "#mode-sdn")
+    def pick_sdn(self):
+        S.network_mode = "sdn"
+        self._refresh()
+
+    @on(Button.Pressed, "#mode-legacy")
+    def pick_legacy(self):
+        S.network_mode = "legacy"
+        self._refresh()
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        self._gate()
+
+    def handle_next(self, app):
+        if S.network_mode == "legacy" and not self.query_one("#sw-legacy-ack", Switch).value:
+            return  # the button is disabled in that state ; belt and braces
+        app._go(StepNATBridges())
+
+    def handle_back(self, app):
+        app._go(StepAutoDetectNAT())
+
+
+# ── step 2d - outbound NAT per network (SDN) or per bridge (legacy) ────────────
 class StepNATBridges(Step):
     STEP_NUM  = 2
     SHOW_BACK = True
 
     def compose(self) -> ComposeResult:
-        yield Label("◆  NAT per bridge", classes="title")
+        sdn = S.network_mode != "legacy"
+        yield Label("◆  outbound NAT per network" if sdn else "◆  NAT per bridge (legacy)", classes="title")
         yield Rule()
         yield Static(
-            "  Enable or disable outbound NAT (internet access) per bridge.\n"
-            "  Click a bridge to toggle NAT on/off.\n",
+            ("  Enable or disable outbound NAT (internet access) per SDN network.\n"
+             "  All on by default. net140 is the templating network: keep it on, the\n"
+             "  template builds run apt there. Click a network to toggle.\n")
+            if sdn else
+            ("  Enable or disable outbound NAT (internet access) per bridge.\n"
+             "  Click a bridge to toggle NAT on/off.\n"),
             classes="muted")
         yield Horizontal(id="nat-columns")
 
     def _btn_label(self, name, enabled):
         idx = name.replace("vmbr", "")
+        # one dict of 12 toggles keyed vmbrNNN serves both modes ; only the shown name changes
+        shown = name if S.network_mode == "legacy" else f"net{idx}"
         status = "active " if enabled else "disabled"
-        return f" {status}  {name}  .{idx}.0/24"
+        return f" {status}  {shown}  .{idx}.0/24"
 
     def on_mount(self):
         cols = self.query_one("#nat-columns")
@@ -1243,10 +1339,37 @@ class StepNATBridges(Step):
             app._go(StepScenario())
 
     def handle_back(self, app):
-        app._go(StepAutoDetectNAT())
+        app._go(StepNetworkMode())
 
 
 # ── step 3 — scenario, deployer, network (split) ─────────────────────────────
+
+def _scenario_network_kind(name) -> str:
+    """
+    'sdn' when the scenario declares its own SDN networks (a 00_sdn_bootstrap/ dir),
+    'legacy' when it does not (it expects the vmbr bridges), '' when the scenario dir
+    is not there to look at.
+    """
+    d = PLAYBOOKS_DIR / "scenarios" / str(name)
+    if not d.is_dir():
+        return ""
+    return "sdn" if (d / "00_sdn_bootstrap").is_dir() else "legacy"
+
+
+def _scenario_mode_warning(name) -> str:
+    """Non-blocking : the text shown when the chosen scenario and the network mode disagree."""
+    kind = _scenario_network_kind(name)
+    if not kind:
+        return ""
+    if S.network_mode != "legacy" and kind == "legacy":
+        return (f"  ⚠  {name} declares no SDN networks (no 00_sdn_bootstrap/): it needs a fix\n"
+                "     to run on an SDN infrastructure. As is, it fails at the first VM.")
+    if S.network_mode == "legacy" and kind == "sdn":
+        return (f"  ⚠  {name} needs SDN networks (00_sdn_bootstrap/): it does not run on legacy\n"
+                "     vmbr bridges. Go back and pick the SDN network mode for this scenario.")
+    return ""
+
+
 
 class StepScenario(Step):
     STEP_NUM = 3
@@ -1285,6 +1408,22 @@ class StepScenario(Step):
                 "  Re-run preflight to auto-clone the repo.",
                 classes="muted")
             yield Input(value=S.scenario, placeholder="blank_scenario_2_subnets", id="i-scenario")
+        yield Static("")
+        yield Label("", id="scenario-warn", classes="warn")
+
+    def on_mount(self):
+        self._refresh_warning()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        self._refresh_warning()
+
+    def _refresh_warning(self):
+        w = self.query_one("#i-scenario")
+        if isinstance(w, Select):
+            name = w.value if w.value is not Select.BLANK else ""
+        else:
+            name = w.value
+        self.query_one("#scenario-warn", Label).update(_scenario_mode_warning(str(name or "").strip()))
 
     def handle_next(self, app):
         w = self.query_one("#i-scenario")
@@ -1512,7 +1651,9 @@ class StepReview(Step):
             ("deployer user",   S.deployer_user),
             ("deployer IP",     S.deployer_ip),
             ("NAT interface",   S.nat_interface),
-            ("NAT bridges",     ", ".join(n for n, v in sorted(S.nat_bridges.items()) if v)),
+            ("network mode",    "SDN networks (recommended)" if S.network_mode != "legacy" else "LEGACY vmbr bridges (unsupported)"),
+            ("outbound NAT on", ", ".join((n if S.network_mode == "legacy" else n.replace("vmbr", "net"))
+                                          for n, v in sorted(S.nat_bridges.items()) if v)),
             ("apt mirror",       "enabled" if S.apt_mirror_enabled else "disabled"),
             ("mirror IP",        S.apt_mirror_vm_ip if S.apt_mirror_enabled else "—"),
             ("root password",   pw),
@@ -1687,15 +1828,31 @@ class StepDeploy(Step):
             log_row("PASS", "configured apt-mirror",
                     f"ip={S.apt_mirror_vm_ip}  airgapped={S.apt_mirror_airgapped}")
 
-        # inject range42_lab_bridges with NAT toggles
-        bridges_yaml = "\n\n# lab bridges NAT configuration (managed by wizard)\nrange42_lab_bridges:\n"
-        for name in sorted(S.nat_bridges.keys()):
-            idx = name.replace("vmbr", "")
-            ip = f"192.168.{idx}.1"
-            nat = "true" if S.nat_bridges[name] else "false"
-            bridges_yaml += f'  - {{ name: "{name}", ip: "{ip}", nat: {nat} }}\n'
-        with open(vars_, "a") as f:
-            f.write(bridges_yaml)
+        # network mode. The example ships SDN (INIT_LEGACY_BRIDGES "NO") with the 12 lab
+        # networks at outbound NAT on : the panel's choices are written on those exact lines.
+        # Legacy flips the flag and appends the bridge list proxmox.init reads in that mode.
+        if S.network_mode == "legacy":
+            sed_f(vars_, 'INIT_LEGACY_BRIDGES: "NO"', 'INIT_LEGACY_BRIDGES: "YES"')
+            bridges_yaml = "\n\n# lab bridges NAT configuration (managed by wizard)\nrange42_lab_bridges:\n"
+            for name in sorted(S.nat_bridges.keys()):
+                idx = name.replace("vmbr", "")
+                ip = f"192.168.{idx}.1"
+                nat = "true" if S.nat_bridges[name] else "false"
+                bridges_yaml += f'  - {{ name: "{name}", ip: "{ip}", nat: {nat} }}\n'
+            with open(vars_, "a") as f:
+                f.write(bridges_yaml)
+            log_row("WARN", "network mode: LEGACY vmbr bridges (unsupported)",
+                    f"nat on: {', '.join(n for n, v in sorted(S.nat_bridges.items()) if v)}")
+        else:
+            for name, enabled in sorted(S.nat_bridges.items()):
+                if enabled:
+                    continue
+                idx = name.replace("vmbr", "")
+                sed_f(vars_,
+                      f'  - {{ vnet: "net{idx}", subnet: "192.168.{idx}.0/24", gateway: "192.168.{idx}.1", snat: true }}',
+                      f'  - {{ vnet: "net{idx}", subnet: "192.168.{idx}.0/24", gateway: "192.168.{idx}.1", snat: false }}')
+            nat_off = ", ".join(n.replace("vmbr", "net") for n, v in sorted(S.nat_bridges.items()) if not v)
+            log_row("PASS", "network mode: SDN", f"zone=r42zone  networks=net140..net151  nat off: {nat_off or 'none'}")
 
         log_row("PASS", "configured vars.yml",
                 f"codename={S.codename}  node={S.proxmox_node}  nat={S.nat_interface}")
@@ -1737,11 +1894,15 @@ class StepDeploy(Step):
         log.write("")
         log.write("[bold #38bdf8]◆  deploy now?[/bold #38bdf8]")
         log.write("")
+        sdn_line = ("    4. sdn lab networks      (the SDN zone + 12 networks, right after site.yml)\n\n"
+                    if S.network_mode != "legacy" else
+                    "    (legacy network mode: the vmbr bridges come with step 2, no SDN step)\n\n")
         log.write(
-            "  Deploy now will run all 3 playbooks in sequence:\n"
+            "  Deploy now will run the playbooks in sequence:\n"
             "    1. generate credentials  (SSH keys, vault)\n"
             "    2. configure proxmox     (root SSH, jump user, API token)\n"
-            "    3. deploy deployer-cli   (packages, workspace, SSH config)\n\n"
+            "    3. deploy deployer-cli   (packages, workspace, SSH config)\n"
+            + sdn_line +
             f"  Note: step 2 needs the Proxmox root password for SSH setup.\n"
             f"  Root password: {'provided' if S.proxmox_root_pw else 'not set (will prompt during deploy)'}")
         log.write("")
