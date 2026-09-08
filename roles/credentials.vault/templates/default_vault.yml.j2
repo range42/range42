@@ -30,6 +30,14 @@ proxmox_dest_iso_storage_name: "{{ infrastructure_proxmox_dest_iso_storage_name 
 proxmox_dest_vm_storage_name: "{{ infrastructure_proxmox_dest_vm_storage_name }}"
 proxmox_default_network_card_interface: "{{ infrastructure_proxmox_default_network_card_interface }}"
 
+## network mode of this host and its SDN declaration - rendered from group_vars/all, not
+## secret, carried here so the deployer-side tools and the scenarios read the SAME values
+## the init used (an inventory without these keys means the SDN defaults : see
+## inventories/example/group_vars/all/vars.yml, section NETWORK MODE).
+infrastructure_network_mode: "{{ 'legacy' if (INIT_LEGACY_BRIDGES | default('NO') | upper == 'YES') else 'sdn' }}"
+range42_sdn_zone: "{{ range42_sdn_zone | default('r42zone') }}"
+range42_sdn_networks: {{ range42_sdn_networks | default([]) | to_json }}
+
 
 ###############################################################################
 # 2 - SSH KEY PATHS (paths on the host that rendered this vault - the laptop)

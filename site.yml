@@ -7,6 +7,13 @@
 #   2. Configure Proxmox (SSH + API)
 #   3. Deploy deployer-cli (bootstrap + workspace)
 #
+# A fourth step exists and is deliberately NOT imported here :
+#   4. playbooks/04_configure_sdn.yml - the SDN lab networks of the host (SDN mode,
+#      the default ; skipped in legacy mode). It loads the encrypted vault, so it
+#      needs --vault-password-file, and that password file is created by step 1
+#      during THIS run : importing it here would break the very first init. The
+#      wizard runs it right after site.yml ; by hand, see GETTING_STARTED step 5b.
+#
 # Usage:
 #   ansible-playbook site.yml \
 #     -i inventories/<your-codename>/hosts.yml \

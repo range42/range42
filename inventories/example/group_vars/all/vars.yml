@@ -68,6 +68,54 @@ infrastructure_proxmox_default_network_card_interface: "vmbr0"
 vm_net_virtio_bridge: "vmbr142"
 
 
+#### NETWORK MODE ####
+
+# How the lab networks are created on this Proxmox host. Two modes, one choice per host :
+#
+#   "NO"   (default) SDN mode. The init creates one SDN zone and the 12 lab networks
+#                    net140 .. net151 declared below, through the sdn_network.bootstrap
+#                    bundle (playbooks/04_configure_sdn.yml). Every scenario then declares
+#                    its own networks on top of them. This is the supported mode.
+#
+#   "YES"            LEGACY mode : the 12 Linux bridges vmbr140 .. vmbr151 of the pre-SDN
+#                    era (range42_lab_bridges, see roles/proxmox.init/defaults/main.yml).
+#                    UNSUPPORTED : no network isolation between labs, the new scenarios do
+#                    not run on it, it receives no update. Keep it only for a private
+#                    scenario that was never migrated. If you go there, you debug alone.
+#
+# The two modes fight for the same 192.168.14x.0/24 subnets : pick one per host. A host
+# moving from legacy to SDN runs `range42-context networks-legacy-clean` once, then re-inits.
+#
+INIT_LEGACY_BRIDGES: "NO"
+
+# The SDN zone that holds every lab network of this host. One zone per host is enough. The
+# name travels to the deployer-cli through the vault, so the scenarios use the same one.
+#
+range42_sdn_zone: "r42zone"
+
+# The lab networks created at init in SDN mode, with their outbound NAT.
+#   snat: true   the VMs of that network reach the internet through the Proxmox host
+#   snat: false  no outbound NAT, the network cannot reach the outside
+# net140 is the templating network : the template builds run apt there, keep its snat true.
+#
+# The wizard rewrites this list from its "outbound NAT per network" panel. A scenario may
+# declare the same networks : the bundle creates what is missing and never duplicates.
+#
+range42_sdn_networks:
+  - { vnet: "net140", subnet: "192.168.140.0/24", gateway: "192.168.140.1", snat: true }
+  - { vnet: "net141", subnet: "192.168.141.0/24", gateway: "192.168.141.1", snat: true }
+  - { vnet: "net142", subnet: "192.168.142.0/24", gateway: "192.168.142.1", snat: true }
+  - { vnet: "net143", subnet: "192.168.143.0/24", gateway: "192.168.143.1", snat: true }
+  - { vnet: "net144", subnet: "192.168.144.0/24", gateway: "192.168.144.1", snat: true }
+  - { vnet: "net145", subnet: "192.168.145.0/24", gateway: "192.168.145.1", snat: true }
+  - { vnet: "net146", subnet: "192.168.146.0/24", gateway: "192.168.146.1", snat: true }
+  - { vnet: "net147", subnet: "192.168.147.0/24", gateway: "192.168.147.1", snat: true }
+  - { vnet: "net148", subnet: "192.168.148.0/24", gateway: "192.168.148.1", snat: true }
+  - { vnet: "net149", subnet: "192.168.149.0/24", gateway: "192.168.149.1", snat: true }
+  - { vnet: "net150", subnet: "192.168.150.0/24", gateway: "192.168.150.1", snat: true }
+  - { vnet: "net151", subnet: "192.168.151.0/24", gateway: "192.168.151.1", snat: true }
+
+
 #### PROXMOX API ACCESS ####
 
 # The Proxmox API is used by Ansible to create/manage VMs.

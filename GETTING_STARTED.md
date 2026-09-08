@@ -1071,6 +1071,7 @@ range42/
 │   ├── 01_generate_credentials.yml
 │   ├── 02_configure_proxmox.yml
 │   ├── 03_deploy_deployer_cli.yml
+│   ├── 04_configure_sdn.yml          - the SDN lab networks (SDN mode), run after site.yml
 │   └── 90_patch_deployer_tools.yml   - maintenance, not a pipeline step (see below)
 ├── inventories/
 │   └── example/              — copy and customize for your infra
@@ -1133,6 +1134,18 @@ ansible-playbook playbooks/03_deploy_deployer_cli.yml \
   -e INFRASTRUCTURE_SCENARIO=demo_lab \
   --vault-password-file ./config/my-infra-demo_lab/secrets/vault_pass.txt
 
+# 5b. SDN mode only (INIT_LEGACY_BRIDGES "NO", the default) : create the SDN zone and the
+#     lab networks declared in group_vars/all/vars.yml (section NETWORK MODE). Idempotent,
+#     re-run it to put the host back in shape. Needs the two sibling clones next to this
+#     repo (range42-playbooks, range42-ansible_roles-proxmox_controller).
+export RANGE42_ACTIVE_CONFIG_DIR="$PWD/config/my-infra-demo_lab"
+ANSIBLE_ROLES_PATH="./roles:../range42-ansible_roles-proxmox_controller/roles" \
+ansible-playbook playbooks/04_configure_sdn.yml \
+  -i inventories/my-infra/hosts.yml \
+  -e @inventories/my-infra/group_vars/demo_lab/vars.yml \
+  -e INFRASTRUCTURE_SCENARIO=demo_lab \
+  --vault-password-file ./config/my-infra-demo_lab/secrets/vault_pass.txt
+
 # 6. On the deployer-cli, use the workspace
 range42-context use my-infra demo_lab
 range42-context status
@@ -1142,6 +1155,8 @@ range42-context deploy
 Note on `-e @...vars.yml`: this loads the scenario's group_vars as extra vars.
 Without it, Ansible silently ignores `inventories/<cn>/group_vars/<scenario>/vars.yml`
 because no inventory group matches the scenario name, and role defaults would win.
+
+Step 5b is not part of `site.yml` on purpose: it reads the encrypted vault, whose password file is created by step 3 during the same `site.yml` run. Run it once `site.yml` is through. In legacy mode (`INIT_LEGACY_BRIDGES: "YES"`, unsupported) it does nothing.
 
 Or run all three at once via `site.yml`:
 
