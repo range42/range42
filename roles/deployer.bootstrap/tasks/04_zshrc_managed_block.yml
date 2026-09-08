@@ -1,0 +1,83 @@
+---
+# deployer bootstrap - the base zsh configuration as a MANAGED BLOCK of one .zshrc
+#
+# Included twice by 04_dot_files.yml (the deployer user, then root) with :
+#   _zshrc_path    the file to manage
+#   _zshrc_owner   its owner
+#   _zshrc_become  true for root
+#
+# WHY A BLOCK AND NOT A COPY
+#   The former `copy` rewrote the whole file at EVERY deploy (the file always
+#   differs from the template once the RANGE42 CONTEXT / ENV blocks are injected
+#   behind it), which erased two things : whatever the operator added by hand,
+#   and the RANGE42 ENV block of every OTHER workspace on the same deployer, so
+#   `range42-context use` could no longer switch to them. Measured on a live
+#   deployer : `DEPLOY ZSHRC FOR DEPLOYER USER` changed on each run while root's,
+#   which carries no injected block, stayed ok.
+#
+#   The base configuration (files/dot_files/zshrc, unchanged) now lives between
+#   `# BEGIN/END RANGE42 BASE` markers at the TOP of the file - it must stay first
+#   because it resets PATH and the ENV blocks below append to it. Everything
+#   outside the markers survives a deploy. A missing file is created.
+#
+# ONE-SHOT MIGRATION OF THE FLAT FILES LEFT BY THE COPY
+#   A file written by the old task has no BASE marker and STARTS with the
+#   template byte for byte (the copy put nothing before it). That template
+#   prefix is dropped once, so the block does not duplicate it ; everything
+#   after it is kept as is - lines the operator added below the template since
+#   the last deploy, and the RANGE42 blocks. A file that does not start with the
+#   template is operator content and is kept whole : the block is added above it.
+#
+# EVERY WRITE IS VALIDATED (`zsh -n`) AND BACKED UP : this is the login shell
+# configuration of the operator, a broken file locks the shell.
+
+- name: DEPLOYER BOOTSTRAP - STAT {{ _zshrc_path }}
+  ansible.builtin.stat:
+    path: "{{ _zshrc_path }}"
+  register: _zshrc_stat
+  become: "{{ _zshrc_become }}"
+
+- name: DEPLOYER BOOTSTRAP - READ {{ _zshrc_path }}
+  ansible.builtin.slurp:
+    src: "{{ _zshrc_path }}"
+  register: _zshrc_slurp
+  become: "{{ _zshrc_become }}"
+  when: _zshrc_stat.stat.exists
+
+- name: DEPLOYER BOOTSTRAP - SPLIT {{ _zshrc_path }} INTO HEAD AND RANGE42 BLOCKS
+  ansible.builtin.set_fact:
+    _zshrc_content: "{{ (_zshrc_slurp.content | b64decode) if _zshrc_stat.stat.exists else '' }}"
+    _zshrc_template: "{{ lookup('file', 'dot_files/zshrc') }}"
+
+- name: DEPLOYER BOOTSTRAP - IS {{ _zshrc_path }} A FLAT FILE LEFT BY THE FORMER COPY ?
+  ansible.builtin.set_fact:
+    _zshrc_legacy: >-
+      {{ _zshrc_stat.stat.exists
+         and ('# BEGIN RANGE42 BASE' not in _zshrc_content)
+         and _zshrc_content.startswith(_zshrc_template) }}
+
+## the template lookup strips the final newline, so the remainder starts with one : eaten
+- name: DEPLOYER BOOTSTRAP - DROP THE TEMPLATE HEAD OF {{ _zshrc_path }} (ONE-SHOT MIGRATION)
+  ansible.builtin.copy:
+    content: "{{ _zshrc_content[(_zshrc_template | length):] | regex_replace('^\\n+', '') }}"
+    dest: "{{ _zshrc_path }}"
+    owner: "{{ _zshrc_owner }}"
+    group: "{{ _zshrc_owner }}"
+    mode: "0644"
+    backup: true
+  become: "{{ _zshrc_become }}"
+  when: _zshrc_legacy | bool
+
+- name: DEPLOYER BOOTSTRAP - MANAGE THE RANGE42 BASE BLOCK OF {{ _zshrc_path }}
+  ansible.builtin.blockinfile:
+    path: "{{ _zshrc_path }}"
+    marker: "# {mark} RANGE42 BASE"
+    insertbefore: BOF
+    block: "{{ _zshrc_template }}"
+    create: true
+    owner: "{{ _zshrc_owner }}"
+    group: "{{ _zshrc_owner }}"
+    mode: "0644"
+    backup: true
+    validate: "zsh -n %s"
+  become: "{{ _zshrc_become }}"

@@ -1,8 +1,11 @@
 ---
 # deployer bootstrap - deploy dotfiles (vimrc, zshrc) for deployer user and root
 #
-# FIX B3: original code wrote root's zshrc to /home/DEPLOYER_CLI_USER/.zshrc
-#         instead of /root/.zshrc — fixed here
+# vimrc : a plain copy, nothing is ever injected into it.
+# zshrc : a MANAGED BLOCK (04_zshrc_managed_block.yml), because two roles inject
+#         blocks into this file behind the base configuration (RANGE42 CONTEXT,
+#         one RANGE42 ENV per workspace) and the operator may add settings too.
+#         The former copy rewrote the whole file at every deploy and erased them.
 #
 # source: configure.deployer-cli/tasks/03_dot_files.yml
 
@@ -14,13 +17,12 @@
     group: "{{ DEPLOYER_CLI_USER }}"
     mode: "0644"
 
-- name: DEPLOYER BOOTSTRAP - DEPLOY ZSHRC FOR DEPLOYER USER
-  ansible.builtin.copy:
-    src: dot_files/zshrc
-    dest: "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
-    owner: "{{ DEPLOYER_CLI_USER }}"
-    group: "{{ DEPLOYER_CLI_USER }}"
-    mode: "0644"
+- name: DEPLOYER BOOTSTRAP - MANAGE ZSHRC FOR DEPLOYER USER
+  ansible.builtin.include_tasks: ./04_zshrc_managed_block.yml
+  vars:
+    _zshrc_path: "/home/{{ DEPLOYER_CLI_USER }}/.zshrc"
+    _zshrc_owner: "{{ DEPLOYER_CLI_USER }}"
+    _zshrc_become: false
 
 - name: DEPLOYER BOOTSTRAP - DEPLOY VIMRC FOR ROOT
   ansible.builtin.copy:
@@ -31,12 +33,9 @@
     mode: "0644"
   become: true
 
-- name: DEPLOYER BOOTSTRAP - DEPLOY ZSHRC FOR ROOT
-  ansible.builtin.copy:
-    src: dot_files/zshrc
-    dest: "/root/.zshrc"
-    owner: root
-    group: root
-    mode: "0644"
-  become: true
-  # FIX B3: was /home/{{ DEPLOYER_CLI_USER }}/.zshrc in original code
+- name: DEPLOYER BOOTSTRAP - MANAGE ZSHRC FOR ROOT
+  ansible.builtin.include_tasks: ./04_zshrc_managed_block.yml
+  vars:
+    _zshrc_path: /root/.zshrc
+    _zshrc_owner: root
+    _zshrc_become: true
