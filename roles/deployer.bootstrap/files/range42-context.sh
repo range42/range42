@@ -1457,36 +1457,26 @@ _r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # networks-show-firewall / networks-firewall-on / networks-firewall-off
 #
-# THIN WRAPPERS over the firewall bundles of the playbooks repo, the way networks-legacy-clean
-# wraps the legacy bridge cleaning : the logic, the guards and the three-switch rule live in the
-# bundles and in the proxmox_controller roles. This file names them, checks what they read, and
-# asks before the one gesture that can cut an operator off.
+# GLUE ONLY. The pair names the firewall bundles of the playbooks repo, checks what they read and
+# asks before running them ; the logic, the guards and the three-switch rule live in the bundles
+# and in the proxmox_controller roles. The view reads through the devkits, like networks-show-sdn.
 #
-# WHAT THE PAIR DRIVES : the Proxmox firewall of every guest of the ACTIVE scenario, guest switch
-# and per-card flags, templates excluded, never another workspace - the bundles' measured scope,
-# read from the scenario manifest through RANGE42_ACTIVE_CONFIG_DIR. It is the mechanism that
-# enforces the segmentation between the lab networks. The vnet flag `isolate-ports`, printed as
-# ISOLATED by networks-show-sdn, is another axis (intra-vnet) and is not touched here.
+# SCOPES of the pair (--scope), the default first :
+#   scenario_vms   firewall.{enable,disable}.vms            every guest of the ACTIVE scenario,
+#                                                            switch and card flags, templates out
+#   proxmox        firewall.{enable,disable}.datacenter_and_nodes   the host switches
+#   <vm_id>        firewall.{enable,disable}.vm             one guest the manifest declares
+#   all            proxmox then scenario_vms                 disarming goes datacenter first
 #
-# WHAT IT DRIVES ONLY ON REQUEST : the datacenter and node switches, with --scope proxmox or all.
-# They belong to the two bundles firewall.{enable,disable}.datacenter_and_nodes, which the scenario
-# deploy never runs ; nothing filters until the datacenter switch is on, so guests armed on the
-# default scope wait, inert, until someone arms the host - the recap warns about it. One guest at
-# a time is --scope <vm_id>, over firewall.{enable,disable}.vm, and only for an id the active
-# scenario's manifest declares. The anti-lockout is the bundles' own, and the FULL deploy covers it :
-# main.yml posts the management accepts of the datacenter and the node (22, 8006) with
-# firewall.baseline.management_access before anything else, then the ssh accept of every VM with
-# firewall.baseline.ssh_all_vms once the VMs exist. The vms-only redeploy (main_vms_only.yml) runs
-# none of the firewall stages - which is why it matters that enable.vms posts that ssh accept
-# itself before arming a guest, whose switch refuses to arm without it. Rules only, at every stage.
+# TWO FACTS THE RECAP REPEATS : nothing filters until the datacenter switch is on, so guests armed
+# on the default scope wait, inert, until the host is armed (the deploy never arms it) ; and the
+# anti-lockout is the bundles' own, ssh accept posted before every guest switch, management accepts
+# before every host switch. The vnet flag `isolate-ports` (ISOLATED in networks-show-sdn) is
+# another axis and is not touched here.
 #
-# THE NAME, decided 2026-09-09, says the mechanism ; the description says the intent. The pair
-# mirrors networks-internet-on|off and sits with networks-show-firewall, the read-only view.
-#
-# WHAT EVERY BUNDLE READS : the workspace inventory (group proxmox), the scenario vault
-# (proxmox_node) reached through RANGE42_ACTIVE_CONFIG_DIR, and the vault password file `use`
-# exported. Nothing is passed with -e, except BUNDLE_VM_ID for the single-guest scope : the sweep
-# bundles and the host bundles take no parameter.
+# WHAT THE BUNDLES READ : the workspace inventory (group proxmox), the scenario vault (proxmox_node)
+# through RANGE42_ACTIVE_CONFIG_DIR, the vault password file `use` exported, and -e BUNDLE_VM_ID for
+# the single-guest scope only. The whole story (naming, deploy coverage, campaign) is in the issue.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 # usage: _r42_firewall_bundle_run <bundle name> [extra ansible-playbook args]
@@ -1509,19 +1499,97 @@ _r42_firewall_bundle_run() {
     ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
 }
 
-# usage: _r42_networks_show_firewall
+# usage: _r42_networks_show_firewall [--json]
+#
+# READ THROUGH THE DEVKITS, like networks-show-sdn : one compact table, or the devkit lines as they
+# come with --json. The bundle firewall.report.status reads the same things through an ansible run,
+# the right tool inside a scenario and too verbose for a glance from the shell. Per guest the line
+# is the devkit's own verdict (effective_filtering_state) : one line per card, filtered when the
+# datacenter switch, the guest switch and the card flag are all on ; the node switch is read for
+# information and never enters the verdict. The firewall endpoints are node-scoped and the node
+# name lives in the vault only, read the way ssh-reload reads the passphrases.
 _r42_networks_show_firewall() {
-    if [[ $# -gt 0 ]]; then
-        _r42_print_fail "unknown argument: $1" >&2
-        echo "  networks-show-firewall" >&2
-        return 1
+    local as_json=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json) as_json=true ; shift ;;
+            *) _r42_print_fail "unknown argument: $1" >&2 ; echo "  networks-show-firewall [--json]" >&2 ; return 1 ;;
+        esac
+    done
+    local scenario manifest
+    scenario=$(_r42_active_scenario_name) || return 1
+    manifest=$(_r42_active_scenario_manifest) || return 1
+    local cmd
+    for cmd in proxmox_firewall.datacenter.list_options.to.jsons.sh \
+               proxmox_firewall.proxmox_node.list_options.to.jsons.sh \
+               proxmox_firewall.vm_id.effective_filtering_state.to.jsons.sh \
+               proxmox_vm.list.to.jsons.sh ; do
+        command -v "$cmd" >/dev/null 2>&1 || {
+            _r42_print_fail "devkit not on PATH: $cmd" >&2
+            echo "  the devkits are activated by sourcing their _activate.sh" >&2
+            return 1
+        }
+    done
+
+    local vault_file="${RANGE42_CONFIG__ROOT_DIR%/}/secrets/default_vault.yml"
+    local vault_pass="${RANGE42_VAULT_PASSWORD_FILE:-}" node=""
+    if [[ -f "$vault_file" && -n "$vault_pass" && -f "$vault_pass" ]]; then
+        node=$(ansible-vault view "$vault_file" --vault-password-file "$vault_pass" 2>/dev/null | _r42_yaml_get proxmox_node)
     fi
-    local scenario ; scenario=$(_r42_active_scenario_name) || return 1
+    [[ -n "$node" ]] || { _r42_print_fail "proxmox_node not readable from the vault: $vault_file" >&2 ; return 1 ; }
+
+    $as_json || _r42_print_step "reading the datacenter, the node and the deployed guests of ${scenario} ..." >&2
+    local payload dc nd
+    payload=$(printf '{"proxmox_node":"%s"}' "$node")
+    dc=$(printf '%s\n' "$payload" | proxmox_firewall.datacenter.list_options.to.jsons.sh --json 2>/dev/null \
+      | jq -r 'select(.dc_fw_opt_enable != null) | .dc_fw_opt_enable' | head -1)
+    nd=$(printf '%s\n' "$payload" | proxmox_firewall.proxmox_node.list_options.to.jsons.sh --json 2>/dev/null \
+      | jq -r 'select(.node_fw_opt_enable != null) | .node_fw_opt_enable' | head -1)
+    [[ -n "$dc" && -n "$nd" ]] || {
+        _r42_print_fail "the host switches could not be read (datacenter: '${dc}', node: '${nd}') - is the api reachable ?" >&2
+        return 1
+    }
+
+    ## scope = the manifest INTERSECTED with what the node runs, templates excluded : the sweep rule
+    local deployed declared guests missing
+    deployed=$(proxmox_vm.list.to.jsons.sh --json 2>/dev/null \
+      | jq -c 'select(.vm_id != null) | select(((.vm_template // 0) | tostring) != "1" and .vm_template != true) | (.vm_id | tonumber)' \
+      | jq -s -c .)
+    declared=$(jq -c '[.vms[] | {vm_id: (.vm_id | tonumber), vm_name}]' "$manifest")
+    guests=$(jq -n -c --argjson d "$declared" --argjson r "${deployed:-[]}" '[$d[] | select(.vm_id as $i | ($r | index($i)) != null)]')
+    missing=$(jq -n -r --argjson d "$declared" --argjson r "${deployed:-[]}" '[$d[] | select(.vm_id as $i | ($r | index($i)) == null) | .vm_id] | join(" ")')
+
+    local rows="" id name line
+    while IFS=$'\t' read -r id name ; do
+        [[ -z "$id" ]] && continue
+        line=$(printf '{"proxmox_node":"%s","vm_id":%s}\n' "$node" "$id" \
+          | proxmox_firewall.vm_id.effective_filtering_state.to.jsons.sh --json 2>/dev/null \
+          | jq -c --argjson id "$id" --arg n "$name" 'select(.vm_network_device != null) | . + {vm_id: $id, vm_name: $n}')
+        [[ -n "$line" ]] || line=$(jq -n -c --argjson id "$id" --arg n "$name" \
+          '{vm_id: $id, vm_name: $n, vm_network_device: "-", vm_network_bridge: "-", guest_enable: "?", card_firewall_flag: null, effectively_filtered: false, missing: ["unreadable"]}')
+        rows+="${line}"$'\n'
+    done < <(printf '%s\n' "$guests" | jq -r '.[] | [.vm_id, .vm_name] | @tsv')
+
+    if $as_json ; then
+        jq -n -c --arg node "$node" --arg dc "$dc" --arg nd "$nd" '{level: "host", proxmox_node: $node, datacenter_enable: $dc, node_enable: $nd}'
+        printf '%s' "$rows"
+        [[ -n "$missing" ]] && jq -n -c --arg m "$missing" '{level: "not_deployed", vm_ids: ($m | split(" ") | map(tonumber))}'
+        return 0
+    fi
+
     _r42_print_section "firewall state  (scenario: ${scenario})"
-    _r42_print_step "datacenter switch, node switch, then every deployed guest of this scenario with its card flags - read only, nothing is changed"
+    printf "  node %s : datacenter switch %s, node switch %s\n\n" "$node" "$dc" "$nd"
+    if [[ -z "$rows" ]]; then
+        echo "  no guest of this scenario is deployed yet - the host switches above are the whole report"
+    else
+        printf "  %-6s %-26s %-6s %-8s %-10s %-5s %s\n" "VM_ID" "VM_NAME" "GUEST" "CARD" "BRIDGE" "FLAG" "FILTERED"
+        printf '%s' "$rows" | jq -r '[ (.vm_id | tostring), .vm_name, (.guest_enable | tostring), .vm_network_device, (.vm_network_bridge // "?"), ((.card_firewall_flag // "-") | tostring), (if .effectively_filtered then "yes" else "no" end) ] | @tsv' \
+          | while IFS=$'\t' read -r a b c d e f g ; do
+              printf "  %-6s %-26s %-6s %-8s %-10s %-5s %s\n" "$a" "$b" "$c" "$d" "$e" "$f" "$g"
+            done
+    fi
+    [[ -n "$missing" ]] && printf "\n  declared, not deployed : %s\n" "$missing"
     echo ""
-    _r42_firewall_bundle_run firewall.report.status \
-      || { _r42_print_fail "the report did not complete - see the output above" ; return 1 ; }
 }
 
 # usage: _r42_networks_firewall_toggle on|off [--scope scenario_vms|proxmox|<vm_id>|all] [--yes]
