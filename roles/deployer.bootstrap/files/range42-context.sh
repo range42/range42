@@ -1517,13 +1517,14 @@ _r42_firewall_bundle_run() {
 
 # usage: _r42_networks_show_firewall [--json]
 #
-# READ THROUGH THE DEVKITS, like networks-show-sdn : one compact table, or the devkit lines as they
-# come with --json. The bundle firewall.report.status reads the same things through an ansible run,
-# the right tool inside a scenario and too verbose for a glance from the shell. Per guest the line
-# is the devkit's own verdict (effective_filtering_state) : one line per card, filtered when the
-# datacenter switch, the guest switch and the card flag are all on ; the node switch is read for
-# information and never enters the verdict. The firewall endpoints are node-scoped and the node
-# name lives in the vault only, read the way ssh-reload reads the passphrases.
+# ONE DEVKIT, ONE RENDERER. The view is read by proxmox_firewall.scenario.show_firewall.to.jsons.sh,
+# the engine of the show_firewall family at the scenario grain (the api fast path when it answers,
+# the ansible readers otherwise, RANGE42_PROXMOX_API_FORCE=off to insist on the latter). This
+# function only adds the scenario semantics to the rendering : the section, the host sentence, the
+# table of the deployed guests through devkit_utils.jsons.render.to.table.sh, the "declared, not
+# deployed" line. --json hands the devkit's lines over as they come : one object per line, a `level`
+# on each (host, card, guest, absent, error). Per card the verdict is the devkit's : filtered when the
+# datacenter switch, the guest switch and the card flag are all on, the node switch never counts.
 _r42_networks_show_firewall() {
     local as_json=false
     while [[ $# -gt 0 ]]; do
@@ -1532,14 +1533,10 @@ _r42_networks_show_firewall() {
             *) _r42_print_fail "unknown argument: $1" >&2 ; echo "  networks-show-firewall [--json]" >&2 ; return 1 ;;
         esac
     done
-    local scenario manifest
+    local scenario
     scenario=$(_r42_active_scenario_name) || return 1
-    manifest=$(_r42_active_scenario_manifest) || return 1
     local cmd
-    for cmd in proxmox_firewall.datacenter.list_options.to.jsons.sh \
-               proxmox_firewall.proxmox_node.list_options.to.jsons.sh \
-               proxmox_firewall.vm_id.effective_filtering_state.to.jsons.sh \
-               proxmox_vm.list.to.jsons.sh ; do
+    for cmd in proxmox_firewall.scenario.show_firewall.to.jsons.sh devkit_utils.jsons.render.to.table.sh ; do
         command -v "$cmd" >/dev/null 2>&1 || {
             _r42_print_fail "devkit not on PATH: $cmd" >&2
             echo "  the devkits are activated by sourcing their _activate.sh" >&2
@@ -1547,66 +1544,48 @@ _r42_networks_show_firewall() {
         }
     done
 
-    local vault_file="${RANGE42_CONFIG__ROOT_DIR%/}/secrets/default_vault.yml"
-    local vault_pass="${RANGE42_VAULT_PASSWORD_FILE:-}" node=""
-    if [[ -f "$vault_file" && -n "$vault_pass" && -f "$vault_pass" ]]; then
-        node=$(ansible-vault view "$vault_file" --vault-password-file "$vault_pass" 2>/dev/null | _r42_yaml_get proxmox_node)
-    fi
-    [[ -n "$node" ]] || { _r42_print_fail "proxmox_node not readable from the vault: $vault_file" >&2 ; return 1 ; }
-
     $as_json || _r42_print_step "reading the datacenter, the node and the deployed guests of ${scenario} ..." >&2
-    local payload dc nd
-    payload=$(printf '{"proxmox_node":"%s"}' "$node")
-    dc=$(printf '%s\n' "$payload" | proxmox_firewall.datacenter.list_options.to.jsons.sh --json 2>/dev/null \
-      | jq -r 'select(.dc_fw_opt_enable != null) | .dc_fw_opt_enable' | head -1)
-    nd=$(printf '%s\n' "$payload" | proxmox_firewall.proxmox_node.list_options.to.jsons.sh --json 2>/dev/null \
-      | jq -r 'select(.node_fw_opt_enable != null) | .node_fw_opt_enable' | head -1)
-    [[ -n "$dc" && -n "$nd" ]] || {
-        _r42_print_fail "the host switches could not be read (datacenter: '${dc}', node: '${nd}') - is the api reachable ?" >&2
+    local view
+    view=$(proxmox_firewall.scenario.show_firewall.to.jsons.sh --json 2>/dev/null) || {
+        _r42_print_fail "the firewall view could not be read - run it by hand to see why : proxmox_firewall.scenario.show_firewall.to.jsons.sh --table" >&2
         return 1
     }
-
-    ## scope = the manifest INTERSECTED with what the node runs, templates excluded : the sweep rule
-    local deployed declared guests missing
-    deployed=$(proxmox_vm.list.to.jsons.sh --json 2>/dev/null \
-      | jq -c 'select(.vm_id != null) | select(((.vm_template // 0) | tostring) != "1" and .vm_template != true) | (.vm_id | tonumber)' \
-      | jq -s -c .)
-    declared=$(jq -c '[.vms[] | {vm_id: (.vm_id | tonumber), vm_name}]' "$manifest")
-    guests=$(jq -n -c --argjson d "$declared" --argjson r "${deployed:-[]}" '[$d[] | select(.vm_id as $i | ($r | index($i)) != null)]')
-    missing=$(jq -n -r --argjson d "$declared" --argjson r "${deployed:-[]}" '[$d[] | select(.vm_id as $i | ($r | index($i)) == null) | .vm_id] | join(" ")')
-
-    local rows="" id name line
-    while IFS=$'\t' read -r id name ; do
-        [[ -z "$id" ]] && continue
-        line=$(printf '{"proxmox_node":"%s","vm_id":%s}\n' "$node" "$id" \
-          | proxmox_firewall.vm_id.effective_filtering_state.to.jsons.sh --json 2>/dev/null \
-          | jq -c --argjson id "$id" --arg n "$name" 'select(.vm_network_device != null) | . + {vm_id: $id, vm_name: $n}')
-        [[ -n "$line" ]] || line=$(jq -n -c --argjson id "$id" --arg n "$name" \
-          '{vm_id: $id, vm_name: $n, vm_network_device: "-", vm_network_bridge: "-", guest_enable: "?", card_firewall_flag: null, effectively_filtered: false, missing: ["unreadable"]}')
-        rows+="${line}"$'\n'
-    done < <(printf '%s\n' "$guests" | jq -r '.[] | [.vm_id, .vm_name] | @tsv')
-
     if $as_json ; then
-        jq -n -c --arg node "$node" --arg dc "$dc" --arg nd "$nd" '{level: "host", proxmox_node: $node, datacenter_enable: $dc, node_enable: $nd}'
-        printf '%s' "$rows"
-        [[ -n "$missing" ]] && jq -n -c --arg m "$missing" '{level: "not_deployed", vm_ids: ($m | split(" ") | map(tonumber))}'
+        printf '%s\n' "$view"
         return 0
     fi
 
+    local node dc nd
+    node=$(printf '%s\n' "$view" | jq -r 'select(.level == "host") | .proxmox_node')
+    dc=$(printf '%s\n' "$view" | jq -r 'select(.level == "host") | .datacenter_enable // "-"')
+    nd=$(printf '%s\n' "$view" | jq -r 'select(.level == "host") | .node_enable // "-"')
+
     _r42_print_section "firewall state  (scenario: ${scenario})"
     printf "  node %s : datacenter switch %s, node switch %s\n\n" "$node" "$dc" "$nd"
+
+    ## the deployed guests, templates out : one row per card ; a guest without a card gets a row of
+    ## dashes, a guest that could not be read a row of question marks (its reason goes to stderr)
+    local rows
+    rows=$(printf '%s\n' "$view" | jq -c '
+        if .level == "card" and ((.vm_template // 0) | tostring) != "1" then
+            {vm_id, vm_name, guest_enable, vm_network_device, vm_network_bridge, card_firewall_flag, effectively_filtered}
+        elif .level == "guest" and ((.vm_template // 0) | tostring) != "1" then
+            {vm_id, vm_name, guest_enable, vm_network_device: "-", vm_network_bridge: "-", card_firewall_flag: null, effectively_filtered: false}
+        elif .level == "error" then
+            {vm_id, vm_name: "?", guest_enable: "?", vm_network_device: "?", vm_network_bridge: "?", card_firewall_flag: "?", effectively_filtered: "?"}
+        else empty end')
     if [[ -z "$rows" ]]; then
         echo "  no guest of this scenario is deployed yet - the host switches above are the whole report"
     else
-        printf "  %-6s %-26s %-6s %-8s %-10s %-5s %s\n" "VM_ID" "VM_NAME" "GUEST" "CARD" "BRIDGE" "FLAG" "FILTERED"
-        ## a guest whose firewall options were never set has no `enable` key at all : the api
-        ## returns nothing, the devkit reports null and counts it as off. Printed as "-", like the
-        ## card flag, and like the devkit's own text output : absent is not the same as 0.
-        printf '%s' "$rows" | jq -r '[ (.vm_id | tostring), .vm_name, ((.guest_enable // "-") | tostring), .vm_network_device, (.vm_network_bridge // "?"), ((.card_firewall_flag // "-") | tostring), (if .effectively_filtered then "yes" else "no" end) ] | @tsv' \
-          | while IFS=$'\t' read -r a b c d e f g ; do
-              printf "  %-6s %-26s %-6s %-8s %-10s %-5s %s\n" "$a" "$b" "$c" "$d" "$e" "$f" "$g"
-            done
+        ## minimum widths : the table keeps its shape whatever the names, and the shape it always had
+        printf '%s\n' "$rows" | devkit_utils.jsons.render.to.table.sh vm_id:VM_ID:5 vm_name:VM_NAME:25 guest_enable:GUEST:5 vm_network_device:CARD:7 vm_network_bridge:BRIDGE:9 card_firewall_flag:FLAG:4 effectively_filtered:FILTERED
     fi
+    local line
+    printf '%s\n' "$view" | jq -r 'select(.level == "error") | "vm \(.vm_id) : unreadable (\(.reason))"' | while IFS= read -r line ; do
+        _r42_print_warning "$line" >&2
+    done
+    local missing
+    missing=$(printf '%s\n' "$view" | jq -r 'select(.level == "absent") | .vm_id' | paste -sd ' ' -)
     [[ -n "$missing" ]] && printf "\n  declared, not deployed : %s\n" "$missing"
     echo ""
 }
