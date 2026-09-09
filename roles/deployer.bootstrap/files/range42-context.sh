@@ -1583,7 +1583,10 @@ _r42_networks_show_firewall() {
         echo "  no guest of this scenario is deployed yet - the host switches above are the whole report"
     else
         printf "  %-6s %-26s %-6s %-8s %-10s %-5s %s\n" "VM_ID" "VM_NAME" "GUEST" "CARD" "BRIDGE" "FLAG" "FILTERED"
-        printf '%s' "$rows" | jq -r '[ (.vm_id | tostring), .vm_name, (.guest_enable | tostring), .vm_network_device, (.vm_network_bridge // "?"), ((.card_firewall_flag // "-") | tostring), (if .effectively_filtered then "yes" else "no" end) ] | @tsv' \
+        ## a guest whose firewall options were never set has no `enable` key at all : the api
+        ## returns nothing, the devkit reports null and counts it as off. Printed as "-", like the
+        ## card flag, and like the devkit's own text output : absent is not the same as 0.
+        printf '%s' "$rows" | jq -r '[ (.vm_id | tostring), .vm_name, ((.guest_enable // "-") | tostring), .vm_network_device, (.vm_network_bridge // "?"), ((.card_firewall_flag // "-") | tostring), (if .effectively_filtered then "yes" else "no" end) ] | @tsv' \
           | while IFS=$'\t' read -r a b c d e f g ; do
               printf "  %-6s %-26s %-6s %-8s %-10s %-5s %s\n" "$a" "$b" "$c" "$d" "$e" "$f" "$g"
             done
