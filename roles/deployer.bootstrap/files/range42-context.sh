@@ -1496,6 +1496,13 @@ _r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 # usage: _r42_firewall_bundle_run <bundle name> [extra ansible-playbook args]
+#
+# CURATED OUTPUT. The bundle runs under the stdout callback range42_bundle of the range42 clone
+# (callback_plugins/), which prints what the bundle says (its debug messages, the verdicts of its
+# asserts) and every failure in full, and nothing else : no task list, no ok/changed lines, no
+# skipped. The callback is enabled for this run only, never in ansible.cfg, so site.yml and the
+# deploys keep the default output. RANGE42_BUNDLE_OUTPUT=full in the shell keeps the default
+# output for a debugging session ; a clone without the plugin falls back to it with a warning.
 _r42_firewall_bundle_run() {
     local name="$1" ; shift
     local cfg="${RANGE42_ACTIVE_CONFIG_DIR:-}"
@@ -1512,7 +1519,16 @@ _r42_firewall_bundle_run() {
     for f in "$inv" "$bundle" "$vault" "$manifest" ; do
         [[ -f "$f" ]] || { _r42_print_fail "not found: $f" >&2 ; return 1 ; }
     done
-    ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
+    local plugins="${RANGE42_GITDIR__ROOT_DIR%/}/range42/callback_plugins"
+    if [[ "${RANGE42_BUNDLE_OUTPUT:-curated}" == "full" ]]; then
+        ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
+    elif [[ ! -f "$plugins/range42_bundle.py" ]]; then
+        _r42_print_warning "curated output unavailable (${plugins}/range42_bundle.py not found) - full ansible output follows" >&2
+        ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
+    else
+        ANSIBLE_STDOUT_CALLBACK=range42_bundle ANSIBLE_CALLBACK_PLUGINS="$plugins" \
+          ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
+    fi
 }
 
 # usage: _r42_networks_show_firewall [--json]
