@@ -924,6 +924,22 @@ _r42_active_scenario_dir() {
         _r42_print_fail "no active workspace (RANGE42_ACTIVE_CONFIG_DIR is empty)" >&2
         return 1
     fi
+    ## The devkits read the vault through the `secrets` link of their directory, which `use`
+    ## repoints ; a `use` in ANOTHER shell moves it under this shell's feet, and every devkit
+    ## this command would call then talks to that other workspace. The devkit warmup refuses
+    ## that case in its own words ; this is the same refusal, said in range42 words, before
+    ## anything is launched. Context only : which VM a command may address is decided elsewhere.
+    local devkits_dir="${RANGE42_ANSIBLE_ROLES__DEVKITS_DIR:-}"
+    if [[ -n "$devkits_dir" && -L "${devkits_dir%/}/secrets" ]]; then
+        local dk_secrets ws_secrets
+        dk_secrets=$(readlink -f "${devkits_dir%/}/secrets" 2>/dev/null || true)
+        ws_secrets=$(readlink -f "$config_dir/secrets" 2>/dev/null || true)
+        if [[ -n "$dk_secrets" && -n "$ws_secrets" && "$dk_secrets" != "$ws_secrets" ]]; then
+            _r42_print_fail "the devkits point to another workspace: ${dk_secrets%/secrets}" >&2
+            _r42_print_warning "this shell is on ${config_dir} - a 'range42-context use' ran in another shell since ; run it again here" >&2
+            return 1
+        fi
+    fi
     local scenario_dir="$config_dir/scenario"
     if [[ ! -L "$scenario_dir" ]]; then
         _r42_print_fail "scenario symlink not found: $scenario_dir" >&2
