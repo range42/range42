@@ -483,6 +483,15 @@ _r42_use() {
     if [[ -f "$r42_ansible_cfg" ]]; then
         export ANSIBLE_CONFIG="$r42_ansible_cfg"
         _r42_print_step "exported ANSIBLE_CONFIG=$r42_ansible_cfg"
+        ## the callback_plugins line of that file is a RELATIVE path, so it only resolves for a run
+        ## started from the clone ; exported here as an absolute one, the readable output holds
+        ## wherever the run starts. Measured : without this, ansible finds no plugin and silently
+        ## falls back to its built-in output.
+        local r42_cb_dir="${r42_ansible_cfg%/*}/callback_plugins"
+        if [[ -d "$r42_cb_dir" ]]; then
+            export ANSIBLE_CALLBACK_PLUGINS="$r42_cb_dir"
+            _r42_print_step "exported ANSIBLE_CALLBACK_PLUGINS=$r42_cb_dir"
+        fi
     fi
 
     #### update zsh prompt to show active workspace (green tag)
@@ -1497,17 +1506,19 @@ _r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
 
 # usage: _r42_firewall_bundle_run <bundle name> [extra ansible-playbook args]
 #
-# CURATED OUTPUT. The bundle runs under the stdout callback range42_bundle of the range42 clone
-# (callback_plugins/), which prints what the bundle says (the debug messages of its play, the
-# verdicts of its asserts) and every failure in full, and nothing else : no task list, no
-# ok/changed lines, no skipped, and none of the api dumps the roles print after every action.
-# The callback is enabled for this run only, never in ansible.cfg, so site.yml and the deploys
-# keep the default output ; a clone without the plugin falls back to it with a warning.
+# THE OUTPUT OF A GESTURE FOLLOWS THE ONE SWITCH, range42-context debug-on / debug-off.
 #
-# THREE LEVELS, one variable :
-#   (unset) or curated   what the bundle says, plus every failure
-#   debug                the same, plus the messages the roles print
-#   full                 the plain ansible output, the callback is not used
+# debug OFF, the default : the bundle runs under the stdout callback range42_bundle of the range42
+# clone (callback_plugins/), which prints what the bundle says (the debug messages of its play, the
+# verdicts of its asserts) and every failure in full, and nothing else : no task list, no ok or
+# changed lines, no skipped, and none of the api dumps the roles print after every action.
+#
+# debug ON : the plain ansible output, no callback, every task and every payload.
+#
+# The callback is enabled for a run only, never in ansible.cfg, so site.yml and the deploys are
+# untouched ; a clone without the plugin falls back to the plain output with a warning. The state
+# is read from the same ansible.cfg the switch writes, so one command settles both. For a single
+# run without touching the switch : RANGE42_BUNDLE_OUTPUT=full, or =curated to insist on readable.
 _r42_firewall_bundle_run() {
     local name="$1" ; shift
     local cfg="${RANGE42_ACTIVE_CONFIG_DIR:-}"
@@ -1525,15 +1536,18 @@ _r42_firewall_bundle_run() {
         [[ -f "$f" ]] || { _r42_print_fail "not found: $f" >&2 ; return 1 ; }
     done
     local plugins="${RANGE42_GITDIR__ROOT_DIR%/}/range42/callback_plugins"
-    if [[ "${RANGE42_BUNDLE_OUTPUT:-curated}" == "full" ]]; then
+    ## the level : what the shell asks for this run, else what the switch says
+    local level="${RANGE42_BUNDLE_OUTPUT:-}"
+    if [[ -z "$level" ]]; then
+        [[ "$(_r42_debug_state)" == "on" ]] && level="full" || level="curated"
+    fi
+    if [[ "$level" == "full" ]]; then
         ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
     elif [[ ! -f "$plugins/range42_bundle.py" ]]; then
-        _r42_print_warning "curated output unavailable (${plugins}/range42_bundle.py not found) - full ansible output follows" >&2
+        _r42_print_warning "the readable output is unavailable (${plugins}/range42_bundle.py not found) - the full ansible output follows" >&2
         ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
     else
-        ## the level is passed explicitly : the callback reads it in the environment of the run
-        RANGE42_BUNDLE_OUTPUT="${RANGE42_BUNDLE_OUTPUT:-curated}" \
-          ANSIBLE_STDOUT_CALLBACK=range42_bundle ANSIBLE_CALLBACK_PLUGINS="$plugins" \
+        ANSIBLE_STDOUT_CALLBACK=range42_bundle ANSIBLE_CALLBACK_PLUGINS="$plugins" \
           ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
     fi
 }
@@ -2799,34 +2813,71 @@ _r42_tools_update() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context debug — toggle verbose/skip output in ansible.cfg
+# range42-context debug-on / debug-off / debug
+#
+# ONE SWITCH, TWO OUTPUTS, everywhere. debug OFF is the readable output : a run says what it did
+# and every failure, and nothing else. debug ON is the full ansible log, every task and every
+# payload, for a session where one wants to see the plumbing.
+#
+# It reaches two places at once, from a single state written in ansible.cfg :
+#   the playbooks that read that file  ->  no_skipped when off, plain ansible output when on
+#   the bundles range42-context runs   ->  the curated callback when off, plain ansible when on
+#
+# `debug` alone says which one is active and changes nothing : the old single word toggled the
+# state blindly, which said neither what it was nor what it became.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_debug() {
-    # resolve ansible.cfg path:
-    #   1. ANSIBLE_CONFIG (exported by range42-context use)
-    #   2. RANGE42_GITDIR__ROOT_DIR/range42/ansible.cfg (custom install path from wizard)
-    #   3. $HOME/range42/range42/ansible.cfg (default fallback)
+# usage: _r42_ansible_cfg  ->  prints the path of the ansible.cfg the switch acts on
+#   1. ANSIBLE_CONFIG (exported by range42-context use)
+#   2. RANGE42_GITDIR__ROOT_DIR/range42/ansible.cfg (custom install path from wizard)
+#   3. $HOME/range42/range42/ansible.cfg (default fallback)
+_r42_ansible_cfg() {
     local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
-    local cfg="${ANSIBLE_CONFIG:-${git_dir%/}/range42/ansible.cfg}"
+    echo "${ANSIBLE_CONFIG:-${git_dir%/}/range42/ansible.cfg}"
+}
 
+# usage: _r42_debug_state  ->  prints on or off ; off (the readable output) when there is no file
+_r42_debug_state() {
+    local cfg
+    cfg=$(_r42_ansible_cfg)
+    if [[ -f "$cfg" ]] && ! grep -q '^stdout_callback = no_skipped' "$cfg" ; then
+        echo "on"
+    else
+        echo "off"
+    fi
+}
+
+# usage: _r42_debug_set on|off   idempotent : it writes a state, it does not toggle one
+_r42_debug_set() {
+    local want="$1" cfg
+    cfg=$(_r42_ansible_cfg)
     if [[ ! -f "$cfg" ]]; then
         _r42_print_fail "ansible.cfg not found: $cfg"
         return 1
     fi
-
-    # check current state — if stdout_callback is active (not commented), we're in clean mode
-    if grep -q '^stdout_callback = no_skipped' "$cfg"; then
-        # switch to debug mode — comment out the no_skipped lines
+    if [[ "$want" == "on" ]]; then
         sed -i 's/^stdout_callback = no_skipped/# stdout_callback = no_skipped/' "$cfg"
         sed -i 's/^callback_plugins = callback_plugins/# callback_plugins = callback_plugins/' "$cfg"
-        _r42_print_check "debug mode ON — skipped tasks will be visible"
+        _r42_print_check "debug ON : full ansible logs, every task and every payload"
     else
-        # switch to clean mode — uncomment the no_skipped lines
         sed -i 's/^# stdout_callback = no_skipped/stdout_callback = no_skipped/' "$cfg"
         sed -i 's/^# callback_plugins = callback_plugins/callback_plugins = callback_plugins/' "$cfg"
-        _r42_print_check "debug mode OFF — skipped tasks hidden"
+        _r42_print_check "debug OFF : the readable output, what a run says and its failures"
     fi
+    _r42_print_step "it applies to the next run, here and in every shell of this deployer"
+}
+
+_r42_debug() {
+    local state
+    state=$(_r42_debug_state)
+    if [[ "$state" == "on" ]]; then
+        _r42_print_check "debug is ON : full ansible logs"
+        _r42_print_step "back to the readable output : range42-context debug-off"
+    else
+        _r42_print_check "debug is OFF : the readable output, what a run says and its failures"
+        _r42_print_step "full logs for a debugging session : range42-context debug-on"
+    fi
+    _r42_print_step "the switch writes $(_r42_ansible_cfg)"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -2880,7 +2931,9 @@ _r42_help() {
     printf "    ${N}show-config${R}                    ${D}show workspace orientation (paths + SSH hosts)${R}\n"
     printf "    ${N}show-inventory${R}                 ${D}show ansible inventory tree${R}\n"
     printf "    ${N}ssh${R} <pattern>                  ${D}quick ssh to a VM by name${R}\n"
-    printf "    ${N}debug${R}                          ${D}toggle verbose output (show/hide skipped tasks)${R}\n"
+    printf "    ${N}debug-on${R}                       ${D}full ansible logs, for a debugging session${R}\n"
+    printf "    ${N}debug-off${R}                      ${D}the readable output : what a run says, and its failures${R}\n"
+    printf "    ${N}debug${R}                          ${D}say which of the two is active${R}\n"
     printf "    ${N}help${R}                           ${D}show this help${R}\n"
     echo ""
     printf "  ${C}catalog-try (one usage VM for single catalog element validation)${R}\n"
@@ -2952,6 +3005,8 @@ range42-context() {
         ssh)            _r42_ssh "$@" ;;
         cd)             _r42_cd "$@" ;;
         debug)          _r42_debug ;;
+        debug-on)       _r42_debug_set on ;;
+        debug-off)      _r42_debug_set off ;;
         catalog-try)         _r42_catalog_try "$@" ;;
         catalog-try-list)        _r42_catalog_try_list "" "docker/admin/" ;;
         catalog-try-list-admin)  _r42_catalog_try_list_admin ;;

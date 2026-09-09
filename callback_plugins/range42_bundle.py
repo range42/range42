@@ -10,13 +10,9 @@
 # WHAT THE BUNDLE SAYS IS AT THE LEVEL OF THE PLAY, NOT OF A ROLE. The proxmox_controller role
 # prints a debug of its whole api answer after nearly every action, ninety three of them and none
 # under a condition : left in, they bury the four sentences the bundle wrote for the operator. So a
-# message coming from a role is kept for the debug level, while a FAILURE coming from a role is
-# always printed, wherever it happens.
-#
-# THREE LEVELS, one variable, read in the shell that launches the gesture :
-#   RANGE42_BUNDLE_OUTPUT unset or curated   what the bundle says, plus every failure
-#   RANGE42_BUNDLE_OUTPUT=debug              the same, plus the messages the roles print
-#   RANGE42_BUNDLE_OUTPUT=full               the plain ansible output, this callback is not used
+# message coming from a role is never printed here, while a FAILURE coming from a role always is,
+# wherever it happens. Someone who wants the payloads wants the whole log, and asks for it with
+# range42-context debug-on, which does not use this callback at all.
 #
 # Enabled per run by the runner, never in ansible.cfg :
 #   ANSIBLE_STDOUT_CALLBACK=range42_bundle ANSIBLE_CALLBACK_PLUGINS=<this directory> ansible-playbook ...
@@ -27,7 +23,6 @@
 from __future__ import annotations
 
 import json
-import os
 
 from ansible.plugins.callback import CallbackBase
 
@@ -39,13 +34,9 @@ DOCUMENTATION = """
       - Meant for the bundles that range42-context launches from the shell.
       - Prints the messages of the debug tasks of the play, the success message of its asserts,
         and every failed task, failed loop item, unreachable host or play without host, in full.
-      - Keeps the messages printed by the roles for RANGE42_BUNDLE_OUTPUT=debug ; a failure in a
-        role is always printed.
+      - Never prints the messages the roles print ; a failure in a role is always printed.
       - Prints no task list, no ok or changed line, nothing for skipped tasks.
 """
-
-# the messages a role prints are noise for a gesture and payload for a debugging session
-SHOW_ROLE_SAYINGS = os.environ.get("RANGE42_BUNDLE_OUTPUT", "") == "debug"
 
 STEP = "    \033[34m➜\033[0m "
 CHECK = "    \033[32m✓\033[0m "
@@ -142,8 +133,8 @@ class CallbackModule(CallbackBase):
         r = result._result
         if "results" in r and isinstance(r["results"], list):
             return  # a loop : each item was already handled
-        if self._from_role(result) and not SHOW_ROLE_SAYINGS:
-            return  # the role's own api dumps : kept for RANGE42_BUNDLE_OUTPUT=debug
+        if self._from_role(result):
+            return  # the role own api dumps : range42-context debug-on shows the whole log instead
         action = self._action(result)
         if action == "debug":
             self._say_debug(result)
@@ -151,7 +142,7 @@ class CallbackModule(CallbackBase):
             self._say_assert_ok(result)
 
     def v2_runner_item_on_ok(self, result):
-        if self._from_role(result) and not SHOW_ROLE_SAYINGS:
+        if self._from_role(result):
             return
         action = self._action(result)
         if action == "debug":
