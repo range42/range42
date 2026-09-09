@@ -1552,7 +1552,15 @@ _r42_firewall_bundle_run() {
     fi
 }
 
-# usage: _r42_networks_show_firewall [--json]
+# usage: _r42_networks_show_firewall [--json] [--rules]
+#
+# TWO VIEWS OF THE SAME SCENARIO, one flag apart. Without --rules, the SWITCHES : what is armed and
+# what actually filters. With --rules, the RULES of the three chains, the datacenter one, the node
+# one and the guests one, read by proxmox_firewall.scenario.show_firewall_rules.to.jsons.sh and
+# rendered by its own table, which already names the guests without a rule and the ids the node
+# does not run. The two answer different questions and neither replaces the other : a chain full of
+# accepts filters nothing while a switch is off, and an armed guest with an empty chain is a guest
+# nobody reaches. So each view points at the other.
 #
 # ONE DEVKIT, ONE RENDERER. The view is read by proxmox_firewall.scenario.show_firewall.to.jsons.sh,
 # the engine of the show_firewall family at the scenario grain (the api fast path when it answers,
@@ -1563,15 +1571,44 @@ _r42_firewall_bundle_run() {
 # on each (host, card, guest, absent, error). Per card the verdict is the devkit's : filtered when the
 # datacenter switch, the guest switch and the card flag are all on, the node switch never counts.
 _r42_networks_show_firewall() {
-    local as_json=false
+    local as_json=false as_rules=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --json) as_json=true ; shift ;;
-            *) _r42_print_fail "unknown argument: $1" >&2 ; echo "  networks-show-firewall [--json]" >&2 ; return 1 ;;
+            --json)  as_json=true ; shift ;;
+            --rules) as_rules=true ; shift ;;
+            *) _r42_print_fail "unknown argument: $1" >&2 ; echo "  networks-show-firewall [--json] [--rules]" >&2 ; return 1 ;;
         esac
     done
     local scenario
     scenario=$(_r42_active_scenario_name) || return 1
+
+    ## the rules view : the devkit renders its own three tables, this glue only frames them
+    if $as_rules ; then
+        local rules_cmd=proxmox_firewall.scenario.show_firewall_rules.to.jsons.sh
+        command -v "$rules_cmd" >/dev/null 2>&1 || {
+            _r42_print_fail "devkit not on PATH: $rules_cmd" >&2
+            echo "  the devkits are activated by sourcing their _activate.sh" >&2
+            return 1
+        }
+        if $as_json ; then
+            "$rules_cmd" --json || {
+                _r42_print_fail "the firewall rules could not be read - run it by hand to see why : ${rules_cmd} --table" >&2
+                return 1
+            }
+            return 0
+        fi
+        _r42_print_step "reading the rules of the datacenter, the node and the deployed guests of ${scenario} ..." >&2
+        local rules_out
+        rules_out=$("$rules_cmd" --table 2>/dev/null) || {
+            _r42_print_fail "the firewall rules could not be read - run it by hand to see why : ${rules_cmd} --table" >&2
+            return 1
+        }
+        _r42_print_section "firewall rules  (scenario: ${scenario})"
+        printf '%s\n' "$rules_out"
+        _r42_print_step "a rule grants nothing while its switch is off : range42-context networks-show-firewall"
+        echo ""
+        return 0
+    fi
     local cmd
     for cmd in proxmox_firewall.scenario.show_firewall.to.jsons.sh devkit_utils.jsons.render.to.table.sh ; do
         command -v "$cmd" >/dev/null 2>&1 || {
@@ -2957,6 +2994,7 @@ _r42_help() {
     printf "      ${D}--cidr 192.168.143.0/24      by subnet${R}\n"
     printf "      ${D}--yes                        skip the confirmation - needs an explicit scope${R}\n"
     printf "    ${N}networks-show-firewall${R}         ${D}datacenter, node and per-vm switches with card flags, read only${R}\n"
+    printf "    ${N}networks-show-firewall --rules${R} ${D}the rules of the three chains instead of the switches, read only${R}\n"
     printf "    ${N}networks-firewall-on${R}|${N}off${R}       ${D}arm / disarm the firewall, with a recap and a confirmation${R}\n"
     printf "      ${D}no --scope                   same as --scope scenario_vms${R}\n"
     printf "      ${D}--scope scenario_vms         every vm of the active scenario, switch and card flags - the host untouched${R}\n"
