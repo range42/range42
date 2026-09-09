@@ -36,9 +36,22 @@ class CallbackModule(DefaultCallbackModule):
     CALLBACK_NEEDS_WHITELIST = False
     CALLBACK_NEEDS_ENABLED = False
 
+    # HIDING A SKIPPED TASK MEANS HIDING ITS BANNER TOO, AND ANSIBLE ALREADY KNOWS HOW.
+    # The default callback prints the "TASK [...]" banner right away only while both of its
+    # display options are on ; with display_skipped_hosts off it DEFERS the banner and prints it
+    # from the result handlers, so a task every host skips prints nothing at all. Overriding the
+    # skipped methods alone left the banner behind, and a role full of conditional includes then
+    # showed a wall of empty banners. The option is forced here rather than asked for as a line in
+    # ansible.cfg, so the whole behaviour of the toggle lives in the plugin the toggle enables.
+    def get_option(self, option, hostvars=None):
+        if option == "display_skipped_hosts":
+            return False
+        return super().get_option(option, hostvars=hostvars)
+
+    # belt and braces : with the option off the default already prints nothing for these two,
+    # and they keep the promise of the name even if the option ever comes back on.
     def v2_runner_on_skipped(self, result):
-        # attempt to overwrite the method to avoid printing skipped task.
         return
 
     def v2_runner_item_on_skipped(self, result):
-        pass
+        return
