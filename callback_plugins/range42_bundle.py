@@ -7,9 +7,19 @@
 # noise is. Whatever this callback does not recognise in a failure is dumped as json, so a new
 # kind of error is loud rather than silent.
 #
+# WHAT THE BUNDLE SAYS IS AT THE LEVEL OF THE PLAY, NOT OF A ROLE. The proxmox_controller role
+# prints a debug of its whole api answer after nearly every action, ninety three of them and none
+# under a condition : left in, they bury the four sentences the bundle wrote for the operator. So a
+# message coming from a role is kept for the debug level, while a FAILURE coming from a role is
+# always printed, wherever it happens.
+#
+# THREE LEVELS, one variable, read in the shell that launches the gesture :
+#   RANGE42_BUNDLE_OUTPUT unset or curated   what the bundle says, plus every failure
+#   RANGE42_BUNDLE_OUTPUT=debug              the same, plus the messages the roles print
+#   RANGE42_BUNDLE_OUTPUT=full               the plain ansible output, this callback is not used
+#
 # Enabled per run by the runner, never in ansible.cfg :
 #   ANSIBLE_STDOUT_CALLBACK=range42_bundle ANSIBLE_CALLBACK_PLUGINS=<this directory> ansible-playbook ...
-# RANGE42_BUNDLE_OUTPUT=full in the shell keeps the default ansible output for a debugging session.
 #
 # The glyphs and colours are the ones of range42-context (step, check, fail), so a bundle's words
 # read like the lines of the command that launched it.
@@ -17,6 +27,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from ansible.plugins.callback import CallbackBase
 
@@ -26,10 +37,15 @@ DOCUMENTATION = """
     short_description: prints what a bundle says and every failure, nothing else
     description:
       - Meant for the bundles that range42-context launches from the shell.
-      - Prints the messages of the debug tasks, the success message of the asserts, and every
-        failed task, failed loop item, unreachable host or play without host, in full.
+      - Prints the messages of the debug tasks of the play, the success message of its asserts,
+        and every failed task, failed loop item, unreachable host or play without host, in full.
+      - Keeps the messages printed by the roles for RANGE42_BUNDLE_OUTPUT=debug ; a failure in a
+        role is always printed.
       - Prints no task list, no ok or changed line, nothing for skipped tasks.
 """
+
+# the messages a role prints are noise for a gesture and payload for a debugging session
+SHOW_ROLE_SAYINGS = os.environ.get("RANGE42_BUNDLE_OUTPUT", "") == "debug"
 
 STEP = "    \033[34m➜\033[0m "
 CHECK = "    \033[32m✓\033[0m "
@@ -54,6 +70,11 @@ class CallbackModule(CallbackBase):
     @staticmethod
     def _name(result):
         return (result._task.get_name() or "").strip()
+
+    @staticmethod
+    def _from_role(result):
+        """A task of a role, as opposed to a task the bundle itself wrote in its play."""
+        return getattr(result._task, "_role", None) is not None
 
     @staticmethod
     def _label(result):
@@ -121,6 +142,8 @@ class CallbackModule(CallbackBase):
         r = result._result
         if "results" in r and isinstance(r["results"], list):
             return  # a loop : each item was already handled
+        if self._from_role(result) and not SHOW_ROLE_SAYINGS:
+            return  # the role's own api dumps : kept for RANGE42_BUNDLE_OUTPUT=debug
         action = self._action(result)
         if action == "debug":
             self._say_debug(result)
@@ -128,6 +151,8 @@ class CallbackModule(CallbackBase):
             self._say_assert_ok(result)
 
     def v2_runner_item_on_ok(self, result):
+        if self._from_role(result) and not SHOW_ROLE_SAYINGS:
+            return
         action = self._action(result)
         if action == "debug":
             self._say_debug(result)

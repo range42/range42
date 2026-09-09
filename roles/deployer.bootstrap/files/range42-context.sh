@@ -1498,11 +1498,16 @@ _r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
 # usage: _r42_firewall_bundle_run <bundle name> [extra ansible-playbook args]
 #
 # CURATED OUTPUT. The bundle runs under the stdout callback range42_bundle of the range42 clone
-# (callback_plugins/), which prints what the bundle says (its debug messages, the verdicts of its
-# asserts) and every failure in full, and nothing else : no task list, no ok/changed lines, no
-# skipped. The callback is enabled for this run only, never in ansible.cfg, so site.yml and the
-# deploys keep the default output. RANGE42_BUNDLE_OUTPUT=full in the shell keeps the default
-# output for a debugging session ; a clone without the plugin falls back to it with a warning.
+# (callback_plugins/), which prints what the bundle says (the debug messages of its play, the
+# verdicts of its asserts) and every failure in full, and nothing else : no task list, no
+# ok/changed lines, no skipped, and none of the api dumps the roles print after every action.
+# The callback is enabled for this run only, never in ansible.cfg, so site.yml and the deploys
+# keep the default output ; a clone without the plugin falls back to it with a warning.
+#
+# THREE LEVELS, one variable :
+#   (unset) or curated   what the bundle says, plus every failure
+#   debug                the same, plus the messages the roles print
+#   full                 the plain ansible output, the callback is not used
 _r42_firewall_bundle_run() {
     local name="$1" ; shift
     local cfg="${RANGE42_ACTIVE_CONFIG_DIR:-}"
@@ -1526,7 +1531,9 @@ _r42_firewall_bundle_run() {
         _r42_print_warning "curated output unavailable (${plugins}/range42_bundle.py not found) - full ansible output follows" >&2
         ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
     else
-        ANSIBLE_STDOUT_CALLBACK=range42_bundle ANSIBLE_CALLBACK_PLUGINS="$plugins" \
+        ## the level is passed explicitly : the callback reads it in the environment of the run
+        RANGE42_BUNDLE_OUTPUT="${RANGE42_BUNDLE_OUTPUT:-curated}" \
+          ANSIBLE_STDOUT_CALLBACK=range42_bundle ANSIBLE_CALLBACK_PLUGINS="$plugins" \
           ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
     fi
 }
