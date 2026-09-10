@@ -1604,7 +1604,11 @@ _r42_networks_show_firewall() {
         vm_ids)       grain="vm_ids" ;;
         node)         grain="proxmox_node" ;;
         dc|all)       grain="datacenter" ;;
-        *) _r42_print_fail "unknown scope: ${scope}" >&2 ; echo "$usage" >&2 ; return 1 ;;
+        *[!0-9]*) _r42_print_fail "unknown scope: ${scope}" >&2 ; echo "$usage" >&2 ; return 1 ;;
+        ## --scope <id>, the form the arming pair has always taken
+        *)
+            [[ -z "$pos_id" ]] || { _r42_print_fail "two ids given : --scope ${scope} and ${pos_id}" >&2 ; return 1 ; }
+            grain="vm_id" ; pos_id="$scope" ; scope="vm_id" ;;
     esac
     if [[ "$scope" == "vm_id" && -z "$pos_id" ]]; then
         _r42_print_fail "--scope vm_id needs an id : networks-show-firewall --scope vm_id 2001" >&2
