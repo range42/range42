@@ -1427,21 +1427,31 @@ _r42_networks_internet_toggle() {
     proxmox_network.datacenter.apply_sdn.to.jsons.sh --json >/dev/null || {
         _r42_print_fail "the apply failed - the declaration is set but the live rules are not reconciled" ; return 1 ; }
 
-    ## 3. reconcile the live rules of EVERY network, not only the scope. The apply above replays
-    ## every post-up hook, so it adds a rule to each network - measured, +1 from the vnet hook and
-    ## +1 more from a legacy vmbr hook. Cleaning only the scope is what grows a subnet to 152
-    ## rules. Out of scope, the wanted count is the network's OWN declaration, so nothing changes
-    ## for them beyond dropping the surplus. And the primitive only ever DELETES, never creates :
-    ## it cannot cut a network that is meant to be open.
+    ## 3. reconcile the live rules. THE SCOPE TAKES THE ASKED STATE, EVERY OTHER NETWORK IS PUT
+    ## BACK TO THE COUNT IT CARRIED BEFORE this command ran. The apply above replays every post-up
+    ## hook, so it appends a rule to each network whether we asked about it or not : putting the
+    ## others back to their previous count removes exactly that, and nothing else.
+    ## NOT their declaration. Reconciling a network against its declaration alters a network this
+    ## command was not aimed at - measured on the bench the 2026-09-10, where a gesture on net143
+    ## took net150 from three live rules down to one. `$all` is read BEFORE the apply, so .rules is
+    ## the count from before, which is precisely what has to come back.
     ## Networks with no declared subnet are left alone - nothing is declared, so nothing to
-    ## normalise, and their live rules may belong to a pre-SDN deployment.
-    local recon
+    ## normalise, and their live rules may belong to a pre-SDN deployment. A network of MIXED
+    ## origin is left alone too, and named : the primitive deletes by source network, so on a
+    ## network carrying both an SDN SNAT and a legacy MASQUERADE it could remove the wrong rule.
+    local recon mixed_out
+    mixed_out=$(printf '%s\n' "$all" | jq -r --argjson n "$names" '.[]
+      | select((.vnet as $v | $n | index($v)) | not)
+      | select(.origin == "mixed") | .vnet' | paste -sd ' ' -)
+    if [[ -n "$mixed_out" ]]; then
+        _r42_print_warning "left untouched, their live rules have more than one origin : ${mixed_out}"
+        _r42_print_warning "read them with : proxmox_network.datacenter.list_snat_rules.to.jsons.sh"
+    fi
     recon=$(printf '%s\n' "$all" | jq -c --arg w "$want" --argjson n "$names" '.[]
-      | select((.vnet as $v | $n | index($v)) or .nat != "no-subnet")
+      | select((.vnet as $v | $n | index($v)) or (.nat != "no-subnet" and .origin != "mixed"))
       | { sdn_subnet_cidr: .cidr,
-          sdn_snat_want: (if   (.vnet as $v | $n | index($v)) then $w
-                          elif .nat == "on"                   then "1"
-                          else                                     "0" end) }')
+          sdn_snat_want: (if (.vnet as $v | $n | index($v)) then $w
+                          else (.rules | tostring) end) }')
     _r42_print_step "reconciling the live rules on $(printf '%s\n' "$recon" | grep -c .) network(s) ..."
     printf '%s\n' "$recon" \
       | proxmox_network.sdn_subnet_cidr.delete_extra_snat_rules.to.jsons.sh --json >/dev/null || {
