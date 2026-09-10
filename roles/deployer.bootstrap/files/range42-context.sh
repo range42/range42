@@ -1552,7 +1552,11 @@ _r42_firewall_bundle_run() {
     fi
 }
 
-# usage: _r42_networks_show_firewall [--json] [--rules]
+# usage: _r42_networks_show_firewall [--json] [--rules] [--scope scenario|vm_id <id>|vm_ids|node|dc|all]
+#
+# THE SIX SCOPES, the same words as the arming pair. The scope chooses the GUESTS : the datacenter
+# and node levels are ALWAYS reported, which is why the pair's `proxmox` has no counterpart here.
+# `dc` and `all` are the same thing while a workspace has one node.
 #
 # TWO VIEWS OF THE SAME SCENARIO, one flag apart. Without --rules, the SWITCHES : what is armed and
 # what actually filters. With --rules, the RULES of the three chains, the datacenter one, the node
@@ -1571,46 +1575,88 @@ _r42_firewall_bundle_run() {
 # on each (host, card, guest, absent, error). Per card the verdict is the devkit's : filtered when the
 # datacenter switch, the guest switch and the card flag are all on, the node switch never counts.
 _r42_networks_show_firewall() {
-    local as_json=false as_rules=false
+    local as_json=false as_rules=false scope="" pos_id="" usage
+    usage="  networks-show-firewall [--json] [--rules] [--scope scenario|vm_id <id>|vm_ids|node|dc|all]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json)  as_json=true ; shift ;;
             --rules) as_rules=true ; shift ;;
-            *) _r42_print_fail "unknown argument: $1" >&2 ; echo "  networks-show-firewall [--json] [--rules]" >&2 ; return 1 ;;
+            --scope)
+                [[ -n "${2:-}" ]] || { _r42_print_fail "--scope needs a value" >&2 ; echo "$usage" >&2 ; return 1 ; }
+                [[ -z "$scope" ]] || { _r42_print_fail "--scope given twice" >&2 ; return 1 ; }
+                scope="$2" ; shift 2 ;;
+            ## an id may come bare, as the devkits accept it : networks-show-firewall 2001
+            [0-9]*)
+                [[ -z "$pos_id" ]] || { _r42_print_fail "only one vm_id may be given - pipe several ids with --scope vm_ids" >&2 ; return 1 ; }
+                pos_id="$1" ; shift ;;
+            *) _r42_print_fail "unknown argument: $1" >&2 ; echo "$usage" >&2 ; return 1 ;;
         esac
     done
+    if [[ -z "$scope" ]]; then
+        [[ -n "$pos_id" ]] && scope="vm_id" || scope="scenario"
+    fi
+    ## one envelope per grain, the segment names of the devkit repository
+    local grain
+    case "$scope" in
+        scenario)     grain="scenario" ;;
+        scenario_vms) grain="scenario" ; scope="scenario" ;;   ## the arming pair's legacy word, accepted
+        vm_id)        grain="vm_id" ;;
+        vm_ids)       grain="vm_ids" ;;
+        node)         grain="proxmox_node" ;;
+        dc|all)       grain="datacenter" ;;
+        *) _r42_print_fail "unknown scope: ${scope}" >&2 ; echo "$usage" >&2 ; return 1 ;;
+    esac
+    if [[ "$scope" == "vm_id" && -z "$pos_id" ]]; then
+        _r42_print_fail "--scope vm_id needs an id : networks-show-firewall --scope vm_id 2001" >&2
+        return 1
+    fi
+    if [[ -n "$pos_id" && "$scope" != "vm_id" ]]; then
+        _r42_print_warning "the id ${pos_id} is ignored at scope ${scope}" >&2
+        pos_id=""
+    fi
     local scenario
     scenario=$(_r42_active_scenario_name) || return 1
+    ## what the perimeter is called in the section and in the step line
+    local label
+    case "$scope" in
+        scenario) label="scenario: ${scenario}" ;;
+        vm_id)    label="vm ${pos_id}" ;;
+        vm_ids)   label="ids on stdin" ;;
+        node)     label="node : every guest" ;;
+        dc|all)   label="datacenter : every guest" ;;
+    esac
+    local dev_args=() ; [[ -n "$pos_id" ]] && dev_args=("$pos_id")
 
     ## the rules view : the devkit renders its own three tables, this glue only frames them
     if $as_rules ; then
-        local rules_cmd=proxmox_firewall.scenario.show_firewall_rules.to.jsons.sh
+        local rules_cmd="proxmox_firewall.${grain}.show_firewall_rules.to.jsons.sh"
         command -v "$rules_cmd" >/dev/null 2>&1 || {
             _r42_print_fail "devkit not on PATH: $rules_cmd" >&2
             echo "  the devkits are activated by sourcing their _activate.sh" >&2
             return 1
         }
         if $as_json ; then
-            "$rules_cmd" --json || {
+            "$rules_cmd" "${dev_args[@]}" --json || {
                 _r42_print_fail "the firewall rules could not be read - run it by hand to see why : ${rules_cmd} --table" >&2
                 return 1
             }
             return 0
         fi
-        _r42_print_step "reading the rules of the datacenter, the node and the deployed guests of ${scenario} ..." >&2
+        _r42_print_step "reading the rules of the datacenter, the node and the guests of ${label} ..." >&2
         local rules_out
-        rules_out=$("$rules_cmd" --table 2>/dev/null) || {
+        rules_out=$("$rules_cmd" "${dev_args[@]}" --table 2>/dev/null) || {
             _r42_print_fail "the firewall rules could not be read - run it by hand to see why : ${rules_cmd} --table" >&2
             return 1
         }
-        _r42_print_section "firewall rules  (scenario: ${scenario})"
+        _r42_print_section "firewall rules  (${label})"
         printf '%s\n' "$rules_out"
         _r42_print_step "a rule grants nothing while its switch is off : range42-context networks-show-firewall"
         echo ""
         return 0
     fi
+    local switches_cmd="proxmox_firewall.${grain}.show_firewall.to.jsons.sh"
     local cmd
-    for cmd in proxmox_firewall.scenario.show_firewall.to.jsons.sh devkit_utils.jsons.render.to.table.sh ; do
+    for cmd in "$switches_cmd" devkit_utils.jsons.render.to.table.sh ; do
         command -v "$cmd" >/dev/null 2>&1 || {
             _r42_print_fail "devkit not on PATH: $cmd" >&2
             echo "  the devkits are activated by sourcing their _activate.sh" >&2
@@ -1618,10 +1664,10 @@ _r42_networks_show_firewall() {
         }
     done
 
-    $as_json || _r42_print_step "reading the datacenter, the node and the deployed guests of ${scenario} ..." >&2
+    $as_json || _r42_print_step "reading the datacenter, the node and the guests of ${label} ..." >&2
     local view
-    view=$(proxmox_firewall.scenario.show_firewall.to.jsons.sh --json 2>/dev/null) || {
-        _r42_print_fail "the firewall view could not be read - run it by hand to see why : proxmox_firewall.scenario.show_firewall.to.jsons.sh --table" >&2
+    view=$("$switches_cmd" "${dev_args[@]}" --json 2>/dev/null) || {
+        _r42_print_fail "the firewall view could not be read - run it by hand to see why : ${switches_cmd} --table" >&2
         return 1
     }
     if $as_json ; then
@@ -1634,7 +1680,7 @@ _r42_networks_show_firewall() {
     dc=$(printf '%s\n' "$view" | jq -r 'select(.level == "host") | .datacenter_enable // "-"')
     nd=$(printf '%s\n' "$view" | jq -r 'select(.level == "host") | .node_enable // "-"')
 
-    _r42_print_section "firewall state  (scenario: ${scenario})"
+    _r42_print_section "firewall state  (${label})"
     printf "  node %s : datacenter switch %s, node switch %s\n\n" "$node" "$dc" "$nd"
 
     ## the deployed guests, templates out : one row per card ; a guest without a card gets a row of
@@ -1649,7 +1695,7 @@ _r42_networks_show_firewall() {
             {vm_id, vm_name: "?", guest_enable: "?", vm_network_device: "?", vm_network_bridge: "?", card_firewall_flag: "?", effectively_filtered: "?"}
         else empty end')
     if [[ -z "$rows" ]]; then
-        echo "  no guest of this scenario is deployed yet - the host switches above are the whole report"
+        echo "  no guest here is deployed yet - the host switches above are the whole report"
     else
         ## minimum widths : the table keeps its shape whatever the names, and the shape it always had
         printf '%s\n' "$rows" | devkit_utils.jsons.render.to.table.sh vm_id:VM_ID:5 vm_name:VM_NAME:25 guest_enable:GUEST:5 vm_network_device:CARD:7 vm_network_bridge:BRIDGE:9 card_firewall_flag:FLAG:4 effectively_filtered:FILTERED
@@ -1660,34 +1706,53 @@ _r42_networks_show_firewall() {
     done
     local missing
     missing=$(printf '%s\n' "$view" | jq -r 'select(.level == "absent") | .vm_id' | paste -sd ' ' -)
-    [[ -n "$missing" ]] && printf "\n  declared, not deployed : %s\n" "$missing"
+    ## "declared, not deployed" only means something when the ids come from the manifest ; asked
+    ## elsewhere, an absent id is simply not on this node
+    if [[ -n "$missing" ]]; then
+        if [[ "$scope" == "scenario" ]]; then
+            printf "\n  declared, not deployed : %s\n" "$missing"
+        else
+            printf "\n  not on this node : %s\n" "$missing"
+        fi
+    fi
     echo ""
 }
 
-# usage: _r42_networks_firewall_toggle on|off [--scope scenario_vms|proxmox|<vm_id>|all] [--yes]
+# usage: _r42_networks_firewall_toggle on|off [--scope scenario|proxmox|vm_id <id>|all] [--yes]
 #
 # THE SCOPE IS A FLAG, not a name : the sub-command names stay within the 22-character rule, as
-# --roles does for the internet pair. Four scopes, decided 2026-09-09 :
-#   scenario_vms   every vm of the active scenario, switch and card flags - the DEFAULT, host untouched
+# --roles does for the internet pair. The same words as the reading view :
+#   scenario       the vms of the active scenario - the DEFAULT ; `scenario_vms` still accepted
 #   proxmox        the host : datacenter and node switches, management accepts first
-#   <vm_id>        one vm of the active scenario, by id - refused for any id the manifest does not declare
-#   all            proxmox then scenario_vms
-# THE ORDER is the one the bundles argue and the campaign of 2026-09-03 measured : arming goes host
-# first (management accepts, datacenter switch, node switch) then guests ; disarming goes datacenter
-# first, which stops every filtering on the host at once, then node, then guests, so that a later
-# arming of the host does not bring guest chains back alive unnoticed.
+#   vm_id <id>     one vm of the active scenario, by id - refused for any id the manifest does not
+#                  declare ; the legacy form --scope <id> is still accepted
+#   all            the host plus every vm this node runs - DISARMING ONLY
+# ARMING with `scenario` also raises the host switches when they are off, since a guest filters only
+# when the datacenter switch, its own switch and the card flag are all on. DISARMING never lowers
+# them : the datacenter switch is the master switch of the host, so lowering it would stop the
+# filtering of every other scenario too - that is --scope proxmox, an explicit gesture.
+# ARMING with `all` is refused : a guest whose chain is empty would filter and lose its ssh.
+#
+# THE ORDER inside a gesture is the one the bundles argue and the campaign of 2026-09-03 measured :
+# arming goes host first (management accepts, datacenter switch, node switch) then guests ;
+# disarming goes datacenter first, then node, then guests, so that a later arming of the host does
+# not bring guest chains back alive unnoticed.
 # --yes needs an explicit --scope, the rule the internet pair already applies : nothing consequential
 # runs unattended on an implicit scope.
 _r42_networks_firewall_toggle() {
     local action="$1" ; shift
-    local assume_no_ask=false scope="" usage
-    usage="  networks-firewall-${action} [--scope scenario_vms|proxmox|<vm_id>|all] [--yes]"
+    local assume_no_ask=false scope="" vm_id_target="" usage
+    usage="  networks-firewall-${action} [--scope scenario|proxmox|vm_id <id>|all] [--yes]"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --scope)
                 [[ -n "${2:-}" ]] || { _r42_print_fail "--scope needs a value" >&2 ; echo "$usage" >&2 ; return 1 ; }
                 [[ -z "$scope" ]] || { _r42_print_fail "--scope given twice" >&2 ; return 1 ; }
                 scope="$2" ; shift 2 ;;
+            ## the id of --scope vm_id <id>, written as the reading view writes it
+            [0-9]*)
+                [[ -z "$vm_id_target" ]] || { _r42_print_fail "only one vm_id may be given" >&2 ; return 1 ; }
+                vm_id_target="$1" ; shift ;;
             --yes|-y) assume_no_ask=true ; shift ;;
             *) _r42_print_fail "unknown argument: $1" >&2
                echo "$usage" >&2
@@ -1699,13 +1764,33 @@ _r42_networks_firewall_toggle() {
         echo "$usage" >&2
         return 1
     fi
-    [[ -n "$scope" ]] || scope="scenario_vms"
+    [[ -n "$scope" ]] || scope="scenario"
+    [[ "$scope" == "scenario_vms" ]] && scope="scenario"   ## the word of 2026-09-09, still accepted
     local one_vm=false
     case "$scope" in
-        scenario_vms|proxmox|all) : ;;
+        scenario|proxmox|all) : ;;
+        vm_id) one_vm=true ;;
         *[!0-9]*) _r42_print_fail "unknown scope: ${scope}" >&2 ; echo "$usage" >&2 ; return 1 ;;
-        *) one_vm=true ;;
+        *) one_vm=true ; vm_id_target="$scope" ; scope="vm_id" ;;   ## the legacy form --scope 2001
     esac
+    if $one_vm && [[ -z "$vm_id_target" ]]; then
+        _r42_print_fail "--scope vm_id needs an id : networks-firewall-${action} --scope vm_id 2001" >&2
+        echo "$usage" >&2
+        return 1
+    fi
+    if ! $one_vm && [[ -n "$vm_id_target" ]]; then
+        _r42_print_fail "the id ${vm_id_target} means nothing at scope ${scope} - use --scope vm_id ${vm_id_target}" >&2
+        return 1
+    fi
+
+    ## refused : see the header
+    if [[ "$scope" == "all" && "$action" == "on" ]]; then
+        _r42_print_fail "--scope all is disarming only : arming every guest of this node would filter guests whose chain is empty, and such a guest loses its ssh" >&2
+        _r42_print_warning "read the chains first  : networks-show-firewall --rules --scope node" >&2
+        _r42_print_warning "arm host and scenario  : networks-firewall-on --scope scenario" >&2
+        _r42_print_warning "arm the host alone     : networks-firewall-on --scope proxmox" >&2
+        return 1
+    fi
 
     local scenario ; scenario=$(_r42_active_scenario_name) || return 1
     local verb="DISARM" ; [[ "$action" == "on" ]] && verb="ARM"
@@ -1716,21 +1801,44 @@ _r42_networks_firewall_toggle() {
     if $one_vm ; then
         local manifest="${RANGE42_ACTIVE_CONFIG_DIR%/}/scenario/manifest/scenario_vms.json"
         [[ -f "$manifest" ]] || { _r42_print_fail "not found: $manifest" >&2 ; return 1 ; }
-        vm_name=$(jq -r --argjson id "$scope" '.vms[] | select(.vm_id == $id) | .vm_name' "$manifest" 2>/dev/null)
+        vm_name=$(jq -r --argjson id "$vm_id_target" '.vms[] | select(.vm_id == $id) | .vm_name' "$manifest" 2>/dev/null)
         if [[ -z "$vm_name" ]]; then
-            _r42_print_fail "vm_id ${scope} is not a vm of the active scenario (${scenario}) - this command never touches another workspace's guests" >&2
+            _r42_print_fail "vm_id ${vm_id_target} is not a vm of the active scenario (${scenario}) - this command never touches another workspace's guests" >&2
             _r42_print_warning "ids this scenario declares : $(jq -r '[.vms[].vm_id] | join(" ")' "$manifest" 2>/dev/null)" >&2
             return 1
         fi
     fi
 
+    ## scope all : the guests come from the NODE, not from a manifest, and the recap names them
+    ## before anything runs
+    local node_ids="" node_count=0 node_word="guests"
+    if [[ "$scope" == "all" ]]; then
+        node_ids=$( { printf '{}\n' | proxmox_vm.list.to.jsons.sh --json 2>/dev/null || true ; } \
+            | jq -r 'select(type == "object" and .vm_id != null and (((.vm_template // 0) | tostring) != "1")) | .vm_id' \
+            | sort -n | paste -sd ' ' -)
+        [[ -n "$node_ids" ]] || { _r42_print_fail "cannot list the guests of this node - read them with : networks-show-firewall --scope node" >&2 ; return 1 ; }
+        node_count=$(printf '%s' "$node_ids" | wc -w | tr -d ' ')
+        [[ "$node_count" -eq 1 ]] && node_word="guest" || node_word="guests"
+    fi
+
     case "$scope" in
-        scenario_vms) _r42_print_section "about to ${verb} the firewall of every vm of the active scenario (${scenario})" ;;
+        scenario)
+            if [[ "$action" == "on" ]]; then
+                _r42_print_section "about to ARM the host firewall if needed, then the firewall of every vm of the active scenario (${scenario})"
+            else
+                _r42_print_section "about to DISARM the firewall of every vm of the active scenario (${scenario}) - the host stays armed"
+            fi ;;
         proxmox)      _r42_print_section "about to ${verb} the host firewall, datacenter and node (scenario: ${scenario})" ;;
-        all)          _r42_print_section "about to ${verb} the host firewall and every vm of the active scenario (${scenario})" ;;
-        *)            _r42_print_section "about to ${verb} the firewall of one vm of the active scenario : ${scope} ${vm_name} (${scenario})" ;;
+        all)          _r42_print_section "about to DISARM the host firewall and the ${node_count} ${node_word} this node runs, other scenarios included" ;;
+        *)            _r42_print_section "about to ${verb} the firewall of one vm of the active scenario : ${vm_id_target} ${vm_name} (${scenario})" ;;
     esac
-    if [[ "$scope" == "proxmox" || "$scope" == "all" ]]; then
+    ## the host is reached by proxmox (both ways), by all (disarming) and by an ARMING of scenario
+    local touches_host=false
+    case "$scope" in
+        proxmox|all) touches_host=true ;;
+        scenario)    [[ "$action" == "on" ]] && touches_host=true ;;
+    esac
+    if $touches_host ; then
         if [[ "$action" == "on" ]]; then
             echo "  HOST : the management accepts (22, 8006) are posted on the datacenter and node chains,"
             echo "  then the datacenter switch goes on, then the node switch - the order the bundle proved"
@@ -1744,9 +1852,14 @@ _r42_networks_firewall_toggle() {
                 echo "  the moment the host is re-armed."
             fi
         fi
-        [[ "$scope" == "all" ]] && echo ""
+        [[ "$scope" == "all" || "$scope" == "scenario" ]] && echo ""
     fi
-    if [[ "$scope" == "scenario_vms" || "$scope" == "all" ]]; then
+    if [[ "$scope" == "all" ]]; then
+        echo "  GUESTS : the ${node_count} ${node_word} this node runs get their switch turned off, then their card"
+        echo "  flags, one bundle run per guest ; their ssh accepts stay posted. Templates are excluded."
+        echo "  ids : ${node_ids}"
+    fi
+    if [[ "$scope" == "scenario" ]]; then
         if [[ "$action" == "on" ]]; then
             echo "  GUESTS : every guest this scenario declares gets its ssh accept posted first, then its"
             echo "  card flags, then its switch : the order the bundle proved safe, so the way back in exists"
@@ -1759,18 +1872,42 @@ _r42_networks_firewall_toggle() {
     fi
     if $one_vm ; then
         if [[ "$action" == "on" ]]; then
-            echo "  ONE GUEST, ${scope} (${vm_name}) : its ssh accept posted first, then its card flags, then"
+            echo "  ONE GUEST, ${vm_id_target} (${vm_name}) : its ssh accept posted first, then its card flags, then"
             echo "  its switch - the order the bundle proved safe. Nothing else is touched."
         else
-            echo "  ONE GUEST, ${scope} (${vm_name}) : its switch turned off, then its card flags ; the ssh"
+            echo "  ONE GUEST, ${vm_id_target} (${vm_name}) : its switch turned off, then its card flags ; the ssh"
             echo "  accept stays posted. Nothing else is touched."
         fi
     fi
-    if [[ "$action" == "on" && "$scope" != "proxmox" && "$scope" != "all" ]]; then
+    ## THE WARNING, one form per gesture : the user must know what this reaches beyond what was asked
+    if [[ "$action" == "on" && "$scope" == "scenario" ]]; then
+        echo ""
+        _r42_print_warning "the datacenter and node switches are turned ON if they are not already : that is what makes"
+        _r42_print_warning "this scenario filter at all, since a guest filters only when the datacenter switch, its own"
+        _r42_print_warning "switch and the card flag are all on. EVERY OTHER GUEST of this host that already carries"
+        _r42_print_warning "its switch and card flag starts filtering at the same moment. Read them before :"
+        _r42_print_warning "  networks-show-firewall --scope node"
+    elif [[ "$action" == "off" && "$scope" == "scenario" ]]; then
+        echo ""
+        _r42_print_warning "the host STAYS armed : the datacenter switch is not touched, so the guests of the other"
+        _r42_print_warning "scenarios keep filtering. Lowering it is an explicit gesture, never a side effect here :"
+        _r42_print_warning "  networks-firewall-off --scope proxmox"
+    elif [[ "$action" == "off" && "$scope" == "proxmox" ]]; then
+        echo ""
+        _r42_print_warning "THIS STOPS EVERY FILTERING ON THIS HOST AT ONCE, the guests of the other scenarios included:"
+        _r42_print_warning "the datacenter switch is the master switch of the host. On a shared or public host this"
+        _r42_print_warning "exposes them all. The guests keep their own switch and card flags, so they filter again the"
+        _r42_print_warning "moment the host is re-armed."
+    elif [[ "$action" == "off" && "$scope" == "all" ]]; then
+        echo ""
+        _r42_print_warning "THIS STOPS EVERY FILTERING ON THIS HOST and disarms the ${node_count} ${node_word} the node runs, the"
+        _r42_print_warning "guests of other scenarios included. Their ssh accepts stay posted, their switches go off."
+    elif [[ "$action" == "on" ]] && $one_vm ; then
         echo ""
         _r42_print_warning "the host is not touched by this scope. A guest filters only when the datacenter switch,"
         _r42_print_warning "its own switch and the card flag are all on : with the datacenter off this arming filters"
-        _r42_print_warning "NOTHING. Read the three levels with networks-show-firewall, or use --scope all."
+        _r42_print_warning "NOTHING. Read the three levels with networks-show-firewall, or arm the host too with"
+        _r42_print_warning "  networks-firewall-on --scope scenario"
     fi
 
     if ! $assume_no_ask ; then
@@ -1791,18 +1928,29 @@ _r42_networks_firewall_toggle() {
         host_bundle="firewall.disable.datacenter_and_nodes" ; vm_bundle="firewall.disable.vms" ; one_bundle="firewall.disable.vm"
     fi
     local stopped="the run stopped - see the output above, then read the state with networks-show-firewall"
+    local host_stopped="the host step stopped, nothing was done on the guests - see the output above, then read the state with networks-show-firewall"
     case "$scope" in
         proxmox)
             _r42_firewall_bundle_run "$host_bundle" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
-        scenario_vms)
+        scenario)
+            ## ARMING goes host first then guests ; DISARMING touches the guests only and leaves the
+            ## master switch of the host up (see the header : a public host would be exposed)
+            if [[ "$action" == "on" ]]; then
+                _r42_firewall_bundle_run "$host_bundle" || { _r42_print_fail "$host_stopped" ; return 1 ; }
+                echo ""
+            fi
             _r42_firewall_bundle_run "$vm_bundle" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
         all)
-            _r42_firewall_bundle_run "$host_bundle" \
-              || { _r42_print_fail "the host step stopped, nothing was done on the guests - see the output above, then read the state with networks-show-firewall" ; return 1 ; }
-            echo ""
-            _r42_firewall_bundle_run "$vm_bundle" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
+            ## no bundle sweeps a whole node : one run of the single-guest bundle per id
+            _r42_firewall_bundle_run "$host_bundle" || { _r42_print_fail "$host_stopped" ; return 1 ; }
+            local id
+            for id in ${=node_ids} ; do
+                echo ""
+                _r42_firewall_bundle_run "$one_bundle" -e "BUNDLE_VM_ID=${id}" \
+                  || { _r42_print_fail "the guest ${id} stopped the run - the host is already disarmed, the guests before ${id} too ; read the state with networks-show-firewall --scope node" ; return 1 ; }
+            done ;;
         *)
-            _r42_firewall_bundle_run "$one_bundle" -e "BUNDLE_VM_ID=${scope}" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
+            _r42_firewall_bundle_run "$one_bundle" -e "BUNDLE_VM_ID=${vm_id_target}" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
     esac
 
     echo ""
@@ -2995,12 +3143,20 @@ _r42_help() {
     printf "      ${D}--yes                        skip the confirmation - needs an explicit scope${R}\n"
     printf "    ${N}networks-show-firewall${R}         ${D}datacenter, node and per-vm switches with card flags, read only${R}\n"
     printf "    ${N}networks-show-firewall --rules${R} ${D}the rules of the three chains instead of the switches, read only${R}\n"
+    printf "      ${D}no --scope                   same as --scope scenario, for both views above${R}\n"
+    printf "      ${D}--scope scenario             the vms this scenario declares - the default${R}\n"
+    printf "      ${D}--scope vm_id <id>           one vm of this node, by id${R}\n"
+    printf "      ${D}--scope vm_ids               a set of ids on stdin, one per line${R}\n"
+    printf "      ${D}--scope node                 every vm this node runs, templates and other scenarios included${R}\n"
+    printf "      ${D}--scope dc | all             the whole datacenter ; today the node of this workspace${R}\n"
+    printf "      ${D}--json                       one json object per line, a level on each - no table${R}\n"
     printf "    ${N}networks-firewall-on${R}|${N}off${R}       ${D}arm / disarm the firewall, with a recap and a confirmation${R}\n"
-    printf "      ${D}no --scope                   same as --scope scenario_vms${R}\n"
-    printf "      ${D}--scope scenario_vms         every vm of the active scenario, switch and card flags - the host untouched${R}\n"
-    printf "      ${D}--scope proxmox              the host : datacenter and node switches, management accepts first${R}\n"
-    printf "      ${D}--scope <vm_id>              one vm of the active scenario, by id${R}\n"
-    printf "      ${D}--scope all                  proxmox then scenario_vms ; disarming goes datacenter first${R}\n"
+    printf "      ${D}no --scope                   same as --scope scenario${R}\n"
+    printf "      ${D}--scope scenario             on : the host switches if not already on, then the vms of this${R}\n"
+    printf "      ${D}                             scenario ; off : those vms only, the host stays armed${R}\n"
+    printf "      ${D}--scope proxmox              only the host : datacenter and node switches, management accepts first${R}\n"
+    printf "      ${D}--scope vm_id <id>           only that vm of this scenario, by id${R}\n"
+    printf "      ${D}--scope all                  off only : the host, then every vm this node runs${R}\n"
     printf "      ${D}--yes                        skip the confirmation - needs an explicit --scope${R}\n"
     printf "    ${N}networks-legacy-clean${R}          ${D}migration : disarm the pre-SDN stanzas of ALL 12 provisioning bridges, once per host${R}\n"
     echo ""
