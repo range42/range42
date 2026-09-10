@@ -88,13 +88,18 @@ class CallbackModule(CallbackBase):
     def _say(self, text):
         self._display.display(text)
 
+    def _say_block(self, text):
+        """A block opens with a blank line : a run is read at a glance, not parsed."""
+        self._display.display("")
+        self._display.display(text)
+
     def _say_indented(self, value):
         for line in self._lines(value):
             self._say(INDENT + line)
 
     def _say_debug(self, result):
         r = result._result
-        self._say(STEP + self._name(result) + self._label(result))
+        self._say_block(STEP + self._name(result) + self._label(result))
         if "msg" in r:
             self._say_indented(r["msg"])
             return
@@ -105,13 +110,13 @@ class CallbackModule(CallbackBase):
     def _say_assert_ok(self, result):
         msg = result._result.get("msg")
         if isinstance(msg, str) and msg and msg != "All assertions passed":
-            self._say(CHECK + msg)
+            self._say_block(CHECK + msg)
         else:
-            self._say(CHECK + self._name(result))
+            self._say_block(CHECK + self._name(result))
 
     def _say_failure(self, result, suffix=""):
         r = result._result
-        self._say(FAIL + self._name(result) + self._label(result) + suffix)
+        self._say_block(FAIL + self._name(result) + self._label(result) + suffix)
         if r.get("msg"):
             self._say_indented(r["msg"])
         if r.get("assertion") is not None:
@@ -163,19 +168,23 @@ class CallbackModule(CallbackBase):
         self._say_failure(result, " (ignored, the run goes on)" if ignored else "")
 
     def v2_runner_on_unreachable(self, result):
-        self._say(FAIL + "%s unreachable : %s" % (result._host.get_name(), result._result.get("msg", "")))
+        self._say_block(FAIL + "%s unreachable : %s" % (result._host.get_name(), result._result.get("msg", "")))
 
     def v2_playbook_on_no_hosts_matched(self):
-        self._say(FAIL + "no host matched the play : nothing was run")
+        self._say_block(FAIL + "no host matched the play : nothing was run")
 
     def v2_playbook_on_no_hosts_remaining(self):
-        self._say(FAIL + "no host remaining : the play stops here")
+        self._say_block(FAIL + "no host remaining : the play stops here")
 
     def v2_playbook_on_stats(self, stats):
+        ## one blank line before the list, not one per host : the recap stays a block
+        first = True
         for host in sorted(stats.processed.keys()):
             s = stats.summarize(host)
             if s["failures"] or s["unreachable"]:
-                self._say(FAIL + "%s : failed=%s unreachable=%s" % (host, s["failures"], s["unreachable"]))
+                line = FAIL + "%s : failed=%s unreachable=%s" % (host, s["failures"], s["unreachable"])
+                self._say_block(line) if first else self._say(line)
+                first = False
 
     # ---- silence ----------------------------------------------------------------------------------
 
