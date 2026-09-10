@@ -1379,9 +1379,27 @@ _r42_networks_internet_toggle() {
     local names d all rows n
     names=$(printf '%s\n' "$sel" | jq -c '[.selected[].vnet]')
     d=$(_r42_networks_gather) || return 1
-    ## the whole set is kept, not only the scope : step 3 normalises every network, because the
-    ## single apply below adds a rule to all of them and only the scope would get cleaned up
-    all=$(_r42_networks_join "$d") ; rm -rf "$d"
+    ## the whole set is kept, not only the scope : step 3 has to put back every network the apply
+    ## below touches, and it touches all of them
+    all=$(_r42_networks_join "$d")
+    ## THE RESTORE MAP, and it is DATACENTER-WIDE while `all` is scenario-wide. The apply below is an
+    ## ifreload : it appends a rule to EVERY subnet of the host, including those no scenario of ours
+    ## declares. Putting them back to the count they carried before is the only way this command
+    ## leaves them as it found them - measured 2026-09-10, without this the neighbours climbed from
+    ## three live rules to four at every gesture. Both reads already happened, cluster-wide, in the
+    ## gather : nothing more is fetched here.
+    local restore
+    restore=$(jq -n --slurpfile sub "$d/subnets.jsonl" --slurpfile rul "$d/rules.jsonl" '
+      [ $sub[]
+        | select((.subnet_cidr // "") != "")
+        | .subnet_cidr as $c
+        | ([ $rul[] | select(.snat_source == $c) ]) as $r
+        | { cidr:  $c,
+            vnet:  (.subnet_vnet // "-"),
+            count: ([ $r[] | .snat_count ] | add // 0),
+            # SNAT from the SDN hook, MASQUERADE from a legacy one : two shapes on one source
+            mixed: (([ $r[] | .snat_target ] | unique | length) > 1) } ]')
+    rm -rf "$d"
     rows=$(printf '%s\n' "$all" | jq --argjson n "$names" '[ .[] | select(.vnet as $v | $n | index($v)) ]')
     n=$(printf '%s\n' "$rows" | jq 'length')
     [[ "$n" -eq 0 ]] && { _r42_print_fail "the scope selects no network" >&2 ; return 1 ; }
@@ -1439,19 +1457,21 @@ _r42_networks_internet_toggle() {
     ## normalise, and their live rules may belong to a pre-SDN deployment. A network of MIXED
     ## origin is left alone too, and named : the primitive deletes by source network, so on a
     ## network carrying both an SDN SNAT and a legacy MASQUERADE it could remove the wrong rule.
-    local recon mixed_out
-    mixed_out=$(printf '%s\n' "$all" | jq -r --argjson n "$names" '.[]
-      | select((.vnet as $v | $n | index($v)) | not)
-      | select(.origin == "mixed") | .vnet' | paste -sd ' ' -)
+    ## the cidrs of the scope : they take the asked state, every other one goes back to its count
+    local scope_cidrs recon mixed_out
+    scope_cidrs=$(printf '%s\n' "$rows" | jq -c '[ .[] | .cidr ]')
+    mixed_out=$(printf '%s\n' "$restore" | jq -r --argjson sc "$scope_cidrs" '.[]
+      | select((.cidr as $c | $sc | index($c)) | not)
+      | select(.mixed) | "\(.vnet) (\(.cidr))"' | paste -sd ', ' -)
     if [[ -n "$mixed_out" ]]; then
         _r42_print_warning "left untouched, their live rules have more than one origin : ${mixed_out}"
         _r42_print_warning "read them with : proxmox_network.datacenter.list_snat_rules.to.jsons.sh"
     fi
-    recon=$(printf '%s\n' "$all" | jq -c --arg w "$want" --argjson n "$names" '.[]
-      | select((.vnet as $v | $n | index($v)) or (.nat != "no-subnet" and .origin != "mixed"))
+    recon=$(printf '%s\n' "$restore" | jq -c --arg w "$want" --argjson sc "$scope_cidrs" '.[]
+      | select((.cidr as $c | $sc | index($c)) or (.mixed | not))
       | { sdn_subnet_cidr: .cidr,
-          sdn_snat_want: (if (.vnet as $v | $n | index($v)) then $w
-                          else (.rules | tostring) end) }')
+          sdn_snat_want: (if (.cidr as $c | $sc | index($c)) then $w
+                          else (.count | tostring) end) }')
     _r42_print_step "reconciling the live rules on $(printf '%s\n' "$recon" | grep -c .) network(s) ..."
     printf '%s\n' "$recon" \
       | proxmox_network.sdn_subnet_cidr.delete_extra_snat_rules.to.jsons.sh --json >/dev/null || {
