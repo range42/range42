@@ -1175,9 +1175,11 @@ _r42_networks_resolve() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# networks-internet-list / networks-show-sdn
+# the reads of networks-internet-on / networks-internet-off
 #
-# Three reads, each called ONCE : one devkit call is one playbook run.
+# Three reads, each called ONCE : one devkit call is one playbook run. The two READING views no
+# longer come through here - they are glue on the sdn engine of the devkit repository, further
+# down - but the arming pair still reads by itself, and reconciles from what it read.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
 # Echoes the temp directory holding the raw devkit output.
@@ -1203,7 +1205,9 @@ _r42_networks_gather() {
     proxmox_network.datacenter.list_sdn_subnets.to.jsons.sh  2>/dev/null | jq -c . > "$d/subnets.jsonl"
     proxmox_network.datacenter.list_snat_rules.to.jsons.sh   2>/dev/null | jq -c . > "$d/rules.jsonl"
     if [[ "$want_vnets" == "--with-vnets" ]]; then
-        ## only show-sdn needs it, so requiring it up front would break internet-list without it
+        ## no caller asks for it since the two reading views became glue on the sdn engine : the
+        ## arming pair needs the subnets and the rules only. The branch stays because the join
+        ## below still reads a vnets file, and an empty one would silently answer "not isolated".
         command -v proxmox_network.datacenter.list_sdn_vnets.to.jsons.sh >/dev/null 2>&1 || {
             _r42_print_fail "devkit not on PATH: proxmox_network.datacenter.list_sdn_vnets.to.jsons.sh" >&2
             rm -rf "$d" ; return 1
@@ -1261,35 +1265,98 @@ _r42_networks_join() {
         ]'
 }
 
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-show-sdn / networks-internet-list : glue on the sdn engine
+#
+# The devkit joins what the SDN DECLARES with what the node CARRIES : the vnets, the subnets and
+# the live SNAT rules, three reads and nothing else. It knows nothing of roles, of scope labels or
+# of vm counts, because those live in the scenario manifest - and it derives nothing from a bridge
+# name, so the cidr of a legacy vmbr comes from here too. This glue therefore resolves the
+# manifest, hands the engine the names AND their cidrs, and joins its own columns back by name.
+# The two tables keep the columns they have always had.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# One row per network the active scenario declares, ready for the renderer : the engine's fields
+# plus the manifest's own (roles, scope labels).
+# STDOUT IS THE RETURN VALUE : every human-facing line here must go to stderr.
+_r42_networks_sdn_view() {
+    local cmd="proxmox_network.sdn_vnets.show_sdn.to.jsons.sh"
+    local c
+    for c in "$cmd" devkit_utils.jsons.render.to.table.sh ; do
+        command -v "$c" >/dev/null 2>&1 || {
+            _r42_print_fail "devkit not on PATH: $c" >&2
+            echo "  the devkits are activated by sourcing their _activate.sh" >&2
+            return 1
+        }
+    done
+
+    ## local, so a broken context fails before any playbook run
+    local resolved
+    resolved=$(_r42_networks_resolve inventory "") || return 1
+    ## the name and the cidr are for the engine ; the roles, the labels and the count are for the
+    ## table, and the engine ignores them
+    local asked
+    asked=$(printf '%s' "$resolved" | jq -c '
+        .selected[]
+        | {
+            vnet:   .vnet,
+            cidr:   .cidr,
+            roles:  (.roles  | join(",")),
+            labels: (.labels | join(",")),
+            vms:    .vm_count
+          }')
+    [[ -n "$asked" ]] || {
+        _r42_print_fail "the active scenario declares no network" >&2
+        return 1
+    }
+
+    _r42_print_step "reading the cluster and the node ..." >&2
+    local view
+    view=$(printf '%s\n' "$asked" | "$cmd" --json 2>/dev/null) || {
+        _r42_print_fail "the sdn view could not be read - run it by hand to see why : ${cmd} --table" >&2
+        return 1
+    }
+
+    printf '%s\n' "$view" | jq -c --argjson ask "$(printf '%s\n' "$asked" | jq -s -c .)" '
+        select(.level == "network" or .level == "undeclared")
+        | . as $n
+        | ([ $ask[] | select(.vnet == $n.vnet) ] | first) as $m
+        | {
+            vnet:         $n.vnet,
+            cidr:         ($n.cidr // $m.cidr),
+            zone:         $n.zone,
+            outgoing_nat: $n.outgoing_nat,
+            snat_rules:   $n.snat_rules,
+            snat_origin:  $n.snat_origin,
+            snat_out:     (if (($n.snat_out_iface // []) | length) > 0
+                           then ($n.snat_out_iface | join(",")) else null end),
+            isolated:     $n.isolated,
+            roles:        ($m.roles  // ""),
+            labels:       ($m.labels // ""),
+            internet:     $n.internet
+          }'
+}
+
 _r42_networks_internet_list() {
-    local d out
-    d=$(_r42_networks_gather) || return 1
-    out=$(_r42_networks_join "$d") ; rm -rf "$d"
+    local rows
+    rows=$(_r42_networks_sdn_view) || return 1
 
     _r42_print_section "egress per network  (scenario: $(_r42_active_scenario_name))"
-    printf "  %-10s %-20s %-13s %-10s %-8s %-8s %-14s %s\n" \
-      "VNET" "CIDR" "OUTGOING NAT" "NAT RULES" "ORIGIN" "OUT" "ROLES" "INTERNET"
-    printf '%s\n' "$out" | jq -r '.[]
-      | [ .vnet, .cidr, .nat, (.rules|tostring), .origin, .out, .roles, .internet ] | @tsv' \
-      | while IFS=$'\t' read -r v c na ru og ou rl it ; do
-          printf "  %-10s %-20s %-13s %-10s %-8s %-8s %-14s %s\n" "$v" "$c" "$na" "$ru" "$og" "$ou" "$rl" "$it"
-        done
+    ## minimum widths : the table keeps the shape it always had, whatever the names
+    printf '%s\n' "$rows" | devkit_utils.jsons.render.to.table.sh \
+      vnet:VNET:9 cidr:CIDR:19 "outgoing_nat:OUTGOING NAT:12" "snat_rules:NAT RULES:9" \
+      snat_origin:ORIGIN:7 snat_out:OUT:7 roles:ROLES:13 internet:INTERNET
     echo ""
 }
 
 _r42_networks_show_sdn() {
-    local d out
-    d=$(_r42_networks_gather --with-vnets) || return 1
-    out=$(_r42_networks_join "$d") ; rm -rf "$d"
+    local rows
+    rows=$(_r42_networks_sdn_view) || return 1
 
     _r42_print_section "sdn state  (scenario: $(_r42_active_scenario_name))"
-    printf "  %-10s %-20s %-10s %-13s %-10s %-9s %-14s %s\n" \
-      "VNET" "CIDR" "ZONE" "OUTGOING NAT" "NAT RULES" "ISOLATED" "SCOPE LABELS" "INTERNET"
-    printf '%s\n' "$out" | jq -r '.[]
-      | [ .vnet, .cidr, .zone, .nat, (.rules|tostring), .isolated, .labels, .internet ] | @tsv' \
-      | while IFS=$'\t' read -r v c z na ru is lb it ; do
-          printf "  %-10s %-20s %-10s %-13s %-10s %-9s %-14s %s\n" "$v" "$c" "$z" "$na" "$ru" "$is" "$lb" "$it"
-        done
+    printf '%s\n' "$rows" | devkit_utils.jsons.render.to.table.sh \
+      vnet:VNET:9 cidr:CIDR:19 zone:ZONE:9 "outgoing_nat:OUTGOING NAT:12" \
+      "snat_rules:NAT RULES:9" isolated:ISOLATED:8 "labels:SCOPE LABELS:13" internet:INTERNET
     echo ""
 }
 
