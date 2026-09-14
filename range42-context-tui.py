@@ -223,13 +223,41 @@ def _list_catalog_elements():
 @dataclass
 class CommandSpec:
     id: str
-    category: str                 # workspace | operations | lifecycle | info | catalog-try
+    category: str                 # workspace | operations | lifecycle | networks | info | catalog-try
     label: str
     description: str
     dispatch: str                 # 'subprocess' | 'suspend' | 'eval-on-exit'
-    arg_ui: str = "none"          # 'none' | 'workspace-picker' | 'arg-input'
+    arg_ui: str = "none"          # 'none' | 'workspace-picker' | 'arg-input' | 'confirm'
     args_required: list = field(default_factory=list)
     args_optional: list = field(default_factory=list)
+    # the range42-context sub-command when it is not the id : two entries may run the same
+    # sub-command with different fixed arguments (the rules view is `networks-show-firewall --rules`)
+    command: str = ""
+    # arguments always passed, placed before the ones the operator gives
+    fixed_args: list = field(default_factory=list)
+    # a confirmation panel before the run (arg_ui="confirm") : the text it shows, the arguments of
+    # the default scope, the flag(s) of a narrower scope the operator may type, and the field's label
+    confirm_text: str = ""
+    default_scope: list = field(default_factory=list)
+    restrict_flag: list = field(default_factory=list)
+    restrict_label: str = ""
+
+
+def _cmd_line(cmd: CommandSpec, args: list) -> str:
+    """The exact range42-context line a command runs : its sub-command (the id, unless
+    `command` names another one), its fixed arguments, then the ones the operator gave.
+    Every runner builds its line here, so an entry with fixed arguments works on all of them."""
+    words = [cmd.command or cmd.id] + list(cmd.fixed_args) + list(args)
+    return "range42-context " + " ".join(shlex.quote(w) for w in words)
+
+
+def _confirm_args(cmd: CommandSpec, value: str) -> list:
+    """The arguments a confirmed gesture runs with : the narrower scope the operator typed (the
+    flag(s) then the value), or the default scope when the field is empty ; then --yes, because
+    the panel was the question and the shell's own question would hang in a subprocess."""
+    value = (value or "").strip()
+    scope = (list(cmd.restrict_flag) + [value]) if value else list(cmd.default_scope)
+    return scope + ["--yes"]
 
 
 COMMANDS: list = [
@@ -261,12 +289,33 @@ COMMANDS: list = [
     CommandSpec("snapshot",      "lifecycle", "snapshot",      "snapshot all scenario VMs",       "subprocess", arg_ui="arg-input", args_optional=["name"]),
     CommandSpec("snapshot-list", "lifecycle", "snapshot-list", "list snapshots of all scenario VMs", "subprocess"),
     CommandSpec("revert",        "lifecycle", "revert",        "revert all scenario VMs to a snapshot", "subprocess", arg_ui="arg-input", args_required=["name"]),
+
+    # networks : the read-only views, scenario scope, table output (no argument means the table)
+    CommandSpec("networks-show-sdn",            "networks", "networks-show-sdn",              "the networks of the scenario : zone, nat, live snat rules, internet", "subprocess"),
+    CommandSpec("networks-internet-list",       "networks", "networks-internet-list",         "which networks of the scenario reach the internet, and why",        "subprocess"),
+    CommandSpec("networks-show-firewall",       "networks", "networks-show-firewall",         "the three firewall switches of every guest of the scenario",        "subprocess"),
+    CommandSpec("networks-show-firewall-rules", "networks", "networks-show-firewall --rules", "the firewall rules of the datacenter, the node and the guests",     "subprocess", command="networks-show-firewall", fixed_args=["--rules"]),
+    # networks : the gestures that write, behind a confirmation panel (the panel is the question)
+    CommandSpec("networks-internet-on",  "networks", "networks-internet-on",  "enable outgoing nat on the networks of the scenario",      "subprocess", arg_ui="confirm",
+                default_scope=["--roles", "all"], restrict_flag=["--vnet"], restrict_label="one network name (empty = every network carrying vms)",
+                confirm_text="Enable outgoing NAT on every network of the active scenario that carries VMs. The templating network is never included by this scope. The detailed list prints in the journal when the command runs. To act on one network only, name it below."),
+    CommandSpec("networks-internet-off", "networks", "networks-internet-off", "disable outgoing nat on the networks of the scenario",     "subprocess", arg_ui="confirm",
+                default_scope=["--roles", "all"], restrict_flag=["--vnet"], restrict_label="one network name (empty = every network carrying vms)",
+                confirm_text="Disable outgoing NAT on EVERY network of the active scenario that carries VMs - the admin subnet included : wazuh pulling, the deployer VMs and apt lose their egress. The templating network is never included by this scope. To act on one network only, name it below."),
+    CommandSpec("networks-firewall-on",  "networks", "networks-firewall-on",  "arm the proxmox firewall on the guests of the scenario",    "subprocess", arg_ui="confirm",
+                default_scope=["--scope", "scenario"], restrict_flag=["--scope", "vm_id"], restrict_label="one vm_id (empty = every guest of the scenario)",
+                confirm_text="Arm the Proxmox firewall on every guest of the active scenario, as its manifest declares them. The host switches are not touched by this scope : a guest filters only when the datacenter switch, its own switch and the card flag are all on. To act on one guest only, give its vm_id below."),
+    CommandSpec("networks-firewall-off", "networks", "networks-firewall-off", "disarm the proxmox firewall on the guests of the scenario", "subprocess", arg_ui="confirm",
+                default_scope=["--scope", "scenario"], restrict_flag=["--scope", "vm_id"], restrict_label="one vm_id (empty = every guest of the scenario)",
+                confirm_text="Disarm the Proxmox firewall on every guest of the active scenario. The host stays armed. To act on one guest only, give its vm_id below."),
     # info
     CommandSpec("show-vault",     "info", "show-vault",     "show ansible vault contents (decrypted)", "subprocess"),
     CommandSpec("show-config",    "info", "show-config",    "show workspace orientation",              "subprocess"),
     CommandSpec("show-inventory", "info", "show-inventory", "show ansible inventory tree",             "subprocess"),
     # CommandSpec("ssh",            "info", "ssh",            "quick ssh to a VM by name",               "suspend", arg_ui="arg-input", args_required=["pattern"]),
-    CommandSpec("debug",          "info", "debug",          "toggle verbose ansible output",           "subprocess"),
+    CommandSpec("debug",          "info", "debug",          "say which ansible output is active (readable or full log)", "subprocess"),
+    CommandSpec("debug-on",       "info", "debug-on",       "switch to the full ansible log",                            "subprocess"),
+    CommandSpec("debug-off",      "info", "debug-off",      "switch back to the readable output (the default)",          "subprocess"),
     # CommandSpec("help",           "info", "help",           "show range42-context help",               "subprocess"),
     # catalog-try
     CommandSpec("catalog-try",             "catalog-try", "catalog-try",             "deploy + smoke-check a catalog element", "suspend", arg_ui="catalog-picker", args_required=["path"]),
@@ -274,7 +323,7 @@ COMMANDS: list = [
     CommandSpec("catalog-try-list-admin",  "catalog-try", "catalog-try-list-admin",  "list catalog-try elements (admin only)", "subprocess"),
 ]
 
-CATEGORY_ORDER = ["workspace", "operations", "lifecycle", "info", "catalog-try"]
+CATEGORY_ORDER = ["workspace", "operations", "lifecycle", "networks", "info", "catalog-try"]
 
 
 # ── workspace picker helpers ──────────────────────────────────────────────────
@@ -734,11 +783,11 @@ class ArgInputScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         if self._required:
             arg = self._required[0]
-            title = f"range42-context {self.cmd.id}  -  enter {arg} (required)"
+            title = f"range42-context {self.cmd.command or self.cmd.id}  -  enter {arg} (required)"
             placeholder = arg
         else:
             arg = self._optional[0] if self._optional else "args"
-            title = f"range42-context {self.cmd.id}  -  enter {arg} (optional, leave blank to skip)"
+            title = f"range42-context {self.cmd.command or self.cmd.id}  -  enter {arg} (optional, leave blank to skip)"
             placeholder = arg
         with Vertical(id="arg-container"):
             yield Static(title, id="arg-title")
@@ -755,6 +804,116 @@ class ArgInputScreen(ModalScreen):
             # required arg empty -> keep modal open, no-op
             return
         self.dismiss(value)
+
+    def action_back(self) -> None:
+        self.dismiss(None)
+
+
+# ── confirm modal (the gestures that write : the panel is the question) ───────
+class ConfirmScreen(ModalScreen):
+    """A confirmation panel for a gesture that writes. It shows the text the entry declares
+    (what the shell says at its own `proceed ?` question), an optional field to narrow the
+    scope, and the exact command line that will run. Yes runs it, No or Esc runs nothing.
+    The command then runs with --yes : this panel is the question, and the shell's question
+    would hang in a subprocess. No letter shortcut : the field takes letters."""
+
+    BINDINGS = [
+        Binding("escape", "back", "cancel"),
+    ]
+
+    DEFAULT_CSS = """
+    ConfirmScreen {
+        align: center middle;
+    }
+
+    #confirm-container {
+        width: 80%;
+        height: auto;
+        border: heavy $warning;
+        padding: 1 2;
+    }
+
+    #confirm-title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+
+    #confirm-text {
+        margin-bottom: 1;
+    }
+
+    #confirm-preview {
+        color: $foreground 70%;
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
+    #confirm-buttons {
+        height: auto;
+        align-horizontal: right;
+    }
+
+    #confirm-buttons Button {
+        margin-left: 2;
+    }
+
+    #confirm-hint {
+        color: $foreground 60%;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, cmd: CommandSpec):
+        super().__init__()
+        self.cmd = cmd
+
+    def _value(self) -> str:
+        if not self.cmd.restrict_flag:
+            return ""
+        try:
+            return self.query_one("#confirm-input", Input).value
+        except Exception:
+            return ""
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-container"):
+            yield Static(f"range42-context {self.cmd.command or self.cmd.id}  -  confirm", id="confirm-title")
+            yield Static(self.cmd.confirm_text, id="confirm-text")
+            if self.cmd.restrict_flag:
+                yield Input(placeholder=self.cmd.restrict_label or "restrict to (empty = the default scope)", id="confirm-input")
+            yield Static("", id="confirm-preview")
+            with Horizontal(id="confirm-buttons"):
+                yield Button("no", id="btn-no", variant="default")
+                yield Button("yes", id="btn-yes", variant="warning")
+            yield Static("Enter in the field  ->  the yes button      Esc  cancel", id="confirm-hint")
+
+    def on_mount(self) -> None:
+        self._refresh_preview()
+        if self.cmd.restrict_flag:
+            self.query_one("#confirm-input", Input).focus()
+
+    def _refresh_preview(self) -> None:
+        # a literal Text, never markup : a `[` typed in the field must show, not be parsed
+        self.query_one("#confirm-preview", Static).update(Text(_cmd_line(self.cmd, _confirm_args(self.cmd, self._value()))))
+
+    @on(Input.Changed, "#confirm-input")
+    def _on_value_changed(self, event: Input.Changed) -> None:
+        self._refresh_preview()
+
+    @on(Input.Submitted, "#confirm-input")
+    def _on_value_submitted(self, event: Input.Submitted) -> None:
+        # Enter in the field does not confirm : it hands the focus to the yes button, so that
+        # confirming is always a deliberate second step, on a button that says what it does
+        self.query_one("#btn-yes", Button).focus()
+
+    @on(Button.Pressed, "#btn-yes")
+    def _on_yes(self, event: Button.Pressed) -> None:
+        self.dismiss(_confirm_args(self.cmd, self._value()))
+
+    @on(Button.Pressed, "#btn-no")
+    def _on_no(self, event: Button.Pressed) -> None:
+        self.dismiss(None)
 
     def action_back(self) -> None:
         self.dismiss(None)
@@ -1227,6 +1386,14 @@ class ContextTUI(App):
                 self._run_command(cmd, args)
             self.push_screen(DeployOptionsScreen(scenario_name, features, defaults), _then)
             return
+        # confirm panel for the gestures that write : the panel is the question, the command gets --yes
+        if cmd.arg_ui == "confirm":
+            def _then(args):
+                if args is None:
+                    return  # user cancelled
+                self._run_command(cmd, args)
+            self.push_screen(ConfirmScreen(cmd), _then)
+            return
         # no-arg dispatch
         self._run_command(cmd, [])
 
@@ -1278,8 +1445,7 @@ class ContextTUI(App):
             # `use` never reaches here (its picker writes the sentinel itself). Any
             # other eval-on-exit command runs verbatim in the parent shell : the zsh
             # wrapper evals the sentinel on exit code 42, then re-launches the TUI.
-            quoted_args = " ".join(shlex.quote(a) for a in args)
-            payload = f"range42-context {cmd.id} {quoted_args}".strip() + "\n"
+            payload = _cmd_line(cmd, args) + "\n"
             try:
                 _sentinel_path().write_text(payload)
             except OSError as exc:
@@ -1293,8 +1459,7 @@ class ContextTUI(App):
             self._log_line("[warn] another command is already running. Ctrl+K to cancel.")
             return
         self._log_separator()
-        quoted_args = " ".join(shlex.quote(a) for a in args)
-        full_cmd = f"range42-context {cmd.id} {quoted_args}".strip()
+        full_cmd = _cmd_line(cmd, args)
         self._log_workspace_status()
         self._log_line(f"> running: {full_cmd}")
         self._spawn_subprocess(cmd, args, full_cmd)
@@ -1319,8 +1484,7 @@ class ContextTUI(App):
             "CLICOLOR_FORCE": "1",
             "PY_COLORS": "1",
         }
-        quoted_args = " ".join(shlex.quote(a) for a in args)
-        shell_cmd = f"source ~/.zshrc 2>/dev/null; range42-context {cmd.id} {quoted_args}".strip()
+        shell_cmd = "source ~/.zshrc 2>/dev/null; " + _cmd_line(cmd, args)
         start = time.monotonic()
         # Provide a pty as stdin so `[ -t 0 ]` returns true in the subprocess.
         # devkit shim `devkit_proxmox.STDIN.stdin_or_jsons.to.jsons.sh` branches
@@ -1374,14 +1538,13 @@ class ContextTUI(App):
 
     # ─── suspended runner (interactive path) ─────────────────────────────────
     def _run_suspended(self, cmd: CommandSpec, args: list) -> None:
-        quoted_args = " ".join(shlex.quote(a) for a in args)
-        full_cmd = f"range42-context {cmd.id} {quoted_args}".strip()
+        full_cmd = _cmd_line(cmd, args)
         self._log_separator()
         self._log_workspace_status()
         self._log_line(f"> suspending TUI for: {full_cmd}")
         # same RANGE42_QUIET + .zshrc-source pattern as _spawn_subprocess
         env = {**os.environ, "RANGE42_QUIET": "1"}
-        shell_cmd = f"source ~/.zshrc 2>/dev/null; range42-context {cmd.id} {quoted_args}".strip()
+        shell_cmd = "source ~/.zshrc 2>/dev/null; " + _cmd_line(cmd, args)
         with self.suspend():
             try:
                 rc = subprocess.run(["zsh", "-c", shell_cmd], check=False, env=env).returncode
