@@ -125,7 +125,7 @@ from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import (
     Header, Footer, OptionList, RichLog, Input, ListView, ListItem, Label, Static,
-    Button,
+    Button, Select,
 )
 from textual.widgets.option_list import Option
 
@@ -235,12 +235,15 @@ class CommandSpec:
     command: str = ""
     # arguments always passed, placed before the ones the operator gives
     fixed_args: list = field(default_factory=list)
-    # a confirmation panel before the run (arg_ui="confirm") : the text it shows, the arguments of
-    # the default scope, the flag(s) of a narrower scope the operator may type, and the field's label
+    # a confirmation panel before the run (arg_ui="confirm") : the text it shows, the default scope
+    # and how the select names it, extra fixed choices, and the choices read from the active
+    # scenario's manifest (its networks or its guests) with the arguments they map to
     confirm_text: str = ""
-    default_scope: list = field(default_factory=list)
-    restrict_flag: list = field(default_factory=list)
-    restrict_label: str = ""
+    default_scope: list = field(default_factory=list)      # the arguments of the default scope
+    default_label: str = ""                                # how the select names that default
+    scope_static: list = field(default_factory=list)       # extra fixed choices : [label, [args]] pairs
+    scope_from: str = ""                                   # "" | "networks" | "guests" : read from the manifest
+    scope_from_args: list = field(default_factory=list)    # their arguments, "{}" standing for the bridge or vm_id
 
 
 def _cmd_line(cmd: CommandSpec, args: list) -> str:
@@ -251,13 +254,68 @@ def _cmd_line(cmd: CommandSpec, args: list) -> str:
     return "range42-context " + " ".join(shlex.quote(w) for w in words)
 
 
-def _confirm_args(cmd: CommandSpec, value: str) -> list:
-    """The arguments a confirmed gesture runs with : the narrower scope the operator typed (the
-    flag(s) then the value), or the default scope when the field is empty ; then --yes, because
-    the panel was the question and the shell's own question would hang in a subprocess."""
-    value = (value or "").strip()
-    scope = (list(cmd.restrict_flag) + [value]) if value else list(cmd.default_scope)
-    return scope + ["--yes"]
+def _confirm_args(cmd: CommandSpec, scope_args: list) -> list:
+    """The arguments a confirmed gesture runs with : the scope the operator selected (the default
+    one when nothing else was picked), then --yes, because the panel was the question and the
+    shell's own question would hang in a subprocess."""
+    return list(scope_args or cmd.default_scope) + ["--yes"]
+
+
+def _load_active_scenario_manifest() -> dict:
+    """Read $RANGE42_ACTIVE_WORKSPACE/scenario/manifest/scenario_vms.json from disk, the way the
+    deploy options read feature_flags.yml next to it (under CONFIG_BASE_DIR, the module's
+    constant read once from RANGE42_CONFIG_BASE_DIR like the shell does). Returns
+    {"networks": [(bridge, roles, vm_count)], "guests": [(vm_id, vm_name)]} ; on any failure both
+    lists are empty and the panel offers its default scope only. The networks are the bridges the
+    scenario's VMs sit on, as the manifest states them : a bridge only templates use is not offered
+    (the shell's `all` never selects it either), and no cidr is derived here, the convention behind
+    it belongs to the shell."""
+    empty = {"networks": [], "guests": []}
+    workspace = os.environ.get("RANGE42_ACTIVE_WORKSPACE", "").strip()
+    if not workspace:
+        return empty
+    path = CONFIG_BASE_DIR / workspace / "scenario" / "manifest" / "scenario_vms.json"
+    try:
+        with open(path, "r") as fh:
+            data = json.load(fh) or {}
+    except Exception:
+        return empty
+    vms = [v for v in (data.get("vms") or []) if isinstance(v, dict)]
+    by_bridge = {}
+    for v in vms:
+        bridge = str(v.get("bridge") or "").strip()
+        if not bridge:
+            continue
+        roles, count = by_bridge.get(bridge, (set(), 0))
+        if v.get("role"):
+            roles.add(str(v["role"]))
+        by_bridge[bridge] = (roles, count + 1)
+    networks = [(b, " ".join(sorted(r)), n) for b, (r, n) in sorted(by_bridge.items())]
+    guests = sorted(
+        ((int(v["vm_id"]), str(v.get("vm_name") or "")) for v in vms if str(v.get("vm_id", "")).isdigit()),
+        key=lambda g: g[0],
+    )
+    return {"networks": networks, "guests": guests}
+
+
+def _scope_choices(cmd: CommandSpec) -> list:
+    """The choices the confirmation panel offers for a gesture, as (label, key, args) : the default
+    scope first, then the fixed extra choices the entry declares, then those read from the active
+    scenario's manifest. Every choice is a scope the shell accepts as it is ; the shell still decides."""
+    choices = [(cmd.default_label or "the default scope", "default", list(cmd.default_scope))]
+    for label, args in cmd.scope_static:
+        choices.append((label, " ".join(args), list(args)))
+    if cmd.scope_from:
+        manifest = _load_active_scenario_manifest()
+        if cmd.scope_from == "networks":
+            for bridge, roles, count in manifest["networks"]:
+                choices.append((f"{bridge}   {roles or '-'}   {count} vm(s)", bridge,
+                                [a.replace("{}", bridge) for a in cmd.scope_from_args]))
+        elif cmd.scope_from == "guests":
+            for vm_id, name in manifest["guests"]:
+                choices.append((f"vm {vm_id}   {name}", str(vm_id),
+                                [a.replace("{}", str(vm_id)) for a in cmd.scope_from_args]))
+    return choices
 
 
 COMMANDS: list = [
@@ -297,17 +355,24 @@ COMMANDS: list = [
     CommandSpec("networks-show-firewall-rules", "networks", "networks-show-firewall --rules", "the firewall rules of the datacenter, the node and the guests",     "subprocess", command="networks-show-firewall", fixed_args=["--rules"]),
     # networks : the gestures that write, behind a confirmation panel (the panel is the question)
     CommandSpec("networks-internet-on",  "networks", "networks-internet-on",  "enable outgoing nat on the networks of the scenario",      "subprocess", arg_ui="confirm",
-                default_scope=["--roles", "all"], restrict_flag=["--vnet"], restrict_label="one network name (empty = every network carrying vms)",
-                confirm_text="Enable outgoing NAT on every network of the active scenario that carries VMs. The templating network is never included by this scope. The detailed list prints in the journal when the command runs. To act on one network only, name it below."),
+                default_scope=["--roles", "all"], default_label="every network of the scenario that carries vms (never the templating one)",
+                scope_from="networks", scope_from_args=["--vnet", "{}"],
+                confirm_text="Enable outgoing NAT on every network of the active scenario that carries VMs. The templating network is never included by this scope. The detailed list prints in the journal when the command runs. To act on one network only, pick it in the list."),
     CommandSpec("networks-internet-off", "networks", "networks-internet-off", "disable outgoing nat on the networks of the scenario",     "subprocess", arg_ui="confirm",
-                default_scope=["--roles", "all"], restrict_flag=["--vnet"], restrict_label="one network name (empty = every network carrying vms)",
-                confirm_text="Disable outgoing NAT on EVERY network of the active scenario that carries VMs - the admin subnet included : wazuh pulling, the deployer VMs and apt lose their egress. The templating network is never included by this scope. To act on one network only, name it below."),
+                default_scope=["--roles", "all"], default_label="every network of the scenario that carries vms (never the templating one)",
+                scope_from="networks", scope_from_args=["--vnet", "{}"],
+                confirm_text="Disable outgoing NAT on EVERY network of the active scenario that carries VMs - the admin subnet included : wazuh pulling, the deployer VMs and apt lose their egress. The templating network is never included by this scope. To act on one network only, pick it in the list."),
     CommandSpec("networks-firewall-on",  "networks", "networks-firewall-on",  "arm the proxmox firewall on the guests of the scenario",    "subprocess", arg_ui="confirm",
-                default_scope=["--scope", "scenario"], restrict_flag=["--scope", "vm_id"], restrict_label="one vm_id (empty = every guest of the scenario)",
-                confirm_text="Arm the Proxmox firewall on every guest of the active scenario, as its manifest declares them. The host switches are not touched by this scope : a guest filters only when the datacenter switch, its own switch and the card flag are all on. To act on one guest only, give its vm_id below."),
+                default_scope=["--scope", "scenario"], default_label="every vm of the scenario, and the host switches if they are off",
+                scope_static=[["the host only : the datacenter and node switches", ["--scope", "proxmox"]]],
+                scope_from="guests", scope_from_args=["--scope", "vm_id", "{}"],
+                confirm_text="Arm the Proxmox firewall on every guest of the active scenario, as its manifest declares them, and the host switches first if they are off. A guest filters only when the datacenter switch, its own switch and the card flag are all on. To act on one guest only, or on the host only, pick it in the list."),
     CommandSpec("networks-firewall-off", "networks", "networks-firewall-off", "disarm the proxmox firewall on the guests of the scenario", "subprocess", arg_ui="confirm",
-                default_scope=["--scope", "scenario"], restrict_flag=["--scope", "vm_id"], restrict_label="one vm_id (empty = every guest of the scenario)",
-                confirm_text="Disarm the Proxmox firewall on every guest of the active scenario. The host stays armed. To act on one guest only, give its vm_id below."),
+                default_scope=["--scope", "scenario"], default_label="every vm of the scenario, the host stays armed",
+                scope_static=[["the host only : the datacenter and node switches", ["--scope", "proxmox"]],
+                              ["EVERYTHING this node runs : the host and every guest, other scenarios included", ["--scope", "all"]]],
+                scope_from="guests", scope_from_args=["--scope", "vm_id", "{}"],
+                confirm_text="Disarm the Proxmox firewall on every guest of the active scenario. The host stays armed. To act on one guest only, on the host only, or on everything this node runs, pick it in the list."),
     # info
     CommandSpec("show-vault",     "info", "show-vault",     "show ansible vault contents (decrypted)", "subprocess"),
     CommandSpec("show-config",    "info", "show-config",    "show workspace orientation",              "subprocess"),
@@ -812,10 +877,11 @@ class ArgInputScreen(ModalScreen):
 # ── confirm modal (the gestures that write : the panel is the question) ───────
 class ConfirmScreen(ModalScreen):
     """A confirmation panel for a gesture that writes. It shows the text the entry declares
-    (what the shell says at its own `proceed ?` question), an optional field to narrow the
-    scope, and the exact command line that will run. Yes runs it, No or Esc runs nothing.
-    The command then runs with --yes : this panel is the question, and the shell's question
-    would hang in a subprocess. No letter shortcut : the field takes letters."""
+    (what the shell says at its own `proceed ?` question), a select of the scopes the shell
+    accepts for it - the default first, then the ones the active scenario's manifest offers, the
+    way the deploy options read feature_flags.yml - and the exact command line that will run.
+    Yes runs it, No or Esc runs nothing. The command then runs with --yes : this panel is the
+    question, and the shell's question would hang in a subprocess."""
 
     BINDINGS = [
         Binding("escape", "back", "cancel"),
@@ -843,6 +909,10 @@ class ConfirmScreen(ModalScreen):
         margin-bottom: 1;
     }
 
+    #confirm-scope {
+        margin-bottom: 1;
+    }
+
     #confirm-preview {
         color: $foreground 70%;
         margin-top: 1;
@@ -867,49 +937,45 @@ class ConfirmScreen(ModalScreen):
     def __init__(self, cmd: CommandSpec):
         super().__init__()
         self.cmd = cmd
+        self._choices = _scope_choices(cmd)
+        self._args_by_key = {key: args for _label, key, args in self._choices}
 
-    def _value(self) -> str:
-        if not self.cmd.restrict_flag:
-            return ""
+    def _scope_args(self) -> list:
         try:
-            return self.query_one("#confirm-input", Input).value
+            key = self.query_one("#confirm-scope", Select).value
         except Exception:
-            return ""
+            key = "default"
+        if key is Select.BLANK or key not in self._args_by_key:
+            key = "default"
+        return self._args_by_key[key]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm-container"):
             yield Static(f"range42-context {self.cmd.command or self.cmd.id}  -  confirm", id="confirm-title")
             yield Static(self.cmd.confirm_text, id="confirm-text")
-            if self.cmd.restrict_flag:
-                yield Input(placeholder=self.cmd.restrict_label or "restrict to (empty = the default scope)", id="confirm-input")
+            yield Select([(label, key) for label, key, _args in self._choices], value="default",
+                         allow_blank=False, id="confirm-scope")
             yield Static("", id="confirm-preview")
             with Horizontal(id="confirm-buttons"):
                 yield Button("no", id="btn-no", variant="default")
                 yield Button("yes", id="btn-yes", variant="warning")
-            yield Static("Enter in the field  ->  the yes button      Esc  cancel", id="confirm-hint")
+            yield Static("Enter opens the scope list      Tab reaches the buttons      Esc  cancel", id="confirm-hint")
 
     def on_mount(self) -> None:
         self._refresh_preview()
-        if self.cmd.restrict_flag:
-            self.query_one("#confirm-input", Input).focus()
+        self.query_one("#confirm-scope", Select).focus()
 
     def _refresh_preview(self) -> None:
-        # a literal Text, never markup : a `[` typed in the field must show, not be parsed
-        self.query_one("#confirm-preview", Static).update(Text(_cmd_line(self.cmd, _confirm_args(self.cmd, self._value()))))
+        # a literal Text, never markup : a bridge or vm name must show as it is
+        self.query_one("#confirm-preview", Static).update(Text(_cmd_line(self.cmd, _confirm_args(self.cmd, self._scope_args()))))
 
-    @on(Input.Changed, "#confirm-input")
-    def _on_value_changed(self, event: Input.Changed) -> None:
+    @on(Select.Changed, "#confirm-scope")
+    def _on_scope_changed(self, event: Select.Changed) -> None:
         self._refresh_preview()
-
-    @on(Input.Submitted, "#confirm-input")
-    def _on_value_submitted(self, event: Input.Submitted) -> None:
-        # Enter in the field does not confirm : it hands the focus to the yes button, so that
-        # confirming is always a deliberate second step, on a button that says what it does
-        self.query_one("#btn-yes", Button).focus()
 
     @on(Button.Pressed, "#btn-yes")
     def _on_yes(self, event: Button.Pressed) -> None:
-        self.dismiss(_confirm_args(self.cmd, self._value()))
+        self.dismiss(_confirm_args(self.cmd, self._scope_args()))
 
     @on(Button.Pressed, "#btn-no")
     def _on_no(self, event: Button.Pressed) -> None:
