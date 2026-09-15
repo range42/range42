@@ -60,12 +60,11 @@ infrastructure_proxmox_dest_vm_storage_name: "local-lvm"
 # common values: "vmbr0" (most Proxmox), "enp3s0" (bare metal without bridge)
 #
 infrastructure_proxmox_default_network_card_interface: "vmbr0"
-
 # The Proxmox bridge that VMs will be connected to.
 # demo_lab uses 192.168.142.0/24 on this bridge.
 # This bridge must exist on the Proxmox server before deploying VMs.
 #
-vm_net_virtio_bridge: "vmbr142"
+# vm_net_virtio_bridge: "vmbr142" # old artifact ? 
 
 
 #### NETWORK MODE ####
