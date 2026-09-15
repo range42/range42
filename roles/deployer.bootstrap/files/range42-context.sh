@@ -1603,7 +1603,11 @@ _r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
 
 # usage: _r42_firewall_bundle_run <bundle name> [extra ansible-playbook args]
 #
-# THE OUTPUT OF A GESTURE FOLLOWS THE ONE SWITCH, range42-context debug-on / debug-off.
+# NO GESTURE CALLS THIS RUNNER ANY MORE : the arming pair goes through the devkit composites (see
+# _r42_firewall_host_run and _r42_firewall_guests_run below). It is kept for a manual bundle run with
+# the readable output, and for the day a gesture needs a bundle again.
+#
+# THE OUTPUT OF A BUNDLE RUN FOLLOWS THE ONE SWITCH, range42-context debug-on / debug-off.
 #
 # debug OFF, the default : the bundle runs under the stdout callback range42_bundle of the range42
 # clone (callback_plugins/), which prints what the bundle says (the debug messages of its play, the
@@ -1819,6 +1823,70 @@ _r42_networks_show_firewall() {
     echo ""
 }
 
+# usage: _r42_firewall_host_run on|off
+#
+# The host through the devkit composite proxmox_firewall.proxmox_node.arm / disarm : management
+# access first, then the datacenter switch, then the node switch (arm) ; datacenter off, then node,
+# accepts kept (disarm). The composite prints one json line per unitary step and one summary line
+# (firewall_arm_host / firewall_disarm_host) ; only the summary is rendered here, the refusals of the
+# unitaries reach the terminal on stderr by themselves.
+_r42_firewall_host_run() {
+    local action="$1" dk out
+    if [[ "$action" == "on" ]]; then dk="proxmox_firewall.proxmox_node.arm.to.jsons.sh" ; else dk="proxmox_firewall.proxmox_node.disarm.to.jsons.sh" ; fi
+    command -v "$dk" >/dev/null 2>&1 || { _r42_print_fail "devkit not on PATH: $dk" >&2 ; return 1 ; }
+    if [[ "$action" == "on" ]]; then
+        _r42_print_step "host : management access first, then the datacenter switch, then the node switch"
+    else
+        _r42_print_step "host : the datacenter switch off, then the node switch ; the management accepts are kept"
+    fi
+    out=$("$dk" --json </dev/null) || return 1
+    printf '%s\n' "$out" \
+      | jq -r 'select(.action == "firewall_arm_host" or .action == "firewall_disarm_host")
+               | "datacenter : \(.datacenter_before) -> \(.datacenter_after)", "node       : \(.node_before) -> \(.node_after)"' \
+      | sed 's/^/        /'
+    local verdict
+    verdict=$(printf '%s\n' "$out" | jq -r 'select(.action == "firewall_arm_host" or .action == "firewall_disarm_host")
+        | if .as_asked then (if .action == "firewall_arm_host" then "datacenter and node both armed, " + .management_access
+                             else "datacenter and node both off, " + .management_access end)
+          else "a host switch did not follow" end')
+    [[ -n "$verdict" ]] || { _r42_print_fail "no verdict came back from ${dk}" ; return 1 ; }
+    _r42_print_check "$verdict"
+}
+
+# usage: <ids on stdin, one per line> | _r42_firewall_guests_run on|off <label>
+#
+# The guests through the devkit composite proxmox_firewall.vm_ids.arm / disarm : for every id, in
+# order, ssh accept then card flags then switch (arm), or switch then card flags then the ssh accept
+# re-posted (disarm) ; the composite reads the guests once before and once after, skips and names the
+# ids the node does not run, refuses a guest with no card before writing anything, and stops at the
+# first refused step naming the guest. One rendered line per guest, then the count.
+_r42_firewall_guests_run() {
+    local action="$1" label="$2" dk out
+    if [[ "$action" == "on" ]]; then dk="proxmox_firewall.vm_ids.arm.to.jsons.sh" ; else dk="proxmox_firewall.vm_ids.disarm.to.jsons.sh" ; fi
+    command -v "$dk" >/dev/null 2>&1 || { _r42_print_fail "devkit not on PATH: $dk" >&2 ; return 1 ; }
+    if [[ "$action" == "on" ]]; then
+        _r42_print_step "guests : ssh accept, then the card flags, then the switch - one guest after the other"
+    else
+        _r42_print_step "guests : the switch off, then the card flags ; the ssh accept is kept - one guest after the other"
+    fi
+    out=$("$dk" --json) || return 1
+    local line
+    printf '%s\n' "$out" \
+      | jq -r --arg a "$action" 'select(.action == "firewall_arm_guest" or .action == "firewall_disarm_guest")
+          | if $a == "on" then "vm \(.vm_id) (\(.vm_name)) : switch on, \(.cards_as_asked | length) card(s) flagged, ssh \(if .ssh_accept == "posted" then "accept posted" else "accepted" end)"
+            else "vm \(.vm_id) (\(.vm_name)) : switch off, \(.cards_as_asked | length) card(s) unflagged, ssh accept kept in place" end' \
+      | while IFS= read -r line ; do _r42_print_check "$line" ; done
+    local n cards
+    n=$(printf '%s\n' "$out" | jq -s '[ .[] | select(.action == "firewall_arm_guest" or .action == "firewall_disarm_guest") ] | length')
+    cards=$(printf '%s\n' "$out" | jq -s '[ .[] | select(.action == "firewall_arm_guest" or .action == "firewall_disarm_guest") | (.cards_as_asked | length) ] | add // 0')
+    [[ "${n:-0}" -gt 0 ]] || { _r42_print_fail "no guest summary came back from ${dk}" ; return 1 ; }
+    if [[ "$action" == "on" ]]; then
+        _r42_print_check "${label} : ${n} guest(s) armed, ${cards} card(s) flagged, ssh accepted on every one"
+    else
+        _r42_print_check "${label} : ${n} guest(s) disarmed, ${cards} card(s) unflagged, ssh accepts kept in place"
+    fi
+}
+
 # usage: _r42_networks_firewall_toggle on|off [--scope scenario|proxmox|vm_id <id>|all] [--yes]
 #
 # THE SCOPE IS A FLAG, not a name : the sub-command names stay within the 22-character rule, as
@@ -1834,7 +1902,8 @@ _r42_networks_show_firewall() {
 # filtering of every other scenario too - that is --scope proxmox, an explicit gesture.
 # ARMING with `all` is refused : a guest whose chain is empty would filter and lose its ssh.
 #
-# THE ORDER inside a gesture is the one the bundles argue and the campaign of 2026-09-03 measured :
+# THE ORDER inside a gesture is the one the bundles argue and the campaign of 2026-09-03 measured, and
+# the devkit arming composites run it through the unitary devkits (api fast path) since 2026-09-15 :
 # arming goes host first (management accepts, datacenter switch, node switch) then guests ;
 # disarming goes datacenter first, then node, then guests, so that a later arming of the host does
 # not bring guest chains back alive unnoticed.
@@ -1957,7 +2026,7 @@ _r42_networks_firewall_toggle() {
     fi
     if [[ "$scope" == "all" ]]; then
         echo "  GUESTS : the ${node_count} ${node_word} this node runs get their switch turned off, then their card"
-        echo "  flags, one bundle run per guest ; their ssh accepts stay posted. Templates are excluded."
+        echo "  flags, one guest after the other ; their ssh accepts stay posted. Templates are excluded."
         echo "  ids : ${node_ids}"
     fi
     if [[ "$scope" == "scenario" ]]; then
@@ -2022,36 +2091,33 @@ _r42_networks_firewall_toggle() {
     fi
     echo ""
 
-    local host_bundle vm_bundle one_bundle
-    if [[ "$action" == "on" ]]; then
-        host_bundle="firewall.enable.datacenter_and_nodes" ; vm_bundle="firewall.enable.vms" ; one_bundle="firewall.enable.vm"
-    else
-        host_bundle="firewall.disable.datacenter_and_nodes" ; vm_bundle="firewall.disable.vms" ; one_bundle="firewall.disable.vm"
-    fi
-    local stopped="the run stopped - see the output above, then read the state with networks-show-firewall"
-    local host_stopped="the host step stopped, nothing was done on the guests - see the output above, then read the state with networks-show-firewall"
+    ## THE RUNS go through the devkit arming composites, which chain the unitary devkits in the order the
+    ## bundles proved safe ; every unitary takes the api fast path when the api answers, and
+    ## RANGE42_PROXMOX_API_FORCE=off keeps every step on ansible. The bundles stay with the deploy.
+    local stopped="the run stopped - see the refusal above, then read the state with networks-show-firewall"
+    local host_stopped="the host step stopped, nothing was done on the guests - see the refusal above, then read the state with networks-show-firewall"
+    local manifest_ids
     case "$scope" in
         proxmox)
-            _r42_firewall_bundle_run "$host_bundle" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
+            _r42_firewall_host_run "$action" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
         scenario)
             ## ARMING goes host first then guests ; DISARMING touches the guests only and leaves the
             ## master switch of the host up (see the header : a public host would be exposed)
             if [[ "$action" == "on" ]]; then
-                _r42_firewall_bundle_run "$host_bundle" || { _r42_print_fail "$host_stopped" ; return 1 ; }
+                _r42_firewall_host_run on || { _r42_print_fail "$host_stopped" ; return 1 ; }
                 echo ""
             fi
-            _r42_firewall_bundle_run "$vm_bundle" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
+            ## the ids the scenario declares ; the composite skips and names the ones the node does not run
+            manifest_ids=$(jq -r '.vms[].vm_id' "${RANGE42_ACTIVE_CONFIG_DIR%/}/scenario/manifest/scenario_vms.json" 2>/dev/null)
+            [[ -n "$manifest_ids" ]] || { _r42_print_fail "this scenario declares no guest (manifest without vms) - nothing to do" ; return 1 ; }
+            printf '%s\n' "$manifest_ids" | _r42_firewall_guests_run "$action" "$scenario" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
         all)
-            ## no bundle sweeps a whole node : one run of the single-guest bundle per id
-            _r42_firewall_bundle_run "$host_bundle" || { _r42_print_fail "$host_stopped" ; return 1 ; }
-            local id
-            for id in ${=node_ids} ; do
-                echo ""
-                _r42_firewall_bundle_run "$one_bundle" -e "BUNDLE_VM_ID=${id}" \
-                  || { _r42_print_fail "the guest ${id} stopped the run - the host is already disarmed, the guests before ${id} too ; read the state with networks-show-firewall --scope node" ; return 1 ; }
-            done ;;
+            _r42_firewall_host_run off || { _r42_print_fail "$host_stopped" ; return 1 ; }
+            echo ""
+            printf '%s\n' ${=node_ids} | _r42_firewall_guests_run off "the ${node_count} ${node_word} this node runs" \
+              || { _r42_print_fail "the run stopped - the host is already disarmed, the guests before the one named too ; read the state with networks-show-firewall --scope node" ; return 1 ; } ;;
         *)
-            _r42_firewall_bundle_run "$one_bundle" -e "BUNDLE_VM_ID=${vm_id_target}" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
+            printf '%s\n' "$vm_id_target" | _r42_firewall_guests_run "$action" "vm ${vm_id_target} (${vm_name})" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
     esac
 
     echo ""
