@@ -115,6 +115,23 @@ range42_sdn_networks:
   - { vnet: "net151", subnet: "192.168.151.0/24", gateway: "192.168.151.1", snat: true }
 
 
+#### VM FIREWALL SSH SOURCES (OPTIONAL) ####
+#
+# Optional restriction of the ssh accept that every deployment declares on each VM of the
+# scenario in the PROXMOX guest firewall (hypervisor side, on the VM's network card, in force
+# once the guest is armed). This is NOT the firewall inside the VMs (ufw), which is untouched.
+#
+#   []                          default : ssh accepted from any source, as before
+#   ["203.0.113.7/32", ...]     ssh accepted from these addresses only, IPv4 /32 each
+#
+# Every network of the scenario is ALWAYS added, whole : the deployer reaches the VMs through the
+# Proxmox jump host, so a VM sees the host's address, not yours, and the VMs reach each other. The wizard
+# fills this list from its optional "VM firewall : ssh sources" step, the vault carries it to
+# the deployer-cli, the firewall.baseline.ssh_all_vms bundle reads it there. It applies to the
+# VMs a workspace creates : an accept already open on a VM is not tightened afterwards.
+#
+range42_fw_vm_ssh_sources: []
+
 #### PROXMOX API ACCESS ####
 
 # The Proxmox API is used by Ansible to create/manage VMs.

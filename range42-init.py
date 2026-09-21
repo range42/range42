@@ -6,7 +6,7 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import argparse, json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import argparse, ipaddress, json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
@@ -346,6 +346,7 @@ class _S:
     # pre-SDN vmbr bridges, unsupported, on explicit request only). Written to the
     # inventory as INIT_LEGACY_BRIDGES ; the 12 NAT toggles below serve both modes.
     network_mode    = "sdn"
+    vm_ssh_sources  = []          # optional ssh source restriction on the Proxmox VM firewall, IPv4 /32, empty = open
     apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
     apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
     apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
@@ -1434,9 +1435,80 @@ class StepScenario(Step):
             S.scenario = w.value if w.value is not Select.BLANK else "blank_scenario_2_subnets"
         else:
             S.scenario = w.value.strip() or "blank_scenario_2_subnets"
-        app._go(StepDeployerIP())
+        app._go(StepVmSshSources())
 
     def handle_back(self, app): app._go(StepNATBridges())
+
+
+class StepVmSshSources(Step):
+    STEP_NUM = 3
+
+    _IP_RE = re.compile(r'^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:/32)?$')
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  step 2/3  —  VM firewall : ssh sources (optional)", classes="title")
+        yield Rule()
+        yield Static(
+            "  OPTIONAL, OFF BY DEFAULT. Restrict who may reach port 22 of the lab VMs.\n\n"
+            "  WHERE THE RULE LIVES : in the PROXMOX firewall of each VM (hypervisor side, on the\n"
+            "  VM's network card, in force once the guest is armed). It is NOT the firewall inside\n"
+            "  the VMs (ufw), which this step never touches.\n\n"
+            "  OFF : the ssh accept the deployment declares on every VM stays open to any source.\n"
+            "  ON  : that accept is restricted to the IPv4 /32 listed below, plus EVERY network of\n"
+            "        the scenario, whole, always added : the deployer reaches the VMs through the\n"
+            "        Proxmox jump host, so a VM sees the host's address, not yours, and the lab VMs\n"
+            "        keep reaching each other. Only the outside is filtered.\n\n"
+            "  Applies to the VMs this workspace creates. Format : a.b.c.d or a.b.c.d/32,\n"
+            "  comma or space separated.",
+            classes="muted")
+        yield Static("")
+        yield Switch(value=bool(S.vm_ssh_sources), id="sw-vmssh")
+        yield Label("  restrict ssh on the Proxmox VM firewall to the addresses below", classes="muted")
+        yield Input(value=", ".join(S.vm_ssh_sources), placeholder="203.0.113.7, 198.51.100.20/32   (empty = no restriction)",
+                    id="i-vmssh", disabled=not S.vm_ssh_sources)
+        yield Label("", id="e-vmssh", classes="err")
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "sw-vmssh":
+            self.query_one("#i-vmssh", Input).disabled = not event.value
+            if not event.value:
+                self.query_one("#e-vmssh", Label).update("")
+
+    @staticmethod
+    def parse_sources(raw: str):
+        """Return (list of normalized a.b.c.d/32, error message or empty string)."""
+        tokens = [t for t in re.split(r'[\s,;]+', raw.strip()) if t]
+        if not tokens:
+            return [], "the restriction is ON but no address is listed : add IPv4 /32 addresses or switch it OFF"
+        out = []
+        for t in tokens:
+            if not StepVmSshSources._IP_RE.match(t):
+                return [], f"'{t}' is not an IPv4 /32 (expected a.b.c.d or a.b.c.d/32)"
+            try:
+                net = ipaddress.ip_network(t if "/" in t else t + "/32", strict=True)
+            except ValueError:
+                return [], f"'{t}' is not a valid IPv4 /32"
+            if net.version != 4 or net.prefixlen != 32:
+                return [], f"'{t}' : only IPv4 /32 is accepted"
+            s = str(net)
+            if s not in out:
+                out.append(s)
+        return out, ""
+
+    def handle_next(self, app):
+        err = self.query_one("#e-vmssh", Label)
+        if not self.query_one("#sw-vmssh", Switch).value:
+            S.vm_ssh_sources = []
+            err.update("")
+            app._go(StepDeployerIP()); return
+        out, msg = self.parse_sources(self.query_one("#i-vmssh", Input).value)
+        if msg:
+            err.update("✗ " + msg); return
+        err.update("")
+        S.vm_ssh_sources = out
+        app._go(StepDeployerIP())
+
+    def handle_back(self, app): app._go(StepScenario())
 
 
 class StepDeployerIP(Step):
@@ -1464,7 +1536,7 @@ class StepDeployerIP(Step):
         if S.catalog_try_path:
             app._go(StepNATBridges())
         else:
-            app._go(StepScenario())
+            app._go(StepVmSshSources())
 
 
 class StepDeployerUser(Step):
@@ -1653,6 +1725,8 @@ class StepReview(Step):
             ("scenario",        S.scenario),
             ("deployer user",   S.deployer_user),
             ("deployer IP",     S.deployer_ip),
+            ("VM ssh sources",  "open to any source (default)" if not S.vm_ssh_sources
+                                else f"{len(S.vm_ssh_sources)} address(es) + every scenario network : " + ", ".join(S.vm_ssh_sources)),
             ("NAT interface",   S.nat_interface),
             ("network mode",    "SDN networks (recommended)" if S.network_mode != "legacy" else "LEGACY vmbr bridges (unsupported)"),
             ("outbound NAT on", ", ".join((n if S.network_mode == "legacy" else n.replace("vmbr", "net"))
@@ -1786,6 +1860,7 @@ class StepDeploy(Step):
              f'infrastructure_proxmox_default_network_card_interface: "{S.nat_interface}"'),
             ('DEPLOYER_CLI_USER: "your_deployer_cli_username"', f'DEPLOYER_CLI_USER: "{S.deployer_user}"'),
             ('deployer_cli_ip: "127.0.0.1"',   f'deployer_cli_ip: "{S.deployer_ip}"'),
+            ('range42_fw_vm_ssh_sources: []',  f'range42_fw_vm_ssh_sources: {json.dumps(S.vm_ssh_sources)}'),
             ('DEPLOYER_CLI__DST_GIT_DIR: "/home/your_deployer_cli_username/range42/"',
              f'DEPLOYER_CLI__DST_GIT_DIR: "{S.install_dir}/"'),
             ('DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/your_deployer_cli_username/range42.config"',

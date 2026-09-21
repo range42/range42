@@ -37,6 +37,9 @@ proxmox_default_network_card_interface: "{{ infrastructure_proxmox_default_netwo
 infrastructure_network_mode: "{{ 'legacy' if (INIT_LEGACY_BRIDGES | default('NO') | upper == 'YES') else 'sdn' }}"
 range42_sdn_zone: "{{ range42_sdn_zone | default('r42zone') }}"
 range42_sdn_networks: {{ range42_sdn_networks | default([]) | to_json }}
+## optional ssh source restriction for the PROXMOX guest firewall of every VM, chosen at init : a list
+## of IPv4 /32, empty keeps the accept open (see the example inventory, section VM FIREWALL SSH SOURCES).
+range42_fw_vm_ssh_sources: {{ range42_fw_vm_ssh_sources | default([]) | to_json }}
 
 
 ###############################################################################
