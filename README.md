@@ -14,6 +14,7 @@ Start with [GETTING_STARTED.md](GETTING_STARTED.md) for a hands-on walkthrough, 
 - [About the project](#about-the-project)
   - [Who it's for](#who-its-for)
   - [Architecture overview](#architecture-overview)
+  - [Networks and firewall](#networks-and-firewall)
   - [The stack](#the-stack)
   - [Project mid / long term goals](#project-mid--long-term-goals)
   - [Extend the scenarios](#extend-the-scenarios)
@@ -39,7 +40,7 @@ cd range42
 
 ![range42 setup wizard](docs/img/old/0002.png)
 
-The wizard walks you through preflight checks, Proxmox connection, network configuration and the full deployment.
+The wizard walks you through preflight checks, Proxmox connection, network configuration (SDN networks by default, outbound NAT per network, an optional ssh whitelist for the lab VMs) and the full deployment.
 
 For the complete walkthrough (prerequisites, every wizard step explained, SSH access, daily operations, troubleshooting), see [GETTING_STARTED.md](GETTING_STARTED.md).
 
@@ -117,11 +118,27 @@ Today, the **lab VMs on Proxmox** are generally organised into 3 host groups (th
 
 | Group | Purpose | Required |
 |-------|---------|----------|
-| **Vulnerable targets** | Core lab systems for attack and analysis | Yes |
+| **Lab systems** | The systems of the exercise : team workstations of the blank scenarios, vulnerable targets of the CTF labs, the product of a product lab | Yes |
 | **Administration** | Monitoring, orchestration, supervision | No |
 | **Student / Training** | Workstations for learners | No |
 
-Only the vulnerable hosts group is required - admin and student groups are optional and can be disabled to save resources.
+Only the lab systems are required. The admin VMs are off by default and switched on one by one with feature flags (`INSTALL_WAZUH`, `INSTALL_MISP`...), the student group is optional.
+
+## Networks and firewall
+
+The lab networks are **Proxmox SDN** objects : one zone per host, one vnet per lab subnet (`net142` for the admin tier, `net143`, `net144`... for the teams, `net140` for the template builds), created once at init and declared by each scenario in its `00_sdn_bootstrap/_main.yml`. Outbound NAT is a per-network toggle of the init. The **Proxmox firewall** is wired at every deployment : anti-lockout accepts on the datacenter and the node, an ssh accept on every VM, and an arming that stays opt-in.
+
+```bash
+range42-context networks-show-sdn                # zone, vnets, subnets, NAT, isolation of the active scenario
+range42-context networks-internet-list           # declared vs live egress, per network
+range42-context networks-internet-off            # cut the egress of the scenario networks (networks-internet-on restores it)
+range42-context networks-show-firewall --rules   # datacenter, node and per-VM switches, then the rules and what is in force
+range42-context networks-firewall-on             # arm the guests of the scenario (networks-firewall-off disarms)
+```
+
+Every gesture takes a scope (`--roles`, `--vnet` or `--cidr` for the egress pair, `--scope` for the firewall pair and the views) and `--yes` to skip its confirmation ; `range42-context help` lists them all, and `range42-context --tui` offers the same gestures in a dashboard.
+
+At init, the ssh accept of the lab VMs can be restricted to addresses of your choice : it is the Proxmox firewall of each VM, not the firewall inside the VM, and every network of the scenario stays allowed so the deployer never locks itself out. Details in [GETTING_STARTED.md](GETTING_STARTED.md#networks-and-firewall).
 
 ## The stack
 
@@ -132,6 +149,7 @@ In its recommended configuration, range42 relies on:
 - **Docker / LXC** - containerized services and vulnerable stacks (recommended)
 - **Wazuh** - security monitoring and detection (optional)
 - **Firewalls / VPN** - network segmentation and access control (recommended)
+- **Proxmox SDN + Proxmox firewall** - lab networks as SDN vnets, hypervisor-side segmentation armed on demand (the default of the init)
 - **Vue.js / FastAPI / Kong** - web UI and API layer (available)
 
 ## Project mid / long term goals
@@ -143,8 +161,9 @@ The goal is to cover the full spectrum of cyber training. Here's where the proje
 | Use case | Status | What range42 brings |
 |----------|--------|---------------------|
 | **Network labs** | shipping | Empty multi-subnet bases (`blank_scenario_2/4/6_subnets`) ready for you to install your own workloads on top |
+| **Product labs** | shipping | Standalone MISP, Gitea, Mattermost, Nextcloud and Rocket.Chat servers and the Kunai detection workshop, one scenario each (`misp_lab`, `gitea_lab`, `mattermost_lab`, `nextcloud_lab`, `rocketchat_lab`, `kunai_lab`) |
 | **Defensive training** | shipping | Wazuh-instrumented infrastructure via `demo_lab`, ready for detection-engineering and rule-tuning exercises |
-| **Offensive training** | early | Vulnerable hosts and misconfigured services in `demo_lab`; an extensible catalogue of CVEs and product setups **will** grow over upcoming releases |
+| **Offensive training** | early | Vulnerable hosts and misconfigured services in `demo_lab`, sixteen CVE and misconfiguration containers as bundles (`range42-playbooks/bundles/ctf`) ; the catalogue grows with each release |
 | **Student workstations** | partial | Group structure in place; the `03_student_infrastructure` block is currently disabled and **will** be re-enabled once stabilised |
 | **Hybrid (red / blue)** | planned | One lab, both perspectives, scoreboard and full visibility on both sides |
 | **Forensics & IR** | planned | Reproducible compromised environments for rebuild-and-investigate exercises |
@@ -164,7 +183,7 @@ We'll prioritise as fast as we can.
 ## Glossary
 
 See [GLOSSARY.md](GLOSSARY.md) for all terminology: codename, scenario, workspace,
-deployer-cli, jump host, vault, context, range42-context, host groups, inventory.
+deployer-cli, jump host, vault, context, range42-context, SDN zone and vnets, firewall arming, host groups, inventory.
 
 ## Authors
 
