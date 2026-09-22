@@ -483,6 +483,15 @@ _r42_use() {
     if [[ -f "$r42_ansible_cfg" ]]; then
         export ANSIBLE_CONFIG="$r42_ansible_cfg"
         _r42_print_step "exported ANSIBLE_CONFIG=$r42_ansible_cfg"
+        ## the callback_plugins line of that file is a RELATIVE path, so it only resolves for a run
+        ## started from the clone ; exported here as an absolute one, the readable output holds
+        ## wherever the run starts. Measured : without this, ansible finds no plugin and silently
+        ## falls back to its built-in output.
+        local r42_cb_dir="${r42_ansible_cfg%/*}/callback_plugins"
+        if [[ -d "$r42_cb_dir" ]]; then
+            export ANSIBLE_CALLBACK_PLUGINS="$r42_cb_dir"
+            _r42_print_step "exported ANSIBLE_CALLBACK_PLUGINS=$r42_cb_dir"
+        fi
     fi
 
     #### update zsh prompt to show active workspace (green tag)
@@ -807,7 +816,7 @@ _r42_deploy() {
 
     # Extra args (typically -e enable_<feature>=<bool> from the TUI deploy modal)
     # propagate as-is to the scenario's setup.sh which forwards to ansible-playbook.
-    cd "$scenario_target" && bash "$setup_script" "$@"
+    ( cd "$scenario_target" && bash "$setup_script" "$@" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -836,7 +845,7 @@ _r42_deploy_vms() {
 
     # Extra args (typically -e enable_<feature>=<bool> from the TUI deploy modal)
     # propagate as-is to the scenario's setup_vms_only.sh which forwards to ansible-playbook.
-    cd "$scenario_target" && bash "$script" "$@"
+    ( cd "$scenario_target" && bash "$script" "$@" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -859,7 +868,7 @@ _r42_delete() {
     _r42_print_step "running: $delete_script"
     echo ""
 
-    cd "$scenario_target" && bash "$delete_script"
+    ( cd "$scenario_target" && bash "$delete_script" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -882,7 +891,7 @@ _r42_reset() {
     _r42_print_step "running: $reset_script"
     echo ""
 
-    cd "$scenario_target" && bash "$reset_script"
+    ( cd "$scenario_target" && bash "$reset_script" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -904,7 +913,7 @@ _r42_delete_vms() {
     _r42_print_step "running: $script"
     echo ""
 
-    cd "$scenario_target" && bash "$script"
+    ( cd "$scenario_target" && bash "$script" )
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -923,6 +932,22 @@ _r42_active_scenario_dir() {
     if [[ -z "$config_dir" ]]; then
         _r42_print_fail "no active workspace (RANGE42_ACTIVE_CONFIG_DIR is empty)" >&2
         return 1
+    fi
+    ## The devkits read the vault through the `secrets` link of their directory, which `use`
+    ## repoints ; a `use` in ANOTHER shell moves it under this shell's feet, and every devkit
+    ## this command would call then talks to that other workspace. The devkit warmup refuses
+    ## that case in its own words ; this is the same refusal, said in range42 words, before
+    ## anything is launched. Context only : which VM a command may address is decided elsewhere.
+    local devkits_dir="${RANGE42_ANSIBLE_ROLES__DEVKITS_DIR:-}"
+    if [[ -n "$devkits_dir" && -L "${devkits_dir%/}/secrets" ]]; then
+        local dk_secrets ws_secrets
+        dk_secrets=$(readlink -f "${devkits_dir%/}/secrets" 2>/dev/null || true)
+        ws_secrets=$(readlink -f "$config_dir/secrets" 2>/dev/null || true)
+        if [[ -n "$dk_secrets" && -n "$ws_secrets" && "$dk_secrets" != "$ws_secrets" ]]; then
+            _r42_print_fail "the devkits point to another workspace: ${dk_secrets%/secrets}" >&2
+            _r42_print_warning "this shell is on ${config_dir} - a 'range42-context use' ran in another shell since ; run it again here" >&2
+            return 1
+        fi
     fi
     local scenario_dir="$config_dir/scenario"
     if [[ ! -L "$scenario_dir" ]]; then
@@ -996,6 +1021,1256 @@ _r42_stop()      { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.stop_force.to.js
 _r42_stop_acpi() { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.stop.to.jsons.sh"       "stopping (acpi)"; }
 _r42_pause()     { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.pause.to.jsons.sh"      "pausing"; }
 _r42_resume()    { _r42_apply_to_scenario_vms "proxmox_vm.vm_id.resume.to.jsons.sh"     "resuming"; }
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-* : THE SCOPE RESOLVER
+#
+# Shared by networks-internet-list and networks-internet-on|off, so the two can never disagree
+# about what `--role teams` means. Resolving the scope twice is how they would drift apart.
+#
+# EVERYTHING IS DERIVED FROM THE ACTIVE SCENARIO'S MANIFEST, never from a list written here : the
+# repo already carries 11 distinct `role` values and a new one must work without editing this
+# file. A vnet the manifest cannot explain is still emitted, with role `unknown` - a silently
+# dropped vnet is exactly what makes an egress bug undebuggable.
+#
+# WHAT IS DERIVED FROM WHAT :
+#   vnet     the `bridge` field, verbatim. NOT the IP third octet : two template entries in the
+#            repo intentionally carry bridge=vmbr140 with a 192.168.142.x address, so deriving
+#            from the IP would invent a vnet that does not exist.
+#   cidr     192.168.<octet>.0/24, octet taken from the vnet name. Every subnet declared in the
+#            repo is a /24 - checked, a single prefix across both SDN scenarios.
+#   gateway  the .1 of that cidr.
+#   roles    the `role` of the VMs on the vnet. `.templates[]` entries have NO role field at all,
+#            which is why the templating vnet is found by its PRESENCE in `.templates[]` and never
+#            by `role == template`, a value that does not exist anywhere.
+#   labels   <role>-<octet>, e.g. team-143. Emitted for `netNNN` only : during the migration
+#            `team-143` would otherwise match both net143 and vmbr143, and the label would be
+#            ambiguous precisely while both exist.
+#
+# `snat_declared` is reported "unknown" ON PURPOSE, and stays that way. The declaration lives in
+# the scenario playbook that imports sdn_network.bootstrap - decided 2026-08-25 - and it is read by
+# the scenario's own setup_networks / delete_networks scripts, never here. The two answer different
+# questions : the resolver says WHICH networks and who is on them, the declaration says how they
+# are configured.
+#
+# THE WHOLE SELECTION IS DONE IN JQ, deliberately. This file is sourced by both zsh and bash, and
+# zsh arrays are 1-indexed while bash arrays are 0-indexed : any shell loop over a token list
+# would work in one and quietly skip an element in the other.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# usage: _r42_networks_resolve <kind> [spec]
+#   kind : inventory | all | all-and-templating | role | vnet | cidr
+#   spec : comma-separated tokens, for role / vnet / cidr
+#
+# Emits ONE json object : { kind, requested, selected[], selected_count, unmatched[],
+# collateral_roles[], inventory_count, templating_vnets[], legacy_vnets[] }.
+#
+# `unmatched` is what makes a typo visible : `--role teasm` selects nothing, and without it the
+# command would report a cheerful success having touched no network at all.
+#
+# `collateral_roles` is what a subnet-wide rule forces us to say out loud. A SNAT rule is per
+# subnet, so the blast radius of an internet-off is always the WHOLE vnet : on this repo
+# `--role admin` also hits `student` on vmbr142, in 5 scenarios. The caller must announce them.
+_r42_networks_resolve() {
+    local kind="${1:-all}"
+    local spec="${2:-}"
+    local manifest
+
+    case "$kind" in
+        inventory|all|all-and-templating|role|vnet|cidr) : ;;
+        *)
+            _r42_print_fail "unknown scope kind: $kind" >&2
+            echo "  expected one of : inventory | all | all-and-templating | role | vnet | cidr" >&2
+            return 1
+            ;;
+    esac
+
+    manifest=$(_r42_active_scenario_manifest) || return 1
+
+    jq -c --arg kind "$kind" --arg spec "$spec" '
+        [ ((.vms       // []) | map(. + {_sec: "vms"})),
+          ((.templates // []) | map(. + {_sec: "templates"}))
+        ] | add
+        | map(select(.bridge != null and .bridge != ""))
+        | group_by(.bridge)
+        | map(
+            (.[0].bridge)                          as $b
+          | ($b | sub("^(net|vmbr)"; ""))          as $oct
+          | (map(select(._sec == "vms")))          as $vms
+          | (map(select(._sec == "templates")))    as $tpl
+          | ([ $vms[] | .role // empty ] | unique) as $rr
+          | ($oct | test("^[0-9]{1,3}$"))          as $num
+          | (if ($rr | length) == 0 then ["unknown"] else $rr end) as $r
+          | {
+              vnet:           $b,
+              is_sdn:         ($b | startswith("net")),
+              octet:          $oct,
+              cidr:           (if $num then "192.168." + $oct + ".0/24" else null end),
+              gateway:        (if $num then "192.168." + $oct + ".1"    else null end),
+              roles:          $r,
+              labels:         (if ($b | startswith("net")) and $num then ($r | map(. + "-" + $oct)) else [] end),
+              is_templating:  (($tpl | length) > 0),
+              vm_count:       ($vms | length),
+              template_count: ($tpl | length),
+              snat_declared:  "unknown"
+            }
+          )
+        | sort_by(.vnet)
+        | . as $inv
+
+        | ( if ($spec | length) == 0 then []
+            else ($spec | ascii_downcase | gsub("[[:space:]]"; "") | split(",") | map(select(length > 0)))
+            end ) as $tok
+
+        # a token may be a bare role (team), its plural (teams) or a label (team-143). All three
+        # count as "this role was asked for", so none of them is reported back as collateral.
+        | ( [ $tok[] | rtrimstr("s") ] + [ $tok[] | sub("-[0-9]+$"; "") ] | unique ) as $req_roles
+
+        | ( if   $kind == "inventory"          then $inv
+            # `all` never includes the templating vnet : the ubuntu template build runs apt, and
+            # cutting its egress leaves the templates empty and out of date.
+            elif $kind == "all"                then [ $inv[] | select(.vm_count > 0 and (.is_templating | not)) ]
+            elif $kind == "all-and-templating" then [ $inv[] | select(.vm_count > 0 or .is_templating) ]
+            elif $kind == "vnet"               then [ $inv[] | select(. as $e | $tok | index($e.vnet)) ]
+            elif $kind == "cidr"               then [ $inv[] | select(. as $e | $tok | index($e.cidr)) ]
+            elif $kind == "role"               then
+              [ $inv[] | select(
+                  . as $e
+                  | [ $tok[]
+                      | . as $t
+                      | ($e.roles  | index($t))
+                        // ($e.roles  | index($t | rtrimstr("s")))
+                        // ($e.labels | index($t))
+                    ] | any
+                ) ]
+            else null end ) as $sel
+
+        | ( if   $kind == "role" then
+                 [ $tok[] | . as $t
+                   | select( [ $inv[]
+                               | (.roles  | index($t))
+                                 // (.roles  | index($t | rtrimstr("s")))
+                                 // (.labels | index($t))
+                             ] | any | not ) ]
+            elif $kind == "vnet" then [ $tok[] | select(. as $t | ([ $inv[].vnet ] | index($t)) == null) ]
+            elif $kind == "cidr" then [ $tok[] | select(. as $t | ([ $inv[].cidr ] | index($t)) == null) ]
+            else [] end ) as $unmatched
+
+        | ( if $kind == "role"
+            then ([ $sel[].roles[] ] | unique | map(select(. as $r | ($req_roles | index($r)) == null)))
+            else [] end ) as $collateral
+
+        | {
+            kind:             $kind,
+            requested:        $tok,
+            selected:         $sel,
+            selected_count:   ($sel | length),
+            unmatched:        $unmatched,
+            collateral_roles: $collateral,
+            inventory_count:  ($inv | length),
+            templating_vnets: [ $inv[] | select(.is_templating) | .vnet ],
+            legacy_vnets:     [ $inv[] | select(.is_sdn | not)  | .vnet ]
+          }
+    ' "$manifest"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# the reads of networks-internet-on / networks-internet-off
+#
+# Three reads, each called ONCE : one devkit call is one playbook run. The two READING views no
+# longer come through here - they are glue on the sdn engine of the devkit repository, further
+# down - but the arming pair still reads by itself, and reconciles from what it read.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# Echoes the temp directory holding the raw devkit output.
+# STDOUT IS THE RETURN VALUE : every human-facing line here must go to stderr.
+_r42_networks_gather() {
+    local want_vnets="${1:-}"
+    local d
+    d=$(mktemp -d) || return 1
+
+    for cmd in proxmox_network.datacenter.list_sdn_subnets.to.jsons.sh \
+               proxmox_network.datacenter.list_snat_rules.to.jsons.sh ; do
+        command -v "$cmd" >/dev/null 2>&1 || {
+            _r42_print_fail "devkit not on PATH: $cmd" >&2
+            echo "  the devkits are activated by sourcing their _activate.sh" >&2
+            rm -rf "$d" ; return 1
+        }
+    done
+
+    ## local, so a broken context fails before any playbook run
+    _r42_networks_resolve inventory "" > "$d/resolved.json" || { rm -rf "$d" ; return 1; }
+
+    _r42_print_step "reading the cluster and the node ..." >&2
+    proxmox_network.datacenter.list_sdn_subnets.to.jsons.sh  2>/dev/null | jq -c . > "$d/subnets.jsonl"
+    proxmox_network.datacenter.list_snat_rules.to.jsons.sh   2>/dev/null | jq -c . > "$d/rules.jsonl"
+    if [[ "$want_vnets" == "--with-vnets" ]]; then
+        ## no caller asks for it since the two reading views became glue on the sdn engine : the
+        ## arming pair needs the subnets and the rules only. The branch stays because the join
+        ## below still reads a vnets file, and an empty one would silently answer "not isolated".
+        command -v proxmox_network.datacenter.list_sdn_vnets.to.jsons.sh >/dev/null 2>&1 || {
+            _r42_print_fail "devkit not on PATH: proxmox_network.datacenter.list_sdn_vnets.to.jsons.sh" >&2
+            rm -rf "$d" ; return 1
+        }
+        proxmox_network.datacenter.list_sdn_vnets.to.jsons.sh 2>/dev/null | jq -c . > "$d/vnets.jsonl"
+    else
+        : > "$d/vnets.jsonl"
+    fi
+
+    echo "$d"
+}
+
+# One record per vnet the scenario declares, ready to print.
+_r42_networks_join() {
+    local d="$1"
+    jq -n \
+      --slurpfile res "$d/resolved.json" \
+      --slurpfile sub "$d/subnets.jsonl" \
+      --slurpfile rul "$d/rules.jsonl" \
+      --slurpfile vnt "$d/vnets.jsonl" '
+        [ $res[0].selected[]
+          | . as $v
+          # join on subnet_vnet : subnet_cidr is omit-guarded and can be absent
+          | ([ $sub[] | select(.subnet_vnet == $v.vnet) ] | first) as $s
+          | [ $rul[] | select(.snat_source == $v.cidr) ] as $r
+          | ([ $r[] | .snat_target ] | unique) as $t
+          | ([ $r[] | .snat_count ] | add // 0) as $n
+          | {
+              vnet:     $v.vnet,
+              cidr:     $v.cidr,
+              roles:    ($v.roles | join(",")),
+              labels:   ($v.labels | join(",")),
+              zone:     ($s.subnet_zone // "-"),
+              # <zone>-<network>-<mask>, the key the update and delete actions take
+              subnet_id: ($s.subnet // null),
+              vms:      $v.vm_count,
+              # an absent snat means off, never unknown
+              nat:      (if $s == null then "no-subnet"
+                         elif ($s.subnet_snat // 0) == 1 then "on" else "off" end),
+              rules:    $n,
+              # SNAT is written by the SDN, MASQUERADE by the legacy bridge hook
+              origin:   (if   ($t | length) == 0 then "-"
+                         elif ($t | index("SNAT")) and ($t | index("MASQUERADE")) then "mixed"
+                         elif ($t | index("SNAT"))       then "sdn"
+                         elif ($t | index("MASQUERADE")) then "legacy"
+                         else ($t | join(",")) end),
+              out:      (if ([ $r[] | .snat_out_iface ] | unique | length) == 0
+                         then "-" else ([ $r[] | .snat_out_iface ] | unique | join(",")) end),
+              # an absent isolate-ports means no, same guard as snat
+              isolated: (if (([ $vnt[] | select(.vnet == $v.vnet) ] | first | .vnet_isolate_ports) // 0) == 1
+                         then "yes" else "no" end),
+              # the verdict follows the LIVE rules, not the declaration : legacy rules forward too
+              internet: (if $n > 0 then "YES" else "NO" end)
+            }
+        ]'
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-show-sdn / networks-internet-list : glue on the sdn engine
+#
+# The devkit joins what the SDN DECLARES with what the node CARRIES : the vnets, the subnets and
+# the live SNAT rules, three reads and nothing else. It knows nothing of roles, of scope labels or
+# of vm counts, because those live in the scenario manifest - and it derives nothing from a bridge
+# name, so the cidr of a legacy vmbr comes from here too. This glue therefore resolves the
+# manifest, hands the engine the names AND their cidrs, and joins its own columns back by name.
+# The two tables keep the columns they have always had.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# One row per network the active scenario declares, ready for the renderer : the engine's fields
+# plus the manifest's own (roles, scope labels).
+# STDOUT IS THE RETURN VALUE : every human-facing line here must go to stderr.
+_r42_networks_sdn_view() {
+    local cmd="proxmox_network.sdn_vnets.show_sdn.to.jsons.sh"
+    local c
+    for c in "$cmd" devkit_utils.jsons.render.to.table.sh ; do
+        command -v "$c" >/dev/null 2>&1 || {
+            _r42_print_fail "devkit not on PATH: $c" >&2
+            echo "  the devkits are activated by sourcing their _activate.sh" >&2
+            return 1
+        }
+    done
+
+    ## local, so a broken context fails before any playbook run
+    local resolved
+    resolved=$(_r42_networks_resolve inventory "") || return 1
+    ## the name and the cidr are for the engine ; the roles, the labels and the count are for the
+    ## table, and the engine ignores them
+    local asked
+    asked=$(printf '%s' "$resolved" | jq -c '
+        .selected[]
+        | {
+            vnet:   .vnet,
+            cidr:   .cidr,
+            roles:  (.roles  | join(",")),
+            labels: (.labels | join(",")),
+            vms:    .vm_count
+          }')
+    [[ -n "$asked" ]] || {
+        _r42_print_fail "the active scenario declares no network" >&2
+        return 1
+    }
+
+    _r42_print_step "reading the cluster and the node ..." >&2
+    local view
+    view=$(printf '%s\n' "$asked" | "$cmd" --json 2>/dev/null) || {
+        _r42_print_fail "the sdn view could not be read - run it by hand to see why : ${cmd} --table" >&2
+        return 1
+    }
+
+    printf '%s\n' "$view" | jq -c --argjson ask "$(printf '%s\n' "$asked" | jq -s -c .)" '
+        select(.level == "network" or .level == "undeclared")
+        | . as $n
+        | ([ $ask[] | select(.vnet == $n.vnet) ] | first) as $m
+        | {
+            vnet:         $n.vnet,
+            cidr:         ($n.cidr // $m.cidr),
+            zone:         $n.zone,
+            outgoing_nat: $n.outgoing_nat,
+            snat_rules:   $n.snat_rules,
+            snat_origin:  $n.snat_origin,
+            snat_out:     (if (($n.snat_out_iface // []) | length) > 0
+                           then ($n.snat_out_iface | join(",")) else null end),
+            isolated:     $n.isolated,
+            roles:        ($m.roles  // ""),
+            labels:       ($m.labels // ""),
+            internet:     $n.internet
+          }'
+}
+
+_r42_networks_internet_list() {
+    local rows
+    rows=$(_r42_networks_sdn_view) || return 1
+
+    _r42_print_section "egress per network  (scenario: $(_r42_active_scenario_name))"
+    ## minimum widths : the table keeps the shape it always had, whatever the names
+    printf '%s\n' "$rows" | devkit_utils.jsons.render.to.table.sh \
+      vnet:VNET:9 cidr:CIDR:19 "outgoing_nat:OUTGOING NAT:12" "snat_rules:NAT RULES:9" \
+      snat_origin:ORIGIN:7 snat_out:OUT:7 roles:ROLES:13 internet:INTERNET
+    echo ""
+}
+
+_r42_networks_show_sdn() {
+    local rows
+    rows=$(_r42_networks_sdn_view) || return 1
+
+    _r42_print_section "sdn state  (scenario: $(_r42_active_scenario_name))"
+    printf '%s\n' "$rows" | devkit_utils.jsons.render.to.table.sh \
+      vnet:VNET:9 cidr:CIDR:19 zone:ZONE:9 "outgoing_nat:OUTGOING NAT:12" \
+      "snat_rules:NAT RULES:9" isolated:ISOLATED:8 "labels:SCOPE LABELS:13" internet:INTERNET
+    echo ""
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-internet-on / networks-internet-off
+#
+# Calls the same three devkits the per-subnet wrapper calls, in the same order, but hoists
+# the apply OUT of the loop : one apply for the whole scope. Each extra apply appends one
+# rule per subnet on the host and the wrapper only reconciles its own.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# usage: _r42_networks_internet_toggle <on|off> [--roles all|all-and-templating]
+#                                               [--role|--roles <r>,..] [--vnet <v>,..]
+#                                               [--cidr <c>,..] [--yes]
+_r42_networks_internet_toggle() {
+    local action="$1" ; shift
+    local kind="all" spec="" assume_no_ask=false want scoped=""
+    [[ "$action" == "on" ]] && want=1 || want=0
+
+    ## two scopes at once used to let the last one win in silence, which is how an operator
+    ## ends up cutting a network they did not name
+    _scope_once() {
+        [[ -z "$scoped" ]] || {
+            _r42_print_fail "two scopes given at once: ${scoped} and ${1}" >&2
+            return 1
+        }
+        scoped="$1"
+    }
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            ## --role and --roles are aliases : both come naturally and the tool should not
+            ## correct the operator on it
+            --role|--roles)
+                _scope_once "$1" || return 1
+                case "${2:-}" in
+                    all)                    kind="all" ;;
+                    all-and-templating)     kind="all-and-templating" ;;
+                    "")  _r42_print_fail "$1 needs a value" >&2 ; return 1 ;;
+                    *)   kind="role" ; spec="$2" ;;
+                esac
+                shift 2 ;;
+            --vnet) _scope_once "$1" || return 1
+                    [[ -n "${2:-}" ]] || { _r42_print_fail "--vnet needs a value" >&2 ; return 1; }
+                    kind="vnet" ; spec="$2" ; shift 2 ;;
+            --cidr) _scope_once "$1" || return 1
+                    [[ -n "${2:-}" ]] || { _r42_print_fail "--cidr needs a value" >&2 ; return 1; }
+                    kind="cidr" ; spec="$2" ; shift 2 ;;
+            --yes|-y) assume_no_ask=true ; shift ;;
+            -*) _r42_print_fail "unknown option: $1" >&2
+                echo "  networks-internet-${action} [--roles all|all-and-templating|<r>,..] [--vnet <v>,..] [--cidr <c>,..] [--yes]" >&2
+                return 1 ;;
+            ## no bare argument : the scope is always named by its flag, so `admin` can never be
+            ## read as a network when it is a role, nor the reverse
+            *)  _r42_print_fail "unexpected argument: $1" >&2
+                echo "  the scope is always named by a flag, for instance  --vnet $1" >&2
+                return 1 ;;
+        esac
+    done
+
+    unset -f _scope_once
+
+    ## the bare form means --roles all, which is convenient and safe BECAUSE the recap and the
+    ## question stand between the operator and the change. Take the question away and it becomes
+    ## a silent cut of every network, the admin subnet included - wazuh pulling, the deployer
+    ## VMs, apt. So --yes and an implicit scope cannot be combined.
+    if $assume_no_ask && [[ -z "$scoped" ]]; then
+        _r42_print_fail "--yes needs an explicit scope" >&2
+        echo "  say which networks, out loud :" >&2
+        echo "    --roles all                  every network carrying vms" >&2
+        echo "    --roles all-and-templating   and the one the templates are built on" >&2
+        echo "    --roles teams                every network carrying that role" >&2
+        echo "    --vnet net143,net144         by network name" >&2
+        echo "    --cidr 192.168.143.0/24      by subnet" >&2
+        return 1
+    fi
+
+    local sel unmatched
+    sel=$(_r42_networks_resolve "$kind" "$spec") || return 1
+    unmatched=$(printf '%s\n' "$sel" | jq -r '.unmatched | join(", ")')
+    if [[ -n "$unmatched" ]]; then
+        _r42_print_fail "nothing matches: ${unmatched}" >&2
+        echo "  known scope labels : $(printf '%s\n' "$sel" | jq -r '[.selected[].labels[]] | unique | join(", ")')" >&2
+        return 1
+    fi
+
+    local names d all rows n
+    names=$(printf '%s\n' "$sel" | jq -c '[.selected[].vnet]')
+    d=$(_r42_networks_gather) || return 1
+    ## the whole set is kept, not only the scope : step 3 has to put back every network the apply
+    ## below touches, and it touches all of them
+    all=$(_r42_networks_join "$d")
+    ## THE RESTORE MAP, and it is DATACENTER-WIDE while `all` is scenario-wide. The apply below is an
+    ## ifreload : it appends a rule to EVERY subnet of the host, including those no scenario of ours
+    ## declares. Putting them back to the count they carried before is the only way this command
+    ## leaves them as it found them - measured 2026-09-10, without this the neighbours climbed from
+    ## three live rules to four at every gesture. Both reads already happened, cluster-wide, in the
+    ## gather : nothing more is fetched here.
+    local restore
+    restore=$(jq -n --slurpfile sub "$d/subnets.jsonl" --slurpfile rul "$d/rules.jsonl" '
+      [ $sub[]
+        | select((.subnet_cidr // "") != "")
+        | .subnet_cidr as $c
+        | ([ $rul[] | select(.snat_source == $c) ]) as $r
+        | { cidr:  $c,
+            vnet:  (.subnet_vnet // "-"),
+            count: ([ $r[] | .snat_count ] | add // 0),
+            # SNAT from the SDN hook, MASQUERADE from a legacy one : two shapes on one source
+            mixed: (([ $r[] | .snat_target ] | unique | length) > 1) } ]')
+    rm -rf "$d"
+    rows=$(printf '%s\n' "$all" | jq --argjson n "$names" '[ .[] | select(.vnet as $v | $n | index($v)) ]')
+    n=$(printf '%s\n' "$rows" | jq 'length')
+    [[ "$n" -eq 0 ]] && { _r42_print_fail "the scope selects no network" >&2 ; return 1 ; }
+
+    _r42_print_section "about to $( [[ $want -eq 1 ]] && echo ENABLE || echo DISABLE ) outgoing nat on ${n} network(s)"
+    printf '%s\n' "$rows" | jq -r '.[]
+      | "  \(.vnet)\t\(.cidr)\troles : \(.roles)\t\(.vms) vm(s)\tnat now : \(.nat)"' \
+      | while IFS=$'\t' read -r v c r m na ; do
+          printf "  %-10s %-20s %-26s %-10s %s\n" "$v" "$c" "$r" "$m" "$na"
+        done
+
+    ## the templating vnet feeds apt during the template build, so cutting it is almost never
+    ## what the operator means. `all` never selects it - only an explicit scope can.
+    if [[ "$want" -eq 0 ]]; then
+        local tpl
+        tpl=$(printf '%s\n' "$sel" | jq -r --argjson n "$names" '[ .templating_vnets[] | select(. as $t | $n | index($t)) ] | join(", ")')
+        [[ -n "$tpl" ]] && { echo "" ; _r42_print_warning "this scope includes the templating network (${tpl}) - the template build runs apt through it" ; }
+    fi
+
+    _r42_networks_legacy_notice "$rows"
+
+    if ! $assume_no_ask ; then
+        echo ""
+        printf "  proceed ? [y/N] "
+        local answer ; read -r answer
+        case "$answer" in
+            y|Y|yes|YES) : ;;
+            *) _r42_print_fail "aborted - nothing was changed" ; return 1 ;;
+        esac
+    fi
+
+    ## 1. the declaration, per vnet, WITHOUT applying
+    echo ""
+    _r42_print_step "setting snat=${want} on ${n} subnet(s) ..."
+    printf '%s\n' "$rows" | jq -c --arg w "$want" '.[]
+      | select(.subnet_id != null)
+      | {sdn_vnet: .vnet, sdn_subnet_id: .subnet_id, sdn_subnet_snat: $w}' \
+      | proxmox_network.sdn_vnet.update_sdn_subnet.to.jsons.sh --json >/dev/null || {
+          _r42_print_fail "the subnet update failed - no apply was run" ; return 1 ; }
+
+    ## 2. ONE apply for the whole scope
+    _r42_print_step "applying, once ..."
+    proxmox_network.datacenter.apply_sdn.to.jsons.sh --json >/dev/null || {
+        _r42_print_fail "the apply failed - the declaration is set but the live rules are not reconciled" ; return 1 ; }
+
+    ## 3. reconcile the live rules. THE SCOPE TAKES THE ASKED STATE, EVERY OTHER NETWORK IS PUT
+    ## BACK TO THE COUNT IT CARRIED BEFORE this command ran. The apply above replays every post-up
+    ## hook, so it appends a rule to each network whether we asked about it or not : putting the
+    ## others back to their previous count removes exactly that, and nothing else.
+    ## NOT their declaration. Reconciling a network against its declaration alters a network this
+    ## command was not aimed at - measured on the bench the 2026-09-10, where a gesture on net143
+    ## took net150 from three live rules down to one. `$all` is read BEFORE the apply, so .rules is
+    ## the count from before, which is precisely what has to come back.
+    ## Networks with no declared subnet are left alone - nothing is declared, so nothing to
+    ## normalise, and their live rules may belong to a pre-SDN deployment. A network of MIXED
+    ## origin is left alone too, and named : the primitive deletes by source network, so on a
+    ## network carrying both an SDN SNAT and a legacy MASQUERADE it could remove the wrong rule.
+    ## the cidrs of the scope : they take the asked state, every other one goes back to its count
+    local scope_cidrs recon mixed_out
+    scope_cidrs=$(printf '%s\n' "$rows" | jq -c '[ .[] | .cidr ]')
+    mixed_out=$(printf '%s\n' "$restore" | jq -r --argjson sc "$scope_cidrs" '.[]
+      | select((.cidr as $c | $sc | index($c)) | not)
+      | select(.mixed) | "\(.vnet) (\(.cidr))"' | paste -sd ', ' -)
+    if [[ -n "$mixed_out" ]]; then
+        _r42_print_warning "left untouched, their live rules have more than one origin : ${mixed_out}"
+        _r42_print_warning "read them with : proxmox_network.datacenter.list_snat_rules.to.jsons.sh"
+    fi
+    recon=$(printf '%s\n' "$restore" | jq -c --arg w "$want" --argjson sc "$scope_cidrs" '.[]
+      | select((.cidr as $c | $sc | index($c)) or (.mixed | not))
+      | { sdn_subnet_cidr: .cidr,
+          sdn_snat_want: (if (.cidr as $c | $sc | index($c)) then $w
+                          else (.count | tostring) end) }')
+    _r42_print_step "reconciling the live rules on $(printf '%s\n' "$recon" | grep -c .) network(s) ..."
+    printf '%s\n' "$recon" \
+      | proxmox_network.sdn_subnet_cidr.delete_extra_snat_rules.to.jsons.sh --json >/dev/null || {
+          _r42_print_fail "the reconciliation failed - check with networks-internet-list" ; return 1 ; }
+
+    echo ""
+    _r42_print_check "done - verify with : range42-context networks-internet-list"
+}
+
+# Printed only when the scope carries rules the SDN did not write. Says what is true : hybrid
+# hosts are supported, but an ifreload replays the old hooks and undoes this command.
+_r42_networks_legacy_notice() {
+    local rows="$1" legacy
+    legacy=$(printf '%s\n' "$rows" | jq -r '[ .[] | select(.origin == "legacy" or .origin == "mixed") | .vnet ] | join(", ")')
+    [[ -z "$legacy" ]] && return 0
+
+    echo ""
+    _r42_print_section "this host still carries pre-SDN nat rules"
+    echo "  on : ${legacy}"
+    echo ""
+    echo "  Those rules were written by the pre-SDN setup, from a vmbr stanza in"
+    echo "  /etc/network/interfaces. The SDN is what decides outgoing nat now, and a mixed host"
+    echo "  is fully supported - this command works on both kinds of rule."
+    echo ""
+    echo "  What to expect : the old rules are still physically on disk, and any 'ifreload -a'"
+    echo "  replays them - including one triggered by another scenario. So this command holds"
+    echo "  until that happens, not longer."
+    echo ""
+    echo "  Making it permanent means clearing those lines from /etc/network/interfaces, once"
+    echo "  per HYPERVISOR - it covers the twelve bridges the provisioning creates, not just this"
+    echo "  scenario's :"
+    echo "    range42-context networks-legacy-clean"
+}
+
+_r42_networks_internet_on()  { _r42_networks_internet_toggle on  "$@" ; }
+_r42_networks_internet_off() { _r42_networks_internet_toggle off "$@" ; }
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-show-firewall / networks-firewall-on / networks-firewall-off
+#
+# GLUE ONLY. The pair names the firewall bundles of the playbooks repo, checks what they read and
+# asks before running them ; the logic, the guards and the three-switch rule live in the bundles
+# and in the proxmox_controller roles. The view reads through the devkits, like networks-show-sdn.
+#
+# SCOPES of the pair (--scope), the default first :
+#   scenario_vms   firewall.{enable,disable}.vms            every guest of the ACTIVE scenario,
+#                                                            switch and card flags, templates out
+#   proxmox        firewall.{enable,disable}.datacenter_and_nodes   the host switches
+#   <vm_id>        firewall.{enable,disable}.vm             one guest the manifest declares
+#   all            proxmox then scenario_vms                 disarming goes datacenter first
+#
+# TWO FACTS THE RECAP REPEATS : nothing filters until the datacenter switch is on, so guests armed
+# on the default scope wait, inert, until the host is armed (the deploy never arms it) ; and the
+# anti-lockout is the bundles' own, ssh accept posted before every guest switch, management accepts
+# before every host switch. The vnet flag `isolate-ports` (ISOLATED in networks-show-sdn) is
+# another axis and is not touched here.
+#
+# WHAT THE BUNDLES READ : the workspace inventory (group proxmox), the scenario vault (proxmox_node)
+# through RANGE42_ACTIVE_CONFIG_DIR, the vault password file `use` exported, and -e BUNDLE_VM_ID for
+# the single-guest scope only. The whole story (naming, deploy coverage, campaign) is in the issue.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# usage: _r42_firewall_bundle_run <bundle name> [extra ansible-playbook args]
+#
+# NO GESTURE CALLS THIS RUNNER ANY MORE : the arming pair goes through the devkit composites (see
+# _r42_firewall_host_run and _r42_firewall_guests_run below). It is kept for a manual bundle run with
+# the readable output, and for the day a gesture needs a bundle again.
+#
+# THE OUTPUT OF A BUNDLE RUN FOLLOWS THE ONE SWITCH, range42-context debug-on / debug-off.
+#
+# debug OFF, the default : the bundle runs under the stdout callback range42_bundle of the range42
+# clone (callback_plugins/), which prints what the bundle says (the debug messages of its play, the
+# verdicts of its asserts) and every failure in full, and nothing else : no task list, no ok or
+# changed lines, no skipped, and none of the api dumps the roles print after every action.
+#
+# debug ON : the plain ansible output, no callback, every task and every payload.
+#
+# The callback is enabled for a run only, never in ansible.cfg, so site.yml and the deploys are
+# untouched ; a clone without the plugin falls back to the plain output with a warning. The state
+# is read from the same ansible.cfg the switch writes, so one command settles both. For a single
+# run without touching the switch : RANGE42_BUNDLE_OUTPUT=full, or =curated to insist on readable.
+_r42_firewall_bundle_run() {
+    local name="$1" ; shift
+    local cfg="${RANGE42_ACTIVE_CONFIG_DIR:-}"
+    if [[ -z "$cfg" ]]; then
+        _r42_print_fail "no active workspace (RANGE42_ACTIVE_CONFIG_DIR is empty)" >&2
+        _r42_print_warning "run: range42-context use <codename> <scenario>" >&2
+        return 1
+    fi
+    local inv bundle vault manifest
+    inv="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR%/}/inventory_default.yml"
+    bundle="${RANGE42_BUNDLE_DIR:-${RANGE42_GITDIR__ROOT_DIR%/}/range42-playbooks/bundles}/firewall/in_proxmox/${name}/main.yml"
+    vault="${RANGE42_VAULT_PASSWORD_FILE:-}"
+    manifest="${cfg%/}/scenario/manifest/scenario_vms.json"
+    for f in "$inv" "$bundle" "$vault" "$manifest" ; do
+        [[ -f "$f" ]] || { _r42_print_fail "not found: $f" >&2 ; return 1 ; }
+    done
+    local plugins="${RANGE42_GITDIR__ROOT_DIR%/}/range42/callback_plugins"
+    ## the level : what the shell asks for this run, else what the switch says
+    local level="${RANGE42_BUNDLE_OUTPUT:-}"
+    if [[ -z "$level" ]]; then
+        [[ "$(_r42_debug_state)" == "on" ]] && level="full" || level="curated"
+    fi
+    if [[ "$level" == "full" ]]; then
+        ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
+    elif [[ ! -f "$plugins/range42_bundle.py" ]]; then
+        _r42_print_warning "the readable output is unavailable (${plugins}/range42_bundle.py not found) - the full ansible output follows" >&2
+        ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
+    else
+        ANSIBLE_STDOUT_CALLBACK=range42_bundle ANSIBLE_CALLBACK_PLUGINS="$plugins" \
+          ansible-playbook -i "$inv" "$bundle" --vault-password-file "$vault" "$@"
+    fi
+}
+
+# usage: _r42_networks_show_firewall [--json] [--rules] [--scope scenario|vm_id <id>|vm_ids|node|dc|all]
+#
+# THE SIX SCOPES, the same words as the arming pair. The scope chooses the GUESTS : the datacenter
+# and node levels are ALWAYS reported, which is why the pair's `proxmox` has no counterpart here.
+# `dc` and `all` are the same thing while a workspace has one node.
+#
+# TWO VIEWS OF THE SAME SCENARIO, one flag apart. Without --rules, the SWITCHES : what is armed and
+# what actually filters. With --rules, the RULES of the three chains, the datacenter one, the node
+# one and the guests one, read by proxmox_firewall.scenario.show_firewall_rules.to.jsons.sh and
+# rendered by its own table, which already names the guests without a rule and the ids the node
+# does not run. The two answer different questions and neither replaces the other : a chain full of
+# accepts filters nothing while a switch is off, and an armed guest with an empty chain is a guest
+# nobody reaches. So each view points at the other.
+#
+# ONE DEVKIT, ONE RENDERER. The view is read by proxmox_firewall.scenario.show_firewall.to.jsons.sh,
+# the engine of the show_firewall family at the scenario grain (the api fast path when it answers,
+# the ansible readers otherwise, RANGE42_PROXMOX_API_FORCE=off to insist on the latter). This
+# function only adds the scenario semantics to the rendering : the section, the host sentence, the
+# table of the deployed guests through devkit_utils.jsons.render.to.table.sh, the "declared, not
+# deployed" line. --json hands the devkit's lines over as they come : one object per line, a `level`
+# on each (host, card, guest, absent, error). Per card the verdict is the devkit's : filtered when the
+# datacenter switch, the guest switch and the card flag are all on, the node switch never counts.
+_r42_networks_show_firewall() {
+    local as_json=false as_rules=false scope="" pos_id="" usage
+    usage="  networks-show-firewall [--json] [--rules] [--scope scenario|vm_id <id>|vm_ids|node|dc|all]"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json)  as_json=true ; shift ;;
+            --rules) as_rules=true ; shift ;;
+            --scope)
+                [[ -n "${2:-}" ]] || { _r42_print_fail "--scope needs a value" >&2 ; echo "$usage" >&2 ; return 1 ; }
+                [[ -z "$scope" ]] || { _r42_print_fail "--scope given twice" >&2 ; return 1 ; }
+                scope="$2" ; shift 2 ;;
+            ## an id may come bare, as the devkits accept it : networks-show-firewall 2001
+            [0-9]*)
+                [[ -z "$pos_id" ]] || { _r42_print_fail "only one vm_id may be given - pipe several ids with --scope vm_ids" >&2 ; return 1 ; }
+                pos_id="$1" ; shift ;;
+            *) _r42_print_fail "unknown argument: $1" >&2 ; echo "$usage" >&2 ; return 1 ;;
+        esac
+    done
+    if [[ -z "$scope" ]]; then
+        [[ -n "$pos_id" ]] && scope="vm_id" || scope="scenario"
+    fi
+    ## one envelope per grain, the segment names of the devkit repository
+    local grain
+    case "$scope" in
+        scenario)     grain="scenario" ;;
+        scenario_vms) grain="scenario" ; scope="scenario" ;;   ## the arming pair's legacy word, accepted
+        vm_id)        grain="vm_id" ;;
+        vm_ids)       grain="vm_ids" ;;
+        node)         grain="proxmox_node" ;;
+        dc|all)       grain="datacenter" ;;
+        *[!0-9]*) _r42_print_fail "unknown scope: ${scope}" >&2 ; echo "$usage" >&2 ; return 1 ;;
+        ## --scope <id>, the form the arming pair has always taken
+        *)
+            [[ -z "$pos_id" ]] || { _r42_print_fail "two ids given : --scope ${scope} and ${pos_id}" >&2 ; return 1 ; }
+            grain="vm_id" ; pos_id="$scope" ; scope="vm_id" ;;
+    esac
+    if [[ "$scope" == "vm_id" && -z "$pos_id" ]]; then
+        _r42_print_fail "--scope vm_id needs an id : networks-show-firewall --scope vm_id 2001" >&2
+        return 1
+    fi
+    if [[ -n "$pos_id" && "$scope" != "vm_id" ]]; then
+        _r42_print_warning "the id ${pos_id} is ignored at scope ${scope}" >&2
+        pos_id=""
+    fi
+    local scenario
+    scenario=$(_r42_active_scenario_name) || return 1
+    ## what the perimeter is called in the section and in the step line
+    local label
+    case "$scope" in
+        scenario) label="scenario: ${scenario}" ;;
+        vm_id)    label="vm ${pos_id}" ;;
+        vm_ids)   label="ids on stdin" ;;
+        node)     label="node : every guest" ;;
+        dc|all)   label="datacenter : every guest" ;;
+    esac
+    local dev_args=() ; [[ -n "$pos_id" ]] && dev_args=("$pos_id")
+
+    ## the rules view : the devkit renders its own three tables, this glue only frames them
+    if $as_rules ; then
+        local rules_cmd="proxmox_firewall.${grain}.show_firewall_rules.to.jsons.sh"
+        command -v "$rules_cmd" >/dev/null 2>&1 || {
+            _r42_print_fail "devkit not on PATH: $rules_cmd" >&2
+            echo "  the devkits are activated by sourcing their _activate.sh" >&2
+            return 1
+        }
+        if $as_json ; then
+            "$rules_cmd" "${dev_args[@]}" --json || {
+                _r42_print_fail "the firewall rules could not be read - run it by hand to see why : ${rules_cmd} --table" >&2
+                return 1
+            }
+            return 0
+        fi
+        _r42_print_step "reading the rules of the datacenter, the node and the guests of ${label} ..." >&2
+        local rules_out
+        rules_out=$("$rules_cmd" "${dev_args[@]}" --table 2>/dev/null) || {
+            _r42_print_fail "the firewall rules could not be read - run it by hand to see why : ${rules_cmd} --table" >&2
+            return 1
+        }
+        _r42_print_section "firewall rules  (${label})"
+        printf '%s\n' "$rules_out"
+        _r42_print_step "a rule grants nothing while its switch is off : range42-context networks-show-firewall"
+        echo ""
+        return 0
+    fi
+    local switches_cmd="proxmox_firewall.${grain}.show_firewall.to.jsons.sh"
+    local cmd
+    for cmd in "$switches_cmd" devkit_utils.jsons.render.to.table.sh ; do
+        command -v "$cmd" >/dev/null 2>&1 || {
+            _r42_print_fail "devkit not on PATH: $cmd" >&2
+            echo "  the devkits are activated by sourcing their _activate.sh" >&2
+            return 1
+        }
+    done
+
+    $as_json || _r42_print_step "reading the datacenter, the node and the guests of ${label} ..." >&2
+    local view
+    view=$("$switches_cmd" "${dev_args[@]}" --json 2>/dev/null) || {
+        _r42_print_fail "the firewall view could not be read - run it by hand to see why : ${switches_cmd} --table" >&2
+        return 1
+    }
+    if $as_json ; then
+        printf '%s\n' "$view"
+        return 0
+    fi
+
+    local node dc nd
+    node=$(printf '%s\n' "$view" | jq -r 'select(.level == "host") | .proxmox_node')
+    dc=$(printf '%s\n' "$view" | jq -r 'select(.level == "host") | .datacenter_enable // "-"')
+    nd=$(printf '%s\n' "$view" | jq -r 'select(.level == "host") | .node_enable // "-"')
+
+    _r42_print_section "firewall state  (${label})"
+    printf "  node %s : datacenter switch %s, node switch %s\n\n" "$node" "$dc" "$nd"
+
+    ## the deployed guests, templates out : one row per card ; a guest without a card gets a row of
+    ## dashes, a guest that could not be read a row of question marks (its reason goes to stderr)
+    local rows
+    rows=$(printf '%s\n' "$view" | jq -c '
+        if .level == "card" and ((.vm_template // 0) | tostring) != "1" then
+            {vm_id, vm_name, guest_enable, vm_network_device, vm_network_bridge, card_firewall_flag, effectively_filtered}
+        elif .level == "guest" and ((.vm_template // 0) | tostring) != "1" then
+            {vm_id, vm_name, guest_enable, vm_network_device: "-", vm_network_bridge: "-", card_firewall_flag: null, effectively_filtered: false}
+        elif .level == "error" then
+            {vm_id, vm_name: "?", guest_enable: "?", vm_network_device: "?", vm_network_bridge: "?", card_firewall_flag: "?", effectively_filtered: "?"}
+        else empty end')
+    if [[ -z "$rows" ]]; then
+        echo "  no guest here is deployed yet - the host switches above are the whole report"
+    else
+        ## minimum widths : the table keeps its shape whatever the names, and the shape it always had
+        printf '%s\n' "$rows" | devkit_utils.jsons.render.to.table.sh vm_id:VM_ID:5 vm_name:VM_NAME:25 guest_enable:GUEST:5 vm_network_device:CARD:7 vm_network_bridge:BRIDGE:9 card_firewall_flag:FLAG:4 effectively_filtered:FILTERED
+    fi
+    local line
+    printf '%s\n' "$view" | jq -r 'select(.level == "error") | "vm \(.vm_id) : unreadable (\(.reason))"' | while IFS= read -r line ; do
+        _r42_print_warning "$line" >&2
+    done
+    local missing
+    missing=$(printf '%s\n' "$view" | jq -r 'select(.level == "absent") | .vm_id' | paste -sd ' ' -)
+    ## "declared, not deployed" only means something when the ids come from the manifest ; asked
+    ## elsewhere, an absent id is simply not on this node
+    if [[ -n "$missing" ]]; then
+        if [[ "$scope" == "scenario" ]]; then
+            printf "\n  declared, not deployed : %s\n" "$missing"
+        else
+            printf "\n  not on this node : %s\n" "$missing"
+        fi
+    fi
+    echo ""
+}
+
+# usage: _r42_firewall_host_run on|off
+#
+# The host through the devkit composite proxmox_firewall.proxmox_node.arm / disarm : management
+# access first, then the datacenter switch, then the node switch (arm) ; datacenter off, then node,
+# accepts kept (disarm). The composite prints one json line per unitary step and one summary line
+# (firewall_arm_host / firewall_disarm_host) ; only the summary is rendered here, the refusals of the
+# unitaries reach the terminal on stderr by themselves.
+_r42_firewall_host_run() {
+    local action="$1" dk out
+    if [[ "$action" == "on" ]]; then dk="proxmox_firewall.proxmox_node.arm.to.jsons.sh" ; else dk="proxmox_firewall.proxmox_node.disarm.to.jsons.sh" ; fi
+    command -v "$dk" >/dev/null 2>&1 || { _r42_print_fail "devkit not on PATH: $dk" >&2 ; return 1 ; }
+    if [[ "$action" == "on" ]]; then
+        _r42_print_step "host : management access first, then the datacenter switch, then the node switch"
+    else
+        _r42_print_step "host : the datacenter switch off, then the node switch ; the management accepts are kept"
+    fi
+    out=$("$dk" --json </dev/null) || return 1
+    printf '%s\n' "$out" \
+      | jq -r 'select(.action == "firewall_arm_host" or .action == "firewall_disarm_host")
+               | "datacenter : \(.datacenter_before) -> \(.datacenter_after)", "node       : \(.node_before) -> \(.node_after)"' \
+      | sed 's/^/        /'
+    local verdict
+    verdict=$(printf '%s\n' "$out" | jq -r 'select(.action == "firewall_arm_host" or .action == "firewall_disarm_host")
+        | if .as_asked then (if .action == "firewall_arm_host" then "datacenter and node both armed, " + .management_access
+                             else "datacenter and node both off, " + .management_access end)
+          else "a host switch did not follow" end')
+    [[ -n "$verdict" ]] || { _r42_print_fail "no verdict came back from ${dk}" ; return 1 ; }
+    _r42_print_check "$verdict"
+}
+
+# usage: <ids on stdin, one per line> | _r42_firewall_guests_run on|off <label>
+#
+# The guests through the devkit composite proxmox_firewall.vm_ids.arm / disarm : for every id, in
+# order, ssh accept then card flags then switch (arm), or switch then card flags then the ssh accept
+# re-posted (disarm) ; the composite reads the guests once before and once after, skips and names the
+# ids the node does not run, refuses a guest with no card before writing anything, and stops at the
+# first refused step naming the guest. One rendered line per guest, then the count.
+_r42_firewall_guests_run() {
+    local action="$1" label="$2" dk out
+    if [[ "$action" == "on" ]]; then dk="proxmox_firewall.vm_ids.arm.to.jsons.sh" ; else dk="proxmox_firewall.vm_ids.disarm.to.jsons.sh" ; fi
+    command -v "$dk" >/dev/null 2>&1 || { _r42_print_fail "devkit not on PATH: $dk" >&2 ; return 1 ; }
+    if [[ "$action" == "on" ]]; then
+        _r42_print_step "guests : ssh accept, then the card flags, then the switch - one guest after the other"
+    else
+        _r42_print_step "guests : the switch off, then the card flags ; the ssh accept is kept - one guest after the other"
+    fi
+    out=$("$dk" --json) || return 1
+    local line
+    printf '%s\n' "$out" \
+      | jq -r --arg a "$action" 'select(.action == "firewall_arm_guest" or .action == "firewall_disarm_guest")
+          | if $a == "on" then "vm \(.vm_id) (\(.vm_name)) : switch on, \(.cards_as_asked | length) card(s) flagged, ssh \(if .ssh_accept == "posted" then "accept posted" else "accepted" end)"
+            else "vm \(.vm_id) (\(.vm_name)) : switch off, \(.cards_as_asked | length) card(s) unflagged, ssh accept kept in place" end' \
+      | while IFS= read -r line ; do _r42_print_check "$line" ; done
+    local n cards
+    n=$(printf '%s\n' "$out" | jq -s '[ .[] | select(.action == "firewall_arm_guest" or .action == "firewall_disarm_guest") ] | length')
+    cards=$(printf '%s\n' "$out" | jq -s '[ .[] | select(.action == "firewall_arm_guest" or .action == "firewall_disarm_guest") | (.cards_as_asked | length) ] | add // 0')
+    [[ "${n:-0}" -gt 0 ]] || { _r42_print_fail "no guest summary came back from ${dk}" ; return 1 ; }
+    if [[ "$action" == "on" ]]; then
+        _r42_print_check "${label} : ${n} guest(s) armed, ${cards} card(s) flagged, ssh accepted on every one"
+    else
+        _r42_print_check "${label} : ${n} guest(s) disarmed, ${cards} card(s) unflagged, ssh accepts kept in place"
+    fi
+}
+
+# usage: _r42_networks_firewall_toggle on|off [--scope scenario|proxmox|vm_id <id>|all] [--yes]
+#
+# THE SCOPE IS A FLAG, not a name : the sub-command names stay within the 22-character rule, as
+# --roles does for the internet pair. The same words as the reading view :
+#   scenario       the vms of the active scenario - the DEFAULT ; `scenario_vms` still accepted
+#   proxmox        the host : datacenter and node switches, management accepts first
+#   vm_id <id>     one vm of the active scenario, by id - refused for any id the manifest does not
+#                  declare ; the legacy form --scope <id> is still accepted
+#   all            the host plus every vm this node runs - DISARMING ONLY
+# ARMING with `scenario` also raises the host switches when they are off, since a guest filters only
+# when the datacenter switch, its own switch and the card flag are all on. DISARMING never lowers
+# them : the datacenter switch is the master switch of the host, so lowering it would stop the
+# filtering of every other scenario too - that is --scope proxmox, an explicit gesture.
+# ARMING with `all` is refused : a guest whose chain is empty would filter and lose its ssh.
+#
+# THE ORDER inside a gesture is the one the bundles argue and the campaign of 2026-09-03 measured, and
+# the devkit arming composites run it through the unitary devkits (api fast path) since 2026-09-15 :
+# arming goes host first (management accepts, datacenter switch, node switch) then guests ;
+# disarming goes datacenter first, then node, then guests, so that a later arming of the host does
+# not bring guest chains back alive unnoticed.
+# --yes needs an explicit --scope, the rule the internet pair already applies : nothing consequential
+# runs unattended on an implicit scope.
+_r42_networks_firewall_toggle() {
+    local action="$1" ; shift
+    local assume_no_ask=false scope="" vm_id_target="" usage
+    usage="  networks-firewall-${action} [--scope scenario|proxmox|vm_id <id>|all] [--yes]"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --scope)
+                [[ -n "${2:-}" ]] || { _r42_print_fail "--scope needs a value" >&2 ; echo "$usage" >&2 ; return 1 ; }
+                [[ -z "$scope" ]] || { _r42_print_fail "--scope given twice" >&2 ; return 1 ; }
+                scope="$2" ; shift 2 ;;
+            ## the id of --scope vm_id <id>, written as the reading view writes it
+            [0-9]*)
+                [[ -z "$vm_id_target" ]] || { _r42_print_fail "only one vm_id may be given" >&2 ; return 1 ; }
+                vm_id_target="$1" ; shift ;;
+            --yes|-y) assume_no_ask=true ; shift ;;
+            *) _r42_print_fail "unknown argument: $1" >&2
+               echo "$usage" >&2
+               return 1 ;;
+        esac
+    done
+    if $assume_no_ask && [[ -z "$scope" ]]; then
+        _r42_print_fail "--yes needs an explicit --scope" >&2
+        echo "$usage" >&2
+        return 1
+    fi
+    [[ -n "$scope" ]] || scope="scenario"
+    [[ "$scope" == "scenario_vms" ]] && scope="scenario"   ## the word of 2026-09-09, still accepted
+    local one_vm=false
+    case "$scope" in
+        scenario|proxmox|all) : ;;
+        vm_id) one_vm=true ;;
+        *[!0-9]*) _r42_print_fail "unknown scope: ${scope}" >&2 ; echo "$usage" >&2 ; return 1 ;;
+        *) one_vm=true ; vm_id_target="$scope" ; scope="vm_id" ;;   ## the legacy form --scope 2001
+    esac
+    if $one_vm && [[ -z "$vm_id_target" ]]; then
+        _r42_print_fail "--scope vm_id needs an id : networks-firewall-${action} --scope vm_id 2001" >&2
+        echo "$usage" >&2
+        return 1
+    fi
+    if ! $one_vm && [[ -n "$vm_id_target" ]]; then
+        _r42_print_fail "the id ${vm_id_target} means nothing at scope ${scope} - use --scope vm_id ${vm_id_target}" >&2
+        return 1
+    fi
+
+    ## refused : see the header
+    if [[ "$scope" == "all" && "$action" == "on" ]]; then
+        _r42_print_fail "--scope all is disarming only : arming every guest of this node would filter guests whose chain is empty, and such a guest loses its ssh" >&2
+        _r42_print_warning "read the chains first  : networks-show-firewall --rules --scope node" >&2
+        _r42_print_warning "arm host and scenario  : networks-firewall-on --scope scenario" >&2
+        _r42_print_warning "arm the host alone     : networks-firewall-on --scope proxmox" >&2
+        return 1
+    fi
+
+    local scenario ; scenario=$(_r42_active_scenario_name) || return 1
+    local verb="DISARM" ; [[ "$action" == "on" ]] && verb="ARM"
+
+    ## a vm_id must be one of the active scenario's guests : this family never touches another
+    ## workspace, and the single-guest bundle itself would accept any id the node runs
+    local vm_name=""
+    if $one_vm ; then
+        local manifest="${RANGE42_ACTIVE_CONFIG_DIR%/}/scenario/manifest/scenario_vms.json"
+        [[ -f "$manifest" ]] || { _r42_print_fail "not found: $manifest" >&2 ; return 1 ; }
+        vm_name=$(jq -r --argjson id "$vm_id_target" '.vms[] | select(.vm_id == $id) | .vm_name' "$manifest" 2>/dev/null)
+        if [[ -z "$vm_name" ]]; then
+            _r42_print_fail "vm_id ${vm_id_target} is not a vm of the active scenario (${scenario}) - this command never touches another workspace's guests" >&2
+            _r42_print_warning "ids this scenario declares : $(jq -r '[.vms[].vm_id] | join(" ")' "$manifest" 2>/dev/null)" >&2
+            return 1
+        fi
+    fi
+
+    ## scope all : the guests come from the NODE, not from a manifest, and the recap names them
+    ## before anything runs
+    local node_ids="" node_count=0 node_word="guests"
+    if [[ "$scope" == "all" ]]; then
+        node_ids=$( { printf '{}\n' | proxmox_vm.list.to.jsons.sh --json 2>/dev/null || true ; } \
+            | jq -r 'select(type == "object" and .vm_id != null and (((.vm_template // 0) | tostring) != "1")) | .vm_id' \
+            | sort -n | paste -sd ' ' -)
+        [[ -n "$node_ids" ]] || { _r42_print_fail "cannot list the guests of this node - read them with : networks-show-firewall --scope node" >&2 ; return 1 ; }
+        node_count=$(printf '%s' "$node_ids" | wc -w | tr -d ' ')
+        [[ "$node_count" -eq 1 ]] && node_word="guest" || node_word="guests"
+    fi
+
+    case "$scope" in
+        scenario)
+            if [[ "$action" == "on" ]]; then
+                _r42_print_section "about to ARM the host firewall if needed, then the firewall of every vm of the active scenario (${scenario})"
+            else
+                _r42_print_section "about to DISARM the firewall of every vm of the active scenario (${scenario}) - the host stays armed"
+            fi ;;
+        proxmox)      _r42_print_section "about to ${verb} the host firewall, datacenter and node (scenario: ${scenario})" ;;
+        all)          _r42_print_section "about to DISARM the host firewall and the ${node_count} ${node_word} this node runs, other scenarios included" ;;
+        *)            _r42_print_section "about to ${verb} the firewall of one vm of the active scenario : ${vm_id_target} ${vm_name} (${scenario})" ;;
+    esac
+    ## the host is reached by proxmox (both ways), by all (disarming) and by an ARMING of scenario
+    local touches_host=false
+    case "$scope" in
+        proxmox|all) touches_host=true ;;
+        scenario)    [[ "$action" == "on" ]] && touches_host=true ;;
+    esac
+    if $touches_host ; then
+        if [[ "$action" == "on" ]]; then
+            echo "  HOST : the management accepts (22, 8006) are posted on the datacenter and node chains,"
+            echo "  then the datacenter switch goes on, then the node switch - the order the bundle proved"
+            echo "  safe ; both guards refuse to arm a level whose management ports are not accepted. From"
+            echo "  that moment every guest already armed on this host filters."
+        else
+            echo "  HOST : the datacenter switch goes off, which stops every filtering on this host at once,"
+            echo "  then the node switch ; the management accepts are kept so a later arming stays safe."
+            if [[ "$scope" == "proxmox" ]]; then
+                echo "  The guests are NOT disarmed : they keep their switch and card flags, and filter again"
+                echo "  the moment the host is re-armed."
+            fi
+        fi
+        [[ "$scope" == "all" || "$scope" == "scenario" ]] && echo ""
+    fi
+    if [[ "$scope" == "all" ]]; then
+        echo "  GUESTS : the ${node_count} ${node_word} this node runs get their switch turned off, then their card"
+        echo "  flags, one guest after the other ; their ssh accepts stay posted. Templates are excluded."
+        echo "  ids : ${node_ids}"
+    fi
+    if [[ "$scope" == "scenario" ]]; then
+        if [[ "$action" == "on" ]]; then
+            echo "  GUESTS : every guest this scenario declares gets its ssh accept posted first, then its"
+            echo "  card flags, then its switch : the order the bundle proved safe, so the way back in exists"
+            echo "  before anything filters. Templates are excluded, other workspaces are never touched."
+        else
+            echo "  GUESTS : every guest this scenario declares gets its switch turned off, then its card"
+            echo "  flags ; the ssh accepts stay posted so a later arming remains safe. Templates are"
+            echo "  excluded, other workspaces are never touched."
+        fi
+    fi
+    if $one_vm ; then
+        if [[ "$action" == "on" ]]; then
+            echo "  ONE GUEST, ${vm_id_target} (${vm_name}) : its ssh accept posted first, then its card flags, then"
+            echo "  its switch - the order the bundle proved safe. Nothing else is touched."
+        else
+            echo "  ONE GUEST, ${vm_id_target} (${vm_name}) : its switch turned off, then its card flags ; the ssh"
+            echo "  accept stays posted. Nothing else is touched."
+        fi
+    fi
+    ## THE WARNING, one form per gesture : the user must know what this reaches beyond what was asked
+    if [[ "$action" == "on" && "$scope" == "scenario" ]]; then
+        echo ""
+        _r42_print_warning "the datacenter and node switches are turned ON if they are not already : that is what makes"
+        _r42_print_warning "this scenario filter at all, since a guest filters only when the datacenter switch, its own"
+        _r42_print_warning "switch and the card flag are all on. EVERY OTHER GUEST of this host that already carries"
+        _r42_print_warning "its switch and card flag starts filtering at the same moment. Read them before :"
+        _r42_print_warning "  networks-show-firewall --scope node"
+    elif [[ "$action" == "off" && "$scope" == "scenario" ]]; then
+        echo ""
+        _r42_print_warning "the host STAYS armed : the datacenter switch is not touched, so the guests of the other"
+        _r42_print_warning "scenarios keep filtering. Lowering it is an explicit gesture, never a side effect here :"
+        _r42_print_warning "  networks-firewall-off --scope proxmox"
+    elif [[ "$action" == "off" && "$scope" == "proxmox" ]]; then
+        echo ""
+        _r42_print_warning "THIS STOPS EVERY FILTERING ON THIS HOST AT ONCE, the guests of the other scenarios included:"
+        _r42_print_warning "the datacenter switch is the master switch of the host. On a shared or public host this"
+        _r42_print_warning "exposes them all. The guests keep their own switch and card flags, so they filter again the"
+        _r42_print_warning "moment the host is re-armed."
+    elif [[ "$action" == "off" && "$scope" == "all" ]]; then
+        echo ""
+        _r42_print_warning "THIS STOPS EVERY FILTERING ON THIS HOST and disarms the ${node_count} ${node_word} the node runs, the"
+        _r42_print_warning "guests of other scenarios included. Their ssh accepts stay posted, their switches go off."
+    elif [[ "$action" == "on" ]] && $one_vm ; then
+        echo ""
+        _r42_print_warning "the host is not touched by this scope. A guest filters only when the datacenter switch,"
+        _r42_print_warning "its own switch and the card flag are all on : with the datacenter off this arming filters"
+        _r42_print_warning "NOTHING. Read the three levels with networks-show-firewall, or arm the host too with"
+        _r42_print_warning "  networks-firewall-on --scope scenario"
+    fi
+
+    if ! $assume_no_ask ; then
+        echo ""
+        printf "  proceed ? [y/N] "
+        local answer ; read -r answer
+        case "$answer" in
+            y|Y|yes|YES) : ;;
+            *) _r42_print_fail "aborted - nothing was changed" ; return 1 ;;
+        esac
+    fi
+    echo ""
+
+    ## THE RUNS go through the devkit arming composites, which chain the unitary devkits in the order the
+    ## bundles proved safe ; every unitary takes the api fast path when the api answers, and
+    ## RANGE42_PROXMOX_API_FORCE=off keeps every step on ansible. The bundles stay with the deploy.
+    local stopped="the run stopped - see the refusal above, then read the state with networks-show-firewall"
+    local host_stopped="the host step stopped, nothing was done on the guests - see the refusal above, then read the state with networks-show-firewall"
+    local manifest_ids
+    case "$scope" in
+        proxmox)
+            _r42_firewall_host_run "$action" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
+        scenario)
+            ## ARMING goes host first then guests ; DISARMING touches the guests only and leaves the
+            ## master switch of the host up (see the header : a public host would be exposed)
+            if [[ "$action" == "on" ]]; then
+                _r42_firewall_host_run on || { _r42_print_fail "$host_stopped" ; return 1 ; }
+                echo ""
+            fi
+            ## the ids the scenario declares ; the composite skips and names the ones the node does not run
+            manifest_ids=$(jq -r '.vms[].vm_id' "${RANGE42_ACTIVE_CONFIG_DIR%/}/scenario/manifest/scenario_vms.json" 2>/dev/null)
+            [[ -n "$manifest_ids" ]] || { _r42_print_fail "this scenario declares no guest (manifest without vms) - nothing to do" ; return 1 ; }
+            printf '%s\n' "$manifest_ids" | _r42_firewall_guests_run "$action" "$scenario" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
+        all)
+            _r42_firewall_host_run off || { _r42_print_fail "$host_stopped" ; return 1 ; }
+            echo ""
+            printf '%s\n' ${=node_ids} | _r42_firewall_guests_run off "the ${node_count} ${node_word} this node runs" \
+              || { _r42_print_fail "the run stopped - the host is already disarmed, the guests before the one named too ; read the state with networks-show-firewall --scope node" ; return 1 ; } ;;
+        *)
+            printf '%s\n' "$vm_id_target" | _r42_firewall_guests_run "$action" "vm ${vm_id_target} (${vm_name})" || { _r42_print_fail "$stopped" ; return 1 ; } ;;
+    esac
+
+    echo ""
+    _r42_print_check "done - check the live state with : range42-context networks-show-firewall"
+}
+_r42_networks_firewall_on()  { _r42_networks_firewall_toggle on  "$@" ; }
+_r42_networks_firewall_off() { _r42_networks_firewall_toggle off "$@" ; }
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# networks-apply / networks-delete-sdn
+#
+# THIN WRAPPERS, like deploy / delete / delete-vms / reset. The logic lives in the scenario, in
+# <scenario>.setup_networks.sh and <scenario>.delete_networks.sh.
+#
+# WHAT EACH ONE READS, decided 2026-08-25 : setup runs the scenario's declaration playbook, the
+# only place `snat` and the zone name exist ; delete derives its scope from the manifest's `net*`
+# bridges, like every other delete script here.
+#
+# NAMES ARE THE ONES FROZEN IN 3.4 : networks-apply, not networks-setup.
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+# usage: _r42_networks_apply [--dry-run] [extra ansible-playbook args]
+_r42_networks_apply() {
+    local scenario_target scenario_name script
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    scenario_name="${scenario_target##*/}"
+    script="${scenario_target}/${scenario_name}.setup_networks.sh"
+
+    if [[ ! -f "$script" ]]; then
+        _r42_print_fail "script not found: $script"
+        _r42_print_step "${scenario_name} declares no SDN network yet - the declaration and this"
+        _r42_print_step "script live in the scenario, not in range42-context"
+        return 1
+    fi
+
+    _r42_print_section "creating the SDN networks this scenario declares"
+    _r42_print_step "running: $script"
+    echo ""
+
+    ( cd "$scenario_target" && bash "$script" "$@" )
+}
+
+# usage: _r42_networks_delete_sdn [extra args]
+_r42_networks_delete_sdn() {
+    local scenario_target scenario_name script
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    scenario_name="${scenario_target##*/}"
+    script="${scenario_target}/${scenario_name}.delete_networks.sh"
+
+    if [[ ! -f "$script" ]]; then
+        _r42_print_fail "script not found: $script"
+        _r42_print_step "${scenario_name} declares no SDN network yet - nothing to remove"
+        return 1
+    fi
+
+    _r42_print_section "removing the SDN networks of this scenario"
+    _r42_print_warning "the subnets and vnets it declares are destroyed - the shared zone is kept"
+    _r42_print_step "running: $script"
+    echo ""
+
+    ( cd "$scenario_target" && bash "$script" "$@" )
+}
+
+
+# networks-legacy-clean : disarm the pre-SDN stanzas of the active scenario's networks.
+#
+# The FIRST direct ansible-playbook call from this file - everything else goes through a scenario
+# script or a devkit. It is a bundle, so the form is the one the debug_sdn_tests README documents.
+#
+# SCOPE IS THE HYPERVISOR, NOT THE ACTIVE SCENARIO - widened 2026-08-25. Per scenario meant
+# repeating the operation for each one and never getting a host clean in a single pass, and left
+# every bridge no active scenario claimed still armed. This is the ONE exception to the scope rule
+# every other networks-* command follows, and it is an exception because a MIGRATION is wide by
+# nature and runs once.
+#
+# THE LIST IS DERIVED FROM range42_lab_bridges, in proxmox.init's defaults - never from a `vmbr14*`
+# glob, which would miss 150 and 151, nor from the manifests, which only cover the vnets in use.
+# The wizard rewrites that list into the workspace inventory, but only to toggle `nat` per bridge :
+# the NAMES are fixed at vmbr140..vmbr151 in both places (range42-init.py, range(140, 152)). And
+# `nat` does not matter here, since the disarm removes the address AND any MASQUERADE hook.
+#
+# The bundle takes the SAME shape as sdn_network.bootstrap and derives vmbrNNN from netNNN itself,
+# so the twelve are expressed as netNNN even where no vnet of that name exists. That is safe : this
+# bundle has no route assertion, and a bridge absent from the host is reported and skipped.
+_r42_networks_legacy_clean() {
+    local assume_no_ask=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y) assume_no_ask=true ; shift ;;
+            *) _r42_print_fail "unknown argument: $1" >&2
+               echo "  networks-legacy-clean [--yes]" >&2
+               return 1 ;;
+        esac
+    done
+
+    command -v yq >/dev/null 2>&1 || {
+        _r42_print_fail "yq is not on PATH - the bridge list lives in a yaml file" >&2 ; return 1 ; }
+
+    local defaults bridges n
+    defaults="${RANGE42_GITDIR__ROOT_DIR%/}/range42/roles/proxmox.init/defaults/main.yml"
+    [[ -f "$defaults" ]] || {
+        _r42_print_fail "the provisioning bridge list was not found: $defaults" >&2 ; return 1 ; }
+
+    ## gateway is the address to remove ; subnet only carries the mask, and the provisioning
+    ## writes 255.255.255.0 for every one of them
+    bridges=$(yq -c '[ .range42_lab_bridges[]
+                       | { vnet:    ("net" + (.name | ltrimstr("vmbr"))),
+                           subnet:  ((.ip | sub("\\.[0-9]+$"; ".0")) + "/24"),
+                           gateway: .ip } ]' "$defaults" 2>/dev/null)
+    n=$(printf '%s\n' "$bridges" | jq 'length' 2>/dev/null || echo 0)
+    if [[ "$n" -eq 0 ]]; then
+        _r42_print_fail "range42_lab_bridges is empty or unreadable in $defaults" >&2
+        return 1
+    fi
+
+    local inv bdir bundle vault
+    inv="${RANGE42_ANSIBLE_ROLES__INVENTORY_DIR%/}/inventory_default.yml"
+    bdir="${RANGE42_BUNDLE_DIR:-${RANGE42_GITDIR__ROOT_DIR%/}/range42-playbooks/bundles}/proxmox/legacy_bridge.cleaning.shadowed_subnet"
+    bundle="${bdir}/main.yml"
+    vault="${RANGE42_VAULT_PASSWORD_FILE:-}"
+    for f in "$inv" "$bundle" "${bdir}/disarm_legacy_bridge.sh" "$vault" ; do
+        [[ -f "$f" ]] || { _r42_print_fail "not found: $f" >&2 ; return 1 ; }
+    done
+
+    _r42_print_section "disarm the pre-SDN stanzas of this hypervisor"
+    _r42_print_step "bridges in scope : ${n}, $(printf '%s\n' "$bridges" | jq -r '[.[].vnet | sub("^net"; "vmbr")] | join(" ")')"
+    echo ""
+    echo "  This is a MIGRATION step, run ONCE PER HYPERVISOR - not per scenario. It covers every"
+    echo "  bridge the provisioning creates, so one pass leaves the host clean instead of leaving"
+    echo "  behind the ones no active scenario happens to claim."
+    echo ""
+    echo "  It edits /etc/network/interfaces so that no ifreload can bring the pre-SDN hooks back."
+    echo "  A clean host is a no-op : nothing is detected, nothing is asked. Where something IS"
+    echo "  found, the bundle shows the exact lines and asks before writing, after taking a"
+    echo "  timestamped backup whose path it prints."
+    echo ""
+    echo "  BEING HOST-WIDE, it refuses while a running guest sits on ANY of those bridges - not"
+    echo "  only the ones this scenario uses. That is the trade : one clean pass over the host, at"
+    echo "  the price of dealing with every legacy guest together."
+    echo ""
+    echo "  The live addresses and rules are NOT touched - reconcile them with"
+    echo "  networks-internet-on afterwards."
+    echo ""
+
+    ## the pause inside the bundle needs a terminal, which is where this command is run from
+    ansible-playbook -i "$inv" "$bundle" \
+        --vault-password-file "$vault" \
+        -e "{\"BUNDLE_SDN_VNETS\": ${bridges}, \"BUNDLE_LEGACY_BUNDLE_DIR\": \"${bdir}\"$( $assume_no_ask && printf ', "BUNDLE_LEGACY_ASSUME_YES": true' )}" \
+      || { _r42_print_fail "nothing was written - see the output above" ; return 1 ; }
+
+    echo ""
+    _r42_print_check "done - check the live state with : range42-context networks-internet-list"
+}
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context snapshot — snapshot all VMs of the active scenario
@@ -1796,38 +3071,165 @@ _r42_init() {
         return 1
     fi
 
+    # The wizard is a child process : it can neither load the ssh-agent of THIS shell
+    # nor export the workspace environment into it. So the wizard only reports the
+    # workspace it has just initialized (codename and scenario, one line) through a
+    # sentinel file, and this function, which runs in the operator's shell, switches
+    # to it with the very same `use` the operator would type. Without that switch an
+    # init leaves the agent with the proxmox keys only (playbook 02 unloads every key
+    # and reloads root + jump) and the next deploy fails on the alice key. The wizard
+    # writes the sentinel only when site.yml succeeded : "Deploy later", a cancel or
+    # a failure leave it empty and nothing is switched.
+    local init_sentinel
+    init_sentinel="$(mktemp -t range42-init-workspace.XXXXXX)" || return 1
+    export RANGE42_INIT_SENTINEL="$init_sentinel"
     python3 "$init_script"
+    local rc=$?
+    unset RANGE42_INIT_SENTINEL
+
+    local codename="" scenario=""
+    if [[ $rc -eq 0 && -s "$init_sentinel" ]]; then
+        read -r codename scenario < "$init_sentinel"
+    fi
+    rm -f "$init_sentinel"
+    if [[ -z "$codename" || -z "$scenario" ]]; then
+        return $rc
+    fi
+
+    # Printed as the command it is : the operator must see that range42-context has
+    # just run `use` for them, and which one.
+    _r42_print_section "switching to the workspace you just initialized"
+    printf "    \033[1;36m➜ executed for you: range42-context use %s %s\033[0m\n" "$codename" "$scenario"
+    if ! _r42_use "$codename" "$scenario"; then
+        _r42_print_fail "automatic switch failed, run it yourself:"
+        _r42_print_warning "  range42-context use ${codename} ${scenario}"
+        return 1
+    fi
+    _r42_print_check "workspace ${codename}-${scenario} is active: ssh keys, vault and environment loaded"
+
+    # Launched from the TUI (suspend mode runs this function in a child shell) : hand
+    # the same `use` to the parent shell through the TUI sentinel, so it switches too
+    # and the TUI comes back with this workspace active.
+    if [[ -n "${RANGE42_TUI_SENTINEL:-}" && -w "$RANGE42_TUI_SENTINEL" ]]; then
+        printf 'range42-context use %s %s\n' "$codename" "$scenario" > "$RANGE42_TUI_SENTINEL"
+    fi
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
-# range42-context debug — toggle verbose/skip output in ansible.cfg
+# range42-context tools-update - re-copy the shell tools from the local clone
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+#
+# THIS FILE IS A COPY. The bootstrap copies roles/deployer.bootstrap/files/range42-context.sh
+# (and range42-workspace.sh) into ~/ and .zshrc sources the copy, so the copy lags behind the
+# clone until the bootstrap task is replayed. This command replays exactly that task, through
+# playbooks/90_patch_deployer_tools.yml - same tasks, same result as `range42-context init`,
+# without packages, dotfiles, repos or the workspace.
+#
+# It does NOT git pull : the source is the local clone as it stands. Pull first for upstream
+# changes ; edit the clone for local ones. Edits made in ~/range42-context.sh itself are lost.
+# The wizard and the TUI are not concerned : they execute in place from the clone.
+#
+# No active workspace is needed : the replayed task consumes DEPLOYER_CLI_USER only, and the
+# operator running this IS that user. ANSIBLE_ROLES_PATH is set for this call only, because
+# the sourced workspace env that normally provides it may be absent.
+_r42_tools_update() {
+    local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
+    local repo="${git_dir%/}/range42"
+    local playbook="${repo}/playbooks/90_patch_deployer_tools.yml"
+    local roles="${repo}/roles"
+
+    for p in "$playbook" "${roles}/deployer.bootstrap/files/range42-context.sh" \
+             "${roles}/deployer.bootstrap/files/range42-workspace.sh" ; do
+        [[ -f "$p" ]] || { _r42_print_fail "not found: $p" >&2
+                           _r42_print_warning "is the range42 clone at ${repo} up to date ?" >&2
+                           return 1 ; }
+    done
+
+    _r42_print_section "re-copy the shell tools from the local clone"
+    _r42_print_step "source : ${repo} ($(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?') @ $(git -C "$repo" log -1 --format=%h 2>/dev/null || echo '?'))"
+    _r42_print_step "target : ~/range42-context.sh, ~/range42-workspace.sh"
+    _r42_print_step "no git pull is done here - pull the clone first for upstream changes"
+    echo ""
+
+    ANSIBLE_ROLES_PATH="$roles" ansible-playbook -i localhost, "$playbook" \
+        -e "DEPLOYER_CLI_USER=${USER}" \
+      || { _r42_print_fail "the copy did not run - see the output above" ; return 1 ; }
+
+    echo ""
+    ## local, so the banner guard sees it in bash and zsh alike, and nothing leaks to the shell
+    local RANGE42_QUIET=1
+    source "$HOME/range42-context.sh"
+    [[ -f "$HOME/range42-workspace.sh" ]] && source "$HOME/range42-workspace.sh"
+    _r42_print_check "reloaded in this shell"
+    _r42_print_warning "other open shells still hold the previous version : open a new one, or : source ~/.zshrc"
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context debug-on / debug-off / debug
+#
+# ONE SWITCH, TWO OUTPUTS, everywhere. debug OFF is the readable output : a run says what it did
+# and every failure, and nothing else. debug ON is the full ansible log, every task and every
+# payload, for a session where one wants to see the plumbing.
+#
+# It reaches two places at once, from a single state written in ansible.cfg :
+#   the playbooks that read that file  ->  no_skipped when off, plain ansible output when on
+#   the bundles range42-context runs   ->  the curated callback when off, plain ansible when on
+#
+# `debug` alone says which one is active and changes nothing : the old single word toggled the
+# state blindly, which said neither what it was nor what it became.
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
-_r42_debug() {
-    # resolve ansible.cfg path:
-    #   1. ANSIBLE_CONFIG (exported by range42-context use)
-    #   2. RANGE42_GITDIR__ROOT_DIR/range42/ansible.cfg (custom install path from wizard)
-    #   3. $HOME/range42/range42/ansible.cfg (default fallback)
+# usage: _r42_ansible_cfg  ->  prints the path of the ansible.cfg the switch acts on
+#   1. ANSIBLE_CONFIG (exported by range42-context use)
+#   2. RANGE42_GITDIR__ROOT_DIR/range42/ansible.cfg (custom install path from wizard)
+#   3. $HOME/range42/range42/ansible.cfg (default fallback)
+_r42_ansible_cfg() {
     local git_dir="${RANGE42_GITDIR__ROOT_DIR:-$HOME/range42}"
-    local cfg="${ANSIBLE_CONFIG:-${git_dir%/}/range42/ansible.cfg}"
+    echo "${ANSIBLE_CONFIG:-${git_dir%/}/range42/ansible.cfg}"
+}
 
+# usage: _r42_debug_state  ->  prints on or off ; off (the readable output) when there is no file
+_r42_debug_state() {
+    local cfg
+    cfg=$(_r42_ansible_cfg)
+    if [[ -f "$cfg" ]] && ! grep -q '^stdout_callback = no_skipped' "$cfg" ; then
+        echo "on"
+    else
+        echo "off"
+    fi
+}
+
+# usage: _r42_debug_set on|off   idempotent : it writes a state, it does not toggle one
+_r42_debug_set() {
+    local want="$1" cfg
+    cfg=$(_r42_ansible_cfg)
     if [[ ! -f "$cfg" ]]; then
         _r42_print_fail "ansible.cfg not found: $cfg"
         return 1
     fi
-
-    # check current state — if stdout_callback is active (not commented), we're in clean mode
-    if grep -q '^stdout_callback = no_skipped' "$cfg"; then
-        # switch to debug mode — comment out the no_skipped lines
+    if [[ "$want" == "on" ]]; then
         sed -i 's/^stdout_callback = no_skipped/# stdout_callback = no_skipped/' "$cfg"
         sed -i 's/^callback_plugins = callback_plugins/# callback_plugins = callback_plugins/' "$cfg"
-        _r42_print_check "debug mode ON — skipped tasks will be visible"
+        _r42_print_check "debug ON : full ansible logs, every task and every payload"
     else
-        # switch to clean mode — uncomment the no_skipped lines
         sed -i 's/^# stdout_callback = no_skipped/stdout_callback = no_skipped/' "$cfg"
         sed -i 's/^# callback_plugins = callback_plugins/callback_plugins = callback_plugins/' "$cfg"
-        _r42_print_check "debug mode OFF — skipped tasks hidden"
+        _r42_print_check "debug OFF : the readable output, what a run says and its failures"
     fi
+    _r42_print_step "it applies to the next run, here and in every shell of this deployer"
+}
+
+_r42_debug() {
+    local state
+    state=$(_r42_debug_state)
+    if [[ "$state" == "on" ]]; then
+        _r42_print_check "debug is ON : full ansible logs"
+        _r42_print_step "back to the readable output : range42-context debug-off"
+    else
+        _r42_print_check "debug is OFF : the readable output, what a run says and its failures"
+        _r42_print_step "full logs for a debugging session : range42-context debug-on"
+    fi
+    _r42_print_step "the switch writes $(_r42_ansible_cfg)"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -1849,6 +3251,7 @@ _r42_help() {
     printf "    ${N}use${R} <codename> <scenario>      ${D}switch to a workspace${R}\n"
     printf "    ${N}status${R}                         ${D}check workspace health${R}\n"
     printf "    ${N}init${R}                           ${D}launch setup wizard${R}\n"
+    printf "    ${N}tools-update${R}                   ${D}re-copy range42-context.sh + range42-workspace.sh from the local clone (no git pull)${R}\n"
     printf "    ${N}--tui${R}                          ${D}launch the interactive TUI dashboard${R}\n"
     echo ""
     printf "  ${C}navigation${R}\n"
@@ -1880,13 +3283,49 @@ _r42_help() {
     printf "    ${N}show-config${R}                    ${D}show workspace orientation (paths + SSH hosts)${R}\n"
     printf "    ${N}show-inventory${R}                 ${D}show ansible inventory tree${R}\n"
     printf "    ${N}ssh${R} <pattern>                  ${D}quick ssh to a VM by name${R}\n"
-    printf "    ${N}debug${R}                          ${D}toggle verbose output (show/hide skipped tasks)${R}\n"
+    printf "    ${N}debug-on${R}                       ${D}full ansible logs, for a debugging session${R}\n"
+    printf "    ${N}debug-off${R}                      ${D}the readable output : what a run says, and its failures${R}\n"
+    printf "    ${N}debug${R}                          ${D}say which of the two is active${R}\n"
     printf "    ${N}help${R}                           ${D}show this help${R}\n"
     echo ""
     printf "  ${C}catalog-try (one usage VM for single catalog element validation)${R}\n"
     printf "    ${N}catalog-try${R} <path>             ${D}deploy + smoke-check a catalog element (e.g. docker/_ctf/hello)${R}\n"
     printf "    ${N}catalog-try-list${R}               ${D}list catalog-try elements (L1/L2) excluding docker/admin/*${R}\n"
     printf "    ${N}catalog-try-list-admin${R}         ${D}list catalog-try elements (L1/L2) under docker/admin/* only${R}\n"
+    echo ""
+    printf "  ${C}networks (sdn state, egress and firewall)${R}\n"
+    printf "    ${N}networks-apply${R}                 ${D}create what this scenario declares - idempotent, a conforming host is a no-op${R}\n"
+    printf "      ${D}--dry-run                    declared versus live, writes nothing${R}\n"
+    printf "    ${N}networks-delete-sdn${R}            ${D}remove this scenario's subnets and vnets - the shared zone is kept${R}\n"
+    printf "    ${N}networks-show-sdn${R}              ${D}zone / vnet / subnet / snat / isolation, per network of the active scenario${R}\n"
+    printf "    ${N}networks-internet-list${R}         ${D}where egress is actually active : declared vs live rules${R}\n"
+    printf "    ${N}networks-internet-on${R}|${N}off${R}       ${D}enable / disable outgoing nat, with a recap and a confirmation${R}\n"
+    printf "      ${D}no argument                  same as --roles all${R}\n"
+    printf "      ${D}--roles all                  every network carrying vms, never the templating one${R}\n"
+    printf "      ${D}--roles all-and-templating   adds the network the templates are built on${R}\n"
+    printf "      ${D}--roles teams                every network carrying that role${R}\n"
+    printf "      ${D}--roles team-143,team-144    by scope label, as networks-show-sdn lists them${R}\n"
+    printf "      ${D}--vnet net143,net144         by network name${R}\n"
+    printf "      ${D}--cidr 192.168.143.0/24      by subnet${R}\n"
+    printf "      ${D}--yes                        skip the confirmation - needs an explicit scope${R}\n"
+    printf "    ${N}networks-show-firewall${R}         ${D}datacenter, node and per-vm switches with card flags, read only${R}\n"
+    printf "    ${N}networks-show-firewall --rules${R} ${D}the rules of the three chains instead of the switches, read only${R}\n"
+    printf "      ${D}no --scope                   same as --scope scenario, for both views above${R}\n"
+    printf "      ${D}--scope scenario             the vms this scenario declares - the default${R}\n"
+    printf "      ${D}--scope vm_id <id>           one vm of this node, by id${R}\n"
+    printf "      ${D}--scope vm_ids               a set of ids on stdin, one per line${R}\n"
+    printf "      ${D}--scope node                 every vm this node runs, templates and other scenarios included${R}\n"
+    printf "      ${D}--scope dc | all             the whole datacenter ; today the node of this workspace${R}\n"
+    printf "      ${D}--json                       one json object per line, a level on each - no table${R}\n"
+    printf "    ${N}networks-firewall-on${R}|${N}off${R}       ${D}arm / disarm the firewall, with a recap and a confirmation${R}\n"
+    printf "      ${D}no --scope                   same as --scope scenario${R}\n"
+    printf "      ${D}--scope scenario             on : the host switches if not already on, then the vms of this${R}\n"
+    printf "      ${D}                             scenario ; off : those vms only, the host stays armed${R}\n"
+    printf "      ${D}--scope proxmox              only the host : datacenter and node switches, management accepts first${R}\n"
+    printf "      ${D}--scope vm_id <id>           only that vm of this scenario, by id${R}\n"
+    printf "      ${D}--scope all                  off only : the host, then every vm this node runs${R}\n"
+    printf "      ${D}--yes                        skip the confirmation - needs an explicit --scope${R}\n"
+    printf "    ${N}networks-legacy-clean${R}          ${D}migration : disarm the pre-SDN stanzas of ALL 12 provisioning bridges, once per host${R}\n"
     echo ""
 }
 
@@ -1905,6 +3344,7 @@ range42-context() {
         use)            _r42_use "$@" ;;
         status)         _r42_status ;;
         init)           _r42_init ;;
+        tools-update)   _r42_tools_update ;;
         deploy)             _r42_deploy "$@" ;;
         deploy-vms)         _r42_deploy_vms "$@" ;;
         delete)             _r42_delete ;;
@@ -1926,9 +3366,22 @@ range42-context() {
         ssh)            _r42_ssh "$@" ;;
         cd)             _r42_cd "$@" ;;
         debug)          _r42_debug ;;
+        debug-on)       _r42_debug_set on ;;
+        debug-off)      _r42_debug_set off ;;
         catalog-try)         _r42_catalog_try "$@" ;;
         catalog-try-list)        _r42_catalog_try_list "" "docker/admin/" ;;
         catalog-try-list-admin)  _r42_catalog_try_list_admin ;;
+
+        networks-apply)          _r42_networks_apply "$@" ;;
+        networks-delete-sdn)     _r42_networks_delete_sdn "$@" ;;
+        networks-show-sdn)       _r42_networks_show_sdn ;;
+        networks-internet-list)  _r42_networks_internet_list ;;
+        networks-internet-on)    _r42_networks_internet_on "$@" ;;
+        networks-internet-off)   _r42_networks_internet_off "$@" ;;
+        networks-show-firewall)  _r42_networks_show_firewall "$@" ;;
+        networks-firewall-on)    _r42_networks_firewall_on "$@" ;;
+        networks-firewall-off)   _r42_networks_firewall_off "$@" ;;
+        networks-legacy-clean)   _r42_networks_legacy_clean "$@" ;;
         help|--help|-h) _r42_help ;;
         --tui)
             # Launch the Textual TUI in a while-loop so `use` (eval-on-exit, code 42)

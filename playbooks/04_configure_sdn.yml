@@ -1,0 +1,98 @@
+---
+################################################################################
+# 04 - Configure the SDN lab networks of the host (SDN mode only)
+#
+# Creates the SDN zone and the lab networks declared in the inventory
+# (range42_sdn_zone, range42_sdn_networks - group_vars/all/vars.yml, section
+# NETWORK MODE) on the Proxmox host, through the sdn_network.bootstrap bundle of
+# range42-playbooks : read the live state, create what is missing, update what
+# has drifted (the snat of a network), apply once, reconcile the live SNAT rules.
+# A second run is a no-op. Re-running it is how a host is put back in shape.
+#
+# LEGACY MODE (INIT_LEGACY_BRIDGES "YES") : nothing is created here, the legacy
+# bridges come from proxmox.init in playbook 02. This playbook says so and ends.
+#
+# WHY A SEPARATE STEP, NOT PART OF site.yml
+#   The bundle loads the encrypted vault (the api token lives there), so this run
+#   needs --vault-password-file. On a first init that password file is produced
+#   by playbook 01 DURING site.yml, and ansible reads vault secrets at startup :
+#   importing this playbook into site.yml would break the very first run. The
+#   wizard runs it right after site.yml ; by hand it is step 5b of GETTING_STARTED.
+#
+# Requires :
+#   - 01 and 02 completed (vault with the api token, root ssh key on the host)
+#   - range42-playbooks cloned as a sibling of this repo (the wizard preflight does
+#     it ; the deployer-cli has it), or RANGE42_BUNDLE_DIR set to its bundles/ dir
+#   - the role range42-ansible_roles-proxmox_controller on ANSIBLE_ROLES_PATH
+#     (sibling clone : range42-ansible_roles-proxmox_controller/roles)
+#   - RANGE42_ACTIVE_CONFIG_DIR pointing to the dir that holds secrets/default_vault.yml :
+#     the bundle reads its vault there. On the deployer-cli `range42-context use` sets
+#     it ; by hand : export RANGE42_ACTIVE_CONFIG_DIR="$PWD/config/<CODENAME>-<SCENARIO>"
+#
+# Usage:
+#   ansible-playbook playbooks/04_configure_sdn.yml \
+#     -i inventories/<your-codename>/hosts.yml \
+#     -e @inventories/<your-codename>/group_vars/<scenario>/vars.yml \
+#     -e INFRASTRUCTURE_SCENARIO=<scenario> \
+#     --vault-password-file ./config/<CODENAME>-<SCENARIO>/secrets/vault_pass.txt
+#
+# What it touches on the host : the SDN objects (zone, vnets, subnets), one
+# `ifreload -a` through the apply when something was written, and the nat table
+# of the host for the SNAT reconcile (over root ssh, like playbook 02 does).
+#
+################################################################################
+
+# The SNAT reconcile of the bundle runs iptables on the hypervisor and looks for it in
+# the proxmox_cli group, which the init inventory does not carry (the api host is
+# connection local). Same registration as playbook 02 for the ssh limits : root over
+# the root key installed by proxmox.init.
+- name: 04 configure sdn - register the hypervisor as the ssh target of the snat reconcile
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
+    proxmox_root_ssh_key_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
+
+  tasks:
+    - name: 04 CONFIGURE SDN - LEGACY MODE, NOTHING TO CREATE HERE
+      ansible.builtin.debug:
+        msg: >-
+          INIT_LEGACY_BRIDGES is YES on this inventory : legacy vmbr bridges (unsupported),
+          created by playbook 02 - no SDN network is created.
+      when: INIT_LEGACY_BRIDGES | default('NO') | upper == 'YES'
+
+    - name: 04 CONFIGURE SDN - REGISTER THE HYPERVISOR IN proxmox_cli (root over the root key)
+      ansible.builtin.add_host:
+        name: "{{ INFRASTRUCTURE_CODENAME }}-cli"
+        groups: proxmox_cli
+        ansible_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}"
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ proxmox_root_ssh_key_path }}"
+        ansible_python_interpreter: /usr/bin/python3
+      changed_when: false
+      when: INIT_LEGACY_BRIDGES | default('NO') | upper != 'YES'
+
+# The bundle, untouched. RANGE42_BUNDLE_DIR when the workspace env is loaded, the sibling
+# clone otherwise - both layouts put range42-playbooks next to this repo.
+- import_playbook: "{{ lookup('env', 'RANGE42_BUNDLE_DIR') | default(playbook_dir ~ '/../../range42-playbooks/bundles', true) }}/proxmox/sdn_network.bootstrap/main.yml"
+  when: INIT_LEGACY_BRIDGES | default('NO') | upper != 'YES'
+  vars:
+    BUNDLE_SDN_ZONE: "{{ range42_sdn_zone | default('r42zone') }}"
+    BUNDLE_SDN_VNETS: "{{ range42_sdn_networks | default(range42_sdn_networks_default) }}"
+    # the SDN defaults, for an inventory written before the NETWORK MODE section existed :
+    # the 12 lab networks, outbound nat on - the same list the example inventory carries
+    range42_sdn_networks_default:
+      - { vnet: "net140", subnet: "192.168.140.0/24", gateway: "192.168.140.1", snat: true }
+      - { vnet: "net141", subnet: "192.168.141.0/24", gateway: "192.168.141.1", snat: true }
+      - { vnet: "net142", subnet: "192.168.142.0/24", gateway: "192.168.142.1", snat: true }
+      - { vnet: "net143", subnet: "192.168.143.0/24", gateway: "192.168.143.1", snat: true }
+      - { vnet: "net144", subnet: "192.168.144.0/24", gateway: "192.168.144.1", snat: true }
+      - { vnet: "net145", subnet: "192.168.145.0/24", gateway: "192.168.145.1", snat: true }
+      - { vnet: "net146", subnet: "192.168.146.0/24", gateway: "192.168.146.1", snat: true }
+      - { vnet: "net147", subnet: "192.168.147.0/24", gateway: "192.168.147.1", snat: true }
+      - { vnet: "net148", subnet: "192.168.148.0/24", gateway: "192.168.148.1", snat: true }
+      - { vnet: "net149", subnet: "192.168.149.0/24", gateway: "192.168.149.1", snat: true }
+      - { vnet: "net150", subnet: "192.168.150.0/24", gateway: "192.168.150.1", snat: true }
+      - { vnet: "net151", subnet: "192.168.151.0/24", gateway: "192.168.151.1", snat: true }

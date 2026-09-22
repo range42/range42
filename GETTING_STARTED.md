@@ -20,10 +20,11 @@
     - [The PVE node name must be exact](#the-pve-node-name-must-be-exact)
     - [Proxmox root password](#proxmox-root-password)
     - [Deployer-cli sudo password](#deployer-cli-sudo-password)
-  - [Step 5 - Network (NAT auto-detect + bridge toggles)](#step-5---network-nat-auto-detect--bridge-toggles)
-    - [Disable outgoing NAT on a specific bridge](#disable-outgoing-nat-on-a-specific-bridge)
-    - [Why bridges are pre-created](#why-bridges-are-pre-created)
+  - [Step 5 - Network (SDN or legacy mode, NAT per network)](#step-5---network-sdn-or-legacy-mode-nat-per-network)
+    - [Disable outgoing NAT on a specific network](#disable-outgoing-nat-on-a-specific-network)
+    - [Why the twelve networks are created at init](#why-the-twelve-networks-are-created-at-init)
   - [Step 6 - Pick scenario](#step-6---pick-scenario)
+  - [Step 6b - VM firewall, ssh sources (optional)](#step-6b---vm-firewall-ssh-sources-optional)
   - [Step 7 - Deployer + auto-deploy](#step-7---deployer--auto-deploy)
     - [Deployer-cli location (IP)](#deployer-cli-location-ip)
     - [Deployer-cli user](#deployer-cli-user)
@@ -38,11 +39,13 @@
     - [Use a configured context](#use-a-configured-context)
     - [Show the current context](#show-the-current-context)
     - [Inventory](#inventory)
+    - [Try a single catalog element](#try-a-single-catalog-element)
     - [SSH into deployed VMs](#ssh-into-deployed-vms)
     - [Initialise a new context](#initialise-a-new-context)
     - [Overwrite an existing configuration](#overwrite-an-existing-configuration)
     - [Deploy / undeploy](#deploy--undeploy)
     - [Reload SSH keys](#reload-ssh-keys)
+    - [Networks and firewall](#networks-and-firewall)
     - [Full command list](#full-command-list)
   - [Where credentials live](#where-credentials-live)
     - [Workspace layout](#workspace-layout)
@@ -80,13 +83,13 @@ range42 ships 3 blank scenarios:
 - `blank_scenario_4_subnets` - 4 subnets, 16 VMs
 - `blank_scenario_6_subnets` - 6 subnets, 24 VMs
 
-For a full SIEM + CTF cyber range, see `demo_lab` instead (still a work in progress).
+For a full SIEM + CTF cyber range, see `demo_lab` instead. For one product at a time (MISP, Gitea, Mattermost, Nextcloud, Rocket.Chat, the Kunai detection workshop), see the `<product>_lab` scenarios.
 
 All scenarios live in [range42-playbooks/scenarios](https://github.com/range42/range42-playbooks/tree/main/scenarios) - the list will grow over time. See [Extend the scenarios](#extend-the-scenarios) at the end of this guide for how to request new ones.
 
 ### Prerequisites for this guide
 
-- A Proxmox VE 7.x or 8.x server you can reach
+- A Proxmox VE 8.x server you can reach (the SDN networks the init creates by default are part of the core since 8.1 ; on 7.x SDN is an experimental add-on)
 - Linux operator machine with Python 3.10+
 - ~25 minutes of your time (mostly automated)
 
@@ -102,13 +105,13 @@ When done, you'll have:
                                                │  └────────┘                      │
                                                │                                  │
                                                │  ┌─────────────────────────────┐ │
-                                               │  │ vmbr143  192.168.143.0/24   │ │
+                                               │  │ net143   192.168.143.0/24   │ │
                                                │  │   ├─ bs2-team-143-01  .200  │ │
                                                │  │   └─ bs2-team-143-02  .201  │ │
                                                │  └─────────────────────────────┘ │
                                                │                                  │
                                                │  ┌─────────────────────────────┐ │
-                                               │  │ vmbr144  192.168.144.0/24   │ │
+                                               │  │ net144   192.168.144.0/24   │ │
                                                │  │   ├─ bs2-team-144-01  .200  │ │
                                                │  │   └─ bs2-team-144-02  .201  │ │
                                                │  └─────────────────────────────┘ │
@@ -311,7 +314,7 @@ The wizard then prompts for the Proxmox **root password**.
 - Install the range42 root SSH key in `/root/.ssh/authorized_keys` (one-shot, via `sshpass`)
 - Create the `jump_user` Linux account on Proxmox
 - Create the `range42_api` PAM user + API token via `pveum`
-- Configure Proxmox locale, NTP, IP forwarding, network bridges (`vmbr140-148`), NAT rules
+- Configure Proxmox locale, NTP and IP forwarding (and, in legacy mode only, the `vmbr` bridges with their NAT) ; the SDN networks of the default mode are created afterwards through the API token, by playbook 04
 
 After this bootstrap, root SSH is no longer used — daily operations go through the `jump_user` and the API token (see [Why a `jump_user` and not just root?](#why-a-jump_user-and-not-just-root) below).
 
@@ -330,48 +333,69 @@ The wizard also prompts for the **sudo password on the deployer-cli** (your loca
 
 If the deployer-cli is your local machine (the default), this is your own sudo password. If you target a remote deployer-cli VM, this is the sudo password of the user on that VM.
 
-### Step 5 - Network (NAT auto-detect + bridge toggles)
+### Step 5 - Network (SDN or legacy mode, NAT per network)
 
-![Step 5 - NAT + bridges](docs/img/step-05-network.png)
+![Step 5 - NAT + networks](docs/img/step-05-network.png)
 
 **What you do:**
-- The wizard auto-detects your outbound NAT interface (typically `vmbr0`)
-- Bridges `vmbr140` to `vmbr148` are listed with a NAT toggle each
+- The wizard auto-detects your outbound NAT interface (typically `vmbr0`) and asks you to confirm it
+- It then asks for the **network mode** : **SDN networks** (recommended, the default) or **legacy vmbr bridges** (unsupported, kept for a private scenario that was never migrated ; the new scenarios do not run on it)
+- The twelve lab networks are listed with an outbound NAT toggle each : `net140` to `net151` in SDN mode, `vmbr140` to `vmbr151` in legacy mode
 - Defaults are fine - accept
 
-#### Disable outgoing NAT on a specific bridge
+In SDN mode the lab networks are Proxmox SDN objects : one zone (`r42zone` by default) holding one vnet per lab network, each with its subnet and its gateway (`net143` carries `192.168.143.0/24`, gateway `.1`). The zone is host-local : the Proxmox host holds the gateway of every subnet and routes between them, and outbound internet comes from the SNAT rule of the subnet, not from the physical network knowing these ranges exist.
 
-If you want to **isolate one or several subnets from internet access**, just click on the corresponding bridge in the list to toggle off its outgoing NAT.
+#### Disable outgoing NAT on a specific network
+
+If you want to **isolate one or several subnets from internet access**, click the corresponding network in the list to toggle off its outbound NAT.
 
 ![Step 5 - outgoing NAT toggle](docs/img/step-05-outgoing-nat.png)
 
-This is useful for fully air-gapped subnets (e.g., a sensitive forensic VM, an offline analysis lab) — VMs on a NAT-disabled bridge can still talk to other VMs on the same subnet, but cannot reach the internet through the Proxmox host.
+This is useful for fully air-gapped subnets (e.g., a sensitive forensic VM, an offline analysis lab) - VMs on a NAT-disabled network can still talk to the other VMs, but cannot reach the internet through the Proxmox host. Keep `net140` on : it is the templating network, the template builds run `apt` there.
 
-#### Why bridges are pre-created
+The choice made here is the declaration that counts : it goes to the inventory (`range42_sdn_networks`, section NETWORK MODE of `group_vars/all/vars.yml`) and travels to the deployer-cli through the vault. Every deployment and every `range42-context networks-apply` puts the networks back to this declaration, so a `range42-context networks-internet-off` played later is a temporary gesture ; a durable change is made here, or in the inventory, then re-init with overwrite.
 
-By default, range42 **pre-creates all the bridges listed in the wizard** (`vmbr140` to `vmbr148`) on the Proxmox host as part of this step, even if your scenario only uses a few of them.
+#### Why the twelve networks are created at init
 
-**Why:** it saves time on later deployments. Once the bridges exist, deploying any scenario (or adding a new one with more subnets) requires no Proxmox network reconfiguration — the wizard just clones VMs onto the already-existing bridges. The cost is minimal: an unused bridge is just a Linux interface with no traffic.
+range42 **creates all twelve lab networks at init**, even if your scenario only uses a few of them.
+
+**Why:** a vnet name is global to the cluster and several scenarios share the same networks (`net142` alone is the admin network of about fifteen scenarios). Creating them once, idempotently, means deploying any scenario, or adding one with more subnets, needs no Proxmox network reconfiguration later. Each scenario still declares the networks it uses in its `00_sdn_bootstrap/_main.yml`, and its deployment creates what would be missing, never deletes anything.
 
 **Behind the scenes:**
-- SSH to Proxmox as root, runs `ip route get 1.1.1.1 | awk '{print $5}'`
-- Identifies outbound interface (typically `vmbr0`)
-- Creates the `vmbr140-148` bridges via `pvesh create /nodes/<node>/network` (idempotent — skipped if already present)
-- Injects per-bridge NAT rules (post-up/post-down iptables MASQUERADE) for bridges with NAT enabled
-- Reloads Proxmox network config (`ifreload -a`)
+- SSH to Proxmox as root, runs `ip route get 1.1.1.1 | awk '{print $5}'` to identify the outbound interface (typically `vmbr0`)
+- SDN mode : after `site.yml`, the playbook `04_configure_sdn.yml` creates the zone, the vnets and their subnets through the Proxmox API (bundle `sdn_network.bootstrap` of range42-playbooks), applies once and waits for the task, then reconciles the live SNAT rules to the declaration (idempotent - a conforming host is a no-op)
+- Legacy mode : creates the `vmbr140-151` bridges via `pvesh create /nodes/<node>/network` with per-bridge NAT rules, then `ifreload -a`
 - Stores in inventory:
   - `infrastructure_proxmox_default_network_card_interface: vmbr0`
-  - Per-bridge `nat: true/false` toggle
+  - `INIT_LEGACY_BRIDGES: "NO"` (SDN, the default) or `"YES"` (legacy), `range42_sdn_zone`, and the per-network `snat: true/false` list `range42_sdn_networks`
+
+A host that moves from the legacy bridges to SDN runs `range42-context networks-legacy-clean` once (a bridge and a vnet cannot both carry the same `.1`, and the failure is a silent `No route to host`), then re-inits. See the README of any scenario, section "Migrating from the bridge-based scenarios".
 
 ### Step 6 - Pick scenario
 
 ![Step 6 - scenario](docs/img/step-06-scenario.png)
 
-**What you do:** type `blank_scenario_2_subnets`.
+**What you do:** pick `blank_scenario_2_subnets` in the list.
+
+Only complete scenarios are listed : a directory of `range42-playbooks/scenarios/` that carries a `manifest/scenario_vms.json` and the four template files (`templates/ansible-inventory.j2`, `ansible-vars.yml`, `ssh-config.j2`, `vault-example.yml`). A directory whose name starts with an underscore is a placeholder and is never listed. The wizard warns when the scenario's network kind does not match the mode chosen at step 5.
 
 **Behind the scenes:**
 - Stored as `INFRASTRUCTURE_SCENARIO` in `group_vars/all/vars.yml`
 - Determines which J2 templates the deploy will use
+
+### Step 6b - VM firewall, ssh sources (optional)
+
+**Off by default - skip it unless you need it.** This step restricts who may reach port 22 of the lab VMs.
+
+**Where the rule lives:** in the **Proxmox firewall of each VM** (hypervisor side, on the VM's network card, in force once the guest is armed). It is **not** the firewall inside the VMs (ufw), which this step never touches.
+
+- Switch **off** (default) : the ssh accept the deployment declares on every VM stays open to any source, as always.
+- Switch **on** : type IPv4 addresses (`a.b.c.d` or `a.b.c.d/32`, comma or space separated). The accept is then restricted to those addresses **plus every network of the scenario**, always added : the deployer reaches the VMs through the Proxmox jump host, so a VM sees the host's address, not yours, and the lab VMs keep reaching each other. Only the outside is filtered.
+
+**Behind the scenes:**
+- Stored as `range42_fw_vm_ssh_sources` (a list) in `group_vars/all/vars.yml`, carried to the workspace by the vault
+- Read by the `firewall.baseline.ssh_all_vms` bundle at every deployment ; applies to the VMs the workspace creates (an accept already open on a VM is not tightened afterwards)
+- Inert until the guest is armed : `FIREWALL_ARM_VMS=YES` at deploy, or `range42-context networks-firewall-on` later
 
 ### Step 7 - Deployer + auto-deploy
 
@@ -402,7 +426,7 @@ The user must:
 
 #### Confirm and trigger the deployer-cli install
 
-This is the **last interactive prompt** — the wizard shows a recap of everything it's about to do (Proxmox address, codename, scenario, deployer-cli location/user, network bridges) and asks you to confirm before any change is made on Proxmox or on the deployer-cli.
+This is the **last interactive prompt** — the wizard shows a recap of everything it's about to do (Proxmox address, codename, scenario, deployer-cli location/user, network mode and the NAT per network, VM ssh sources) and asks you to confirm before any change is made on Proxmox or on the deployer-cli.
 
 ![Step 8 - confirm deployer-cli install](docs/img/step-08-deployer-cli-install.png)
 
@@ -416,7 +440,7 @@ If you abort here (Ctrl-C or "Cancel"), nothing has been touched on Proxmox or o
 
 After confirming, the wizard runs the full deployment automatically (~10-15 min).
 
-**Behind the scenes:** the wizard runs `ansible-playbook site.yml` which executes 3 playbooks in sequence.
+**Behind the scenes:** the wizard runs `ansible-playbook site.yml` which executes 3 playbooks in sequence, then a fourth one in SDN mode (the lab networks).
 
 #### Playbook 01 - credentials.generate
 
@@ -442,10 +466,8 @@ After confirming, the wizard runs the full deployment automatically (~10-15 min)
 - Create `range42_api` PAM user
 - Generate `range42_api_token` token (auto-recovers if exists with wrong secret)
 - Inject token secret into vault
-- Create bridges `vmbr140` to `vmbr148` via `pvesh`
-- Inject NAT rules per bridge (post-up/post-down iptables MASQUERADE)
-- Reload Proxmox network (`ifreload -a`)
 - Enable IP forwarding
+- Legacy mode only : create the `vmbr140` to `vmbr151` bridges via `pvesh`, inject their NAT rules (post-up/post-down iptables MASQUERADE), reload the network (`ifreload -a`). In SDN mode the lab networks come from playbook 04 below.
 
 ##### Why a `jump_user` and not just root?
 
@@ -482,17 +504,21 @@ even though it already installed the root SSH key. Two reasons:
 - Inject `source ~/range42.config/range42-context.sh` into `.zshrc`
 - Set the active context to this codename + scenario
 
-After this, `range42-context use <codename> <scenario>` works.
+After this, `range42-context init` switches your shell to the workspace for you: it runs `range42-context use <codename> <scenario>` and prints that command in colour as it does, so the SSH keys, the vault and the environment are loaded without a manual step. `range42-context use` stays the command to switch again later or from another terminal.
+
+#### Playbook 04 - configure sdn (SDN mode)
+
+Run by the wizard once `site.yml` is through, because it reads the encrypted vault that playbook 01 creates. It creates the SDN zone and the twelve lab vnets with their subnets and their outbound NAT declaration through the Proxmox API (bundle `sdn_network.bootstrap` of range42-playbooks), applies once, waits for the task, then reconciles the live SNAT rules to the declaration. Idempotent : a conforming host is a no-op, and re-running it puts a host back in shape. `range42-context networks-apply` runs the same declaration for the active scenario later.
 
 ##### The 5 repos cloned on the deployer-cli
 
 | Repo | Purpose |
 |------|---------|
-| `range42` | Main repo. Wizard, 11 Ansible roles, 3 playbooks, the `range42-context` shell tool. |
-| `range42-playbooks` | Lab scenarios (demo_lab, blank_scenario_*). What gets deployed on the Proxmox VMs. |
+| `range42` | Main repo. Wizard, 13 Ansible roles, 4 playbooks (credentials, Proxmox, deployer-cli, SDN networks) plus a maintenance one, the `range42-context` and `range42-workspace` shell tools. |
+| `range42-playbooks` | Lab scenarios (demo_lab, blank_scenario_*, the product labs) and the bundles they are made of. What gets deployed on the Proxmox VMs. |
 | `range42-catalog` | Reusable Ansible roles (firewalls, packages, dotfiles, wazuh, etc.) used by scenarios. |
-| `range42-ansible_roles-proxmox_controller` | Wraps the Proxmox API (create/clone/delete VMs, manage templates, networks). |
-| `range42-ansible_roles-debug-devkit` | Helper scripts for snapshots, reverts, debugging individual VMs. |
+| `range42-ansible_roles-proxmox_controller` | Wraps the Proxmox API : VM lifecycle, templates and cloud-init, SDN networks, the hypervisor firewall, snapshots, storage. |
+| `range42-ansible_roles-debug-devkit` | Helper scripts (json lines, pipeable) for VMs, snapshots and storage, and the API-first views and gestures behind `range42-context networks-*`. |
 
 ### Step 8 - Deploy the scenario itself
 
@@ -500,7 +526,7 @@ This isn't a wizard step - you run it manually after the wizard finishes.
 
 #### 8a. Load your context
 
-Open a new terminal (or `source ~/.zshrc` in the current one), then load the workspace you just created:
+The init has already switched the shell it ran in to this workspace (you saw the `range42-context use ...` line it executed for you). In a new terminal, or to switch again, load the workspace yourself:
 
 ```bash
 range42-context use YOUR_CODENAME_INFRASTRUCTURE blank_scenario_2_subnets
@@ -543,17 +569,21 @@ range42-context deploy    # ~15-20 min for first deploy
 
 **Behind the scenes:**
 
-1. Downloads cloud-init images (Ubuntu Noble, Server, Debian 12) to Proxmox storage
-2. Creates 9 VM templates (nano, micro, small, medium, large) on `vmbr140`
-3. For each of 4 team VMs:
-   - Clones template (small, vm_id 9221) to a new VM
-   - Sets cloud-init variables (user, password, SSH key, IP, gateway, bridge)
+1. Reads the hypervisor firewall switches and declares the anti-lockout accepts (ssh and the Proxmox API) on the datacenter and the node
+2. Declares the scenario networks (`00_sdn_bootstrap/_main.yml` : `net140`, `net142`, `net143`, `net144`) and creates what is missing - never deletes, a vnet is shared between scenarios
+3. Downloads the cloud-init images (Ubuntu Noble minimal and server, Debian 12, Alpine) to Proxmox storage
+4. Builds the two VM templates this scenario whitelists (small-01 `9221`, medium-02 `9232`) on `net140`, the templating network, from the shared `template.build.ubuntu_noble` bundle
+5. For each of the 4 team VMs:
+   - Clones the template `9221` to a new VM
+   - Sets cloud-init variables (user, password, SSH key, IP, gateway, network)
    - Starts the VM
    - Waits for SSH and cloud-init completion
-4. On all 4 VMs:
+6. Declares the ssh accept on every deployed VM in the Proxmox guest firewall (restricted to the sources of step 6b if you set any), inert until the guest is armed
+7. On all 4 VMs:
    - Installs basic packages (vim, htop, net-utils)
    - Installs dotfiles for `alice` user
-   - Configures UFW firewall (port 22 only)
+   - Configures UFW firewall inside the VM (port 22 only)
+8. Arms the guest firewalls only if you asked for it : `range42-context deploy -e FIREWALL_ARM_VMS=YES`, or later `range42-context networks-firewall-on`
 
 When deploy completes, SSH into a VM:
 
@@ -709,14 +739,14 @@ alice@admin-wazuh:~$
 The hostnames are defined in the auto-generated SSH config:
 `~/.ssh/config_range42-<codename>-<scenario>` (included from `~/.ssh/config`).
 
-VMs are on isolated bridges (vmbr143, vmbr144, etc.) - your operator machine
+VMs are on the lab networks (`net143`, `net144`, etc.), which are host-local - your operator machine
 has no direct route to them. SSH uses **ProxyJump** through the Proxmox host:
 
 ```
    ┌─────────────────┐         ┌──────────────────────┐         ┌───────────────────────┐
    │  your machine   │  ssh    │  Proxmox             │  ssh    │  bs2-team-143-01      │
    │  (operator)     │ ──────▶ │  user: jump_user     │ ──────▶ │  user: alice          │
-   │                 │         │  on internet bridge  │         │  on internal vmbr143  │
+   │                 │         │  on internet bridge  │         │  on internal net143   │
    │  ssh key:       │         │                      │         │                       │
    │  jump_user key  │         │  (ProxyJump only,    │         │  ssh key:             │
    │  + alice key    │         │  no shell session)   │         │  alice key            │
@@ -772,15 +802,12 @@ In step 2, you'll see all your configured contexts listed below `◆ new`.
 Pick the one you want to overwrite — the wizard will pre-fill all the fields
 from the existing config, so you only need to update what changed.
 
-> ⚠️ Overwriting a configuration **does not destroy deployed VMs**. It only
-> regenerates the local files (inventory, vault, SSH keys). If you also want
-> to clean up the running VMs, run `range42-context delete` afterwards (or
-> before, if the existing keys won't work anymore).
+> ⚠️ Overwriting a configuration **does not destroy deployed VMs**. It regenerates the local files (inventory, vault, SSH keys), so the VMs deployed before the overwrite keep the previous `alice` key and can no longer be reached with the new one. The init switches your shell to the workspace for you (it runs `range42-context use` and prints it), then redeploy the VMs with `range42-context delete-vms` and `range42-context deploy-vms`, or run `range42-context delete` to remove everything.
 
 You can also use this flow to:
 - Update the Proxmox API address after migrating the host
 - Re-generate SSH keys / vault if they got corrupted
-- Tweak which bridges have NAT enabled
+- Tweak which networks have outbound NAT enabled, or the ssh sources of the lab VMs
 - Change the deployer-cli IP / user
 
 #### Deploy / undeploy
@@ -800,24 +827,121 @@ If your ssh-agent loses keys (after reboot, etc.):
 range42-context ssh-reload
 ```
 
+#### Networks and firewall
+
+The lab networks are Proxmox SDN vnets (see step 5) and the hypervisor firewall is wired at every deployment (step 8, points 1, 6 and 8 ; the ssh sources come from step 6b). Every command below is scoped to the **active scenario** and reads back what the host really does, not what was declared:
+
+```bash
+range42-context networks-show-sdn                # zone, vnet, subnet, NAT and isolation of each network
+range42-context networks-internet-list           # where egress is really active : declared vs live SNAT rules
+range42-context networks-internet-off            # cut the outbound NAT of the scenario networks : one apply, live rules reconciled
+range42-context networks-internet-on             # restore it (a deployment restores it too : the declaration wins)
+    # scope of the pair : no argument = --roles all (every network carrying VMs, never the templating one) ;
+    # --roles all-and-templating | teams | team-143,team-144 ; --vnet net143,net144 ; --cidr 192.168.143.0/24 ;
+    # --yes skips the confirmation and needs an explicit scope
+range42-context networks-apply                   # create what the scenario declares, idempotent
+    # --dry-run compares declared and live, writes nothing
+range42-context networks-show-firewall           # datacenter, node and per-VM switches, with the card flags
+range42-context networks-show-firewall --rules   # the rules of the three chains, with what is in force on each guest
+    # both views : --scope scenario (default) | vm_id <id> | vm_ids (ids on stdin) | node | dc | all ; --json = one object per line, no table
+range42-context networks-firewall-on             # arm the guests of the scenario (--scope scenario | proxmox | vm_id <id> | all)
+range42-context networks-firewall-off            # disarm them, same scopes ; --scope all exists for off only
+    # --scope proxmox is the host alone (datacenter and node switches, management accepts first) ;
+    # --yes skips the confirmation and needs an explicit --scope
+range42-context networks-delete-sdn              # remove the scenario's subnets and vnets - refuses while VMs are attached
+range42-context networks-legacy-clean            # migration only : disarm the pre-SDN bridge stanzas of the host, once
+```
+
+Arming never cuts the management path : a guest is armed only if an ssh accept is in force on its chain, the datacenter and the node keep their anti-lockout accepts, and `firewall-on --scope all` is refused (it would arm guests with an empty chain). `range42-context --tui` offers the same gestures in a dashboard, with the scope picked from the scenario manifest and the feature flags as checkboxes ; `range42-context debug-on` / `debug-off` switch between the full ansible logs and the readable output.
+
 #### Full command list
 
 ```
-$ range42-context
+$ range42-context help
 
-  ── range42-context ──────────────────────────────────────────
-   use <codename> <scenario>      switch active workspace
-   list                           list available workspaces
-   current                        show active workspace
-   status                         show context details
-   inventory                      show ansible inventory
-   ssh-reload                     reload SSH keys into ssh-agent
-   deploy                         deploy scenario VMs
-   deploy-vms                     deploy VMs only (skip templates)
-   delete                         destroy all VMs and templates
-   delete-vms                     destroy VMs only (keep templates)
-   init                           launch wizard to add scenario/infra
-   debug                          toggle verbose ansible output
+  usage: range42-context <command>
+
+  workspace
+    list                           list available workspaces
+    current                        show active workspace
+    use <codename> <scenario>      switch to a workspace
+    status                         check workspace health
+    init                           launch setup wizard
+    tools-update                   re-copy range42-context.sh + range42-workspace.sh from the local clone (no git pull)
+    --tui                          launch the interactive TUI dashboard
+
+  navigation
+    cd config                      go to workspace config directory
+    cd scenario                    go to scenario playbooks directory
+    cd secrets                     go to vault/secrets directory
+
+  operations
+    deploy                         run full scenario setup (templates + VMs)
+    deploy-vms                     deploy VMs only (skip templates)
+    delete                         delete all scenario VMs + templates
+    delete-vms                     delete VMs only (keep templates)
+    delete-everything              delete ALL VMs+templates across ALL scenarios (cross-scenario)
+    reset                          delete + recreate all VMs
+    ssh-reload                     reload SSH keys for active workspace
+
+  lifecycle (all VMs of active scenario)
+    start                          start all scenario VMs
+    stop                           force stop all scenario VMs (kill timeout=10)
+    stop-acpi                      graceful ACPI shutdown of all scenario VMs
+    pause                          pause all scenario VMs
+    resume                         resume all paused scenario VMs
+    snapshot [name]                snapshot all scenario VMs (auto-named if not provided)
+    snapshot-list                  list snapshots of all scenario VMs
+    revert <name>                  revert all scenario VMs to a snapshot
+
+  info
+    show-vault                     show ansible vault contents (decrypted on the fly)
+    show-config                    show workspace orientation (paths + SSH hosts)
+    show-inventory                 show ansible inventory tree
+    ssh <pattern>                  quick ssh to a VM by name
+    debug-on                       full ansible logs, for a debugging session
+    debug-off                      the readable output : what a run says, and its failures
+    debug                          say which of the two is active
+    help                           show this help
+
+  catalog-try (one usage VM for single catalog element validation)
+    catalog-try <path>             deploy + smoke-check a catalog element (e.g. docker/_ctf/hello)
+    catalog-try-list               list catalog-try elements (L1/L2) excluding docker/admin/*
+    catalog-try-list-admin         list catalog-try elements (L1/L2) under docker/admin/* only
+
+  networks (sdn state, egress and firewall)
+    networks-apply                 create what this scenario declares - idempotent, a conforming host is a no-op
+      --dry-run                    declared versus live, writes nothing
+    networks-delete-sdn            remove this scenario's subnets and vnets - the shared zone is kept
+    networks-show-sdn              zone / vnet / subnet / snat / isolation, per network of the active scenario
+    networks-internet-list         where egress is actually active : declared vs live rules
+    networks-internet-on|off       enable / disable outgoing nat, with a recap and a confirmation
+      no argument                  same as --roles all
+      --roles all                  every network carrying vms, never the templating one
+      --roles all-and-templating   adds the network the templates are built on
+      --roles teams                every network carrying that role
+      --roles team-143,team-144    by scope label, as networks-show-sdn lists them
+      --vnet net143,net144         by network name
+      --cidr 192.168.143.0/24      by subnet
+      --yes                        skip the confirmation - needs an explicit scope
+    networks-show-firewall         datacenter, node and per-vm switches with card flags, read only
+    networks-show-firewall --rules the rules of the three chains instead of the switches, read only
+      no --scope                   same as --scope scenario, for both views above
+      --scope scenario             the vms this scenario declares - the default
+      --scope vm_id <id>           one vm of this node, by id
+      --scope vm_ids               a set of ids on stdin, one per line
+      --scope node                 every vm this node runs, templates and other scenarios included
+      --scope dc | all             the whole datacenter ; today the node of this workspace
+      --json                       one json object per line, a level on each - no table
+    networks-firewall-on|off       arm / disarm the firewall, with a recap and a confirmation
+      no --scope                   same as --scope scenario
+      --scope scenario             on : the host switches if not already on, then the vms of this
+                                   scenario ; off : those vms only, the host stays armed
+      --scope proxmox              only the host : datacenter and node switches, management accepts first
+      --scope vm_id <id>           only that vm of this scenario, by id
+      --scope all                  off only : the host, then every vm this node runs
+      --yes                        skip the confirmation - needs an explicit --scope
+    networks-legacy-clean          migration : disarm the pre-SDN stanzas of ALL 12 provisioning bridges, once per host
 ```
 
 ### Where credentials live
@@ -1050,11 +1174,7 @@ If the vault is intact but you can't view it, check `vault_pass.txt` exists in
 the same `secrets/` directory and is readable.
 
 **Wazuh / admin VMs**
-This guide deploys `blank_scenario_2_subnets` which **supports** the admin
-infrastructure (wazuh server + deployer platform on `vmbr142`). It's currently
-**disabled by default** because not fully tested. To enable, edit
-`scenarios/blank_scenario_2_subnets/main.yml` and uncomment the
-`01_admin_infrastructure/_main.yml` import (and the related blocks in that file).
+This guide deploys `blank_scenario_2_subnets`, which **supports** an admin tier on `net142` (wazuh server, MISP, the deployer trio, gitea, mattermost, nextcloud, rocketchat). Every admin VM is **off by default**, gated by its feature flag (`INSTALL_WAZUH`, `INSTALL_MISP`, `INSTALL_DEPLOYER_UI`, `INSTALL_GITEA`, `INSTALL_MATTERMOST`, `INSTALL_NEXTCLOUD`, `INSTALL_ROCKETCHAT`, listed in `manifest/feature_flags.yml`). To enable one, pass the flag to the deployment : `range42-context deploy -e INSTALL_WAZUH=YES`, or tick it in the `range42-context --tui` deploy panel.
 
 ---
 
@@ -1070,10 +1190,12 @@ range42/
 ├── playbooks/
 │   ├── 01_generate_credentials.yml
 │   ├── 02_configure_proxmox.yml
-│   └── 03_deploy_deployer_cli.yml
+│   ├── 03_deploy_deployer_cli.yml
+│   ├── 04_configure_sdn.yml          - the SDN lab networks (SDN mode), run after site.yml
+│   └── 90_patch_deployer_tools.yml   - maintenance, not a pipeline step (see below)
 ├── inventories/
 │   └── example/              — copy and customize for your infra
-├── roles/                    — 11 modular roles
+├── roles/                    — 13 modular roles
 └── config/                   — generated credentials (not committed)
 ```
 
@@ -1081,6 +1203,16 @@ The other 4 repos (`range42-playbooks`, `range42-catalog`,
 `range42-ansible_roles-proxmox_controller`, `range42-ansible_roles-debug-devkit`)
 are cloned by the wizard onto the deployer-cli during the deploy. You don't
 need them on your operator machine.
+
+### Updating the shell tools on an existing deployer-cli
+
+`range42-context.sh` and `range42-workspace.sh` are **copied** into `~/` by the bootstrap, and `.zshrc` sources the copy. After a `git pull` of the range42 clone on the deployer-cli, the copy still holds the previous version until the bootstrap task is replayed. One command does exactly that, on the deployer-cli, with no active workspace needed:
+
+```bash
+range42-context tools-update
+```
+
+It replays the bootstrap task through `playbooks/90_patch_deployer_tools.yml`, then reloads the two files in the current shell. Other open shells need `source ~/.zshrc` or a new shell. It does **not** `git pull`: the source is the local clone as it stands, so pull first for upstream changes, and edit the clone (not `~/range42-context.sh`, which gets overwritten) for local ones. The wizard and the TUI run in place from the clone and need no such step.
 
 ---
 
@@ -1091,7 +1223,7 @@ above) is the recommended path. The manual flow below exists for users who want
 to script the setup, integrate it in their own tooling, or simply understand
 exactly what gets executed.
 
-It runs the same 3 playbooks the wizard runs, in the same order, against an
+It runs the same playbooks the wizard runs, in the same order (01 to 03 through `site.yml`, then 04 in SDN mode), against an
 inventory you write by hand from the `inventories/example/` template.
 
 ```bash
@@ -1100,7 +1232,8 @@ cp -r inventories/example inventories/my-infra
 
 # 2. Edit the 3 files below with your settings:
 #    - inventories/my-infra/hosts.yml                            (Proxmox + deployer-cli connection)
-#    - inventories/my-infra/group_vars/all/vars.yml              (infrastructure settings)
+#    - inventories/my-infra/group_vars/all/vars.yml              (infrastructure settings ; optional sections :
+#        NETWORK MODE for SDN or legacy and the NAT per network, VM FIREWALL SSH SOURCES for the ssh whitelist of the lab VMs)
 #    - inventories/my-infra/group_vars/demo_lab/vars.yml         (scenario settings)
 
 # 3. Generate credentials (SSH keys, vault, passwords) - runs locally
@@ -1109,7 +1242,7 @@ ansible-playbook playbooks/01_generate_credentials.yml \
   -e @inventories/my-infra/group_vars/demo_lab/vars.yml \
   -e INFRASTRUCTURE_SCENARIO=demo_lab
 
-# 4. Configure Proxmox (root key install, jump_user, API token, bridges, NAT)
+# 4. Configure Proxmox (root key install, jump_user, API token, IP forwarding ; the legacy bridges and their NAT only in legacy mode)
 ansible-playbook playbooks/02_configure_proxmox.yml \
   -i inventories/my-infra/hosts.yml \
   -e @inventories/my-infra/group_vars/demo_lab/vars.yml \
@@ -1117,6 +1250,18 @@ ansible-playbook playbooks/02_configure_proxmox.yml \
 
 # 5. Deploy the deployer-cli (packages, repos, workspace, SSH config, range42-context)
 ansible-playbook playbooks/03_deploy_deployer_cli.yml \
+  -i inventories/my-infra/hosts.yml \
+  -e @inventories/my-infra/group_vars/demo_lab/vars.yml \
+  -e INFRASTRUCTURE_SCENARIO=demo_lab \
+  --vault-password-file ./config/my-infra-demo_lab/secrets/vault_pass.txt
+
+# 5b. SDN mode only (INIT_LEGACY_BRIDGES "NO", the default) : create the SDN zone and the
+#     lab networks declared in group_vars/all/vars.yml (section NETWORK MODE). Idempotent,
+#     re-run it to put the host back in shape. Needs the two sibling clones next to this
+#     repo (range42-playbooks, range42-ansible_roles-proxmox_controller).
+export RANGE42_ACTIVE_CONFIG_DIR="$PWD/config/my-infra-demo_lab"
+ANSIBLE_ROLES_PATH="./roles:../range42-ansible_roles-proxmox_controller/roles" \
+ansible-playbook playbooks/04_configure_sdn.yml \
   -i inventories/my-infra/hosts.yml \
   -e @inventories/my-infra/group_vars/demo_lab/vars.yml \
   -e INFRASTRUCTURE_SCENARIO=demo_lab \
@@ -1131,6 +1276,8 @@ range42-context deploy
 Note on `-e @...vars.yml`: this loads the scenario's group_vars as extra vars.
 Without it, Ansible silently ignores `inventories/<cn>/group_vars/<scenario>/vars.yml`
 because no inventory group matches the scenario name, and role defaults would win.
+
+Step 5b is not part of `site.yml` on purpose: it reads the encrypted vault, whose password file is created by step 3 during the same `site.yml` run. Run it once `site.yml` is through. In legacy mode (`INIT_LEGACY_BRIDGES: "YES"`, unsupported) it does nothing.
 
 Or run all three at once via `site.yml`:
 
@@ -1169,7 +1316,10 @@ For full definitions, see [GLOSSARY.md](GLOSSARY.md).
 | **workspace** | The combination `codename + scenario`. The fundamental unit of range42. Lives at `~/range42.config/<codename>-<scenario>/`. |
 | **vault** | An encrypted file (Ansible vault) containing all secrets for a workspace: VM passwords, Proxmox API token, etc. Decryption password is stored next to it in `vault_pass.txt`. |
 | **deployer-cli** | The machine where you run range42 commands. Can be your laptop or a dedicated VM. |
-| **jump host** | Proxmox itself, used as SSH gateway to reach VMs on isolated bridges. |
+| **jump host** | Proxmox itself, used as SSH gateway to reach VMs on the lab networks. |
+| **vnet / SDN zone** | A lab network as a Proxmox SDN object : one zone per host (`r42zone`), one vnet per subnet (`net143` carries `192.168.143.0/24`, gateway `.1` held by the host). Created at init, declared per scenario, shared between scenarios. |
+| **templating network** | `net140`, the network the VM templates are built on. Its outbound NAT stays on : the builds run `apt` there. |
+| **armed (guest firewall)** | A VM whose Proxmox firewall is switched on (guest switch + card flag). The rules a deployment declares are inert until then ; arming is opt-in (`FIREWALL_ARM_VMS=YES` or `range42-context networks-firewall-on`) and refuses to cut ssh. |
 
 ---
 

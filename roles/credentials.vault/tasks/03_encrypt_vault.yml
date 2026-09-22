@@ -11,14 +11,40 @@
 ###
 ###
 
+##
+## --encrypt-vault-id default IS REQUIRED, not a nicety. An operator shell often carries
+## ANSIBLE_VAULT_PASSWORD_FILE (the bench preludes export it) : ansible-vault then sees TWO
+## password sources, both labeled default, and refuses with "vault-ids default,default are
+## available" (rc 5). With the flag it encrypts - measured : with the CLI file, not the env
+## one. The verify task below makes that guarantee hold whatever the resolution order does.
+##
 - name: CREDENTIALS VAULT - ENCRYPT VAULT FILE
   ansible.builtin.command:
     cmd: >
       ansible-vault encrypt
       "{{ vault_output_dir }}/default_vault.yml"
       --vault-password-file "{{ vault_output_dir }}/vault_pass.txt"
+      --encrypt-vault-id default
   when: vault_encrypted_check.rc != 0
   changed_when: true
+
+##
+## STRICT verify : decryptable with the WORKSPACE password file and it alone. `env -u` strips
+## the operator's ANSIBLE_VAULT_PASSWORD_FILE, otherwise a vault wrongly encrypted with the
+## env password would still decrypt through it and this check could not fail.
+##
+## Same gate as the encrypt : verify only what THIS run encrypted. An old workspace whose
+## vault mismatches its password file keeps its previous behaviour - surfacing that is a
+## different decision than this fix.
+- name: CREDENTIALS VAULT - VERIFY THE VAULT DECRYPTS WITH THE WORKSPACE PASSWORD
+  ansible.builtin.command:
+    cmd: >
+      env -u ANSIBLE_VAULT_PASSWORD_FILE
+      ansible-vault view
+      "{{ vault_output_dir }}/default_vault.yml"
+      --vault-password-file "{{ vault_output_dir }}/vault_pass.txt"
+  when: vault_encrypted_check.rc != 0
+  changed_when: false
 
 ###
 ###

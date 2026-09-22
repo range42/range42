@@ -60,13 +60,77 @@ infrastructure_proxmox_dest_vm_storage_name: "local-lvm"
 # common values: "vmbr0" (most Proxmox), "enp3s0" (bare metal without bridge)
 #
 infrastructure_proxmox_default_network_card_interface: "vmbr0"
-
 # The Proxmox bridge that VMs will be connected to.
 # demo_lab uses 192.168.142.0/24 on this bridge.
 # This bridge must exist on the Proxmox server before deploying VMs.
 #
-vm_net_virtio_bridge: "vmbr142"
+# vm_net_virtio_bridge: "vmbr142" # old artifact ? 
 
+
+#### NETWORK MODE ####
+
+# How the lab networks are created on this Proxmox host. Two modes, one choice per host :
+#
+#   "NO"   (default) SDN mode. The init creates one SDN zone and the 12 lab networks
+#                    net140 .. net151 declared below, through the sdn_network.bootstrap
+#                    bundle (playbooks/04_configure_sdn.yml). Every scenario then declares
+#                    its own networks on top of them. This is the supported mode.
+#
+#   "YES"            LEGACY mode : the 12 Linux bridges vmbr140 .. vmbr151 of the pre-SDN
+#                    era (range42_lab_bridges, see roles/proxmox.init/defaults/main.yml).
+#                    UNSUPPORTED : no network isolation between labs, the new scenarios do
+#                    not run on it, it receives no update. Keep it only for a private
+#                    scenario that was never migrated. If you go there, you debug alone.
+#
+# The two modes fight for the same 192.168.14x.0/24 subnets : pick one per host. A host
+# moving from legacy to SDN runs `range42-context networks-legacy-clean` once, then re-inits.
+#
+INIT_LEGACY_BRIDGES: "NO"
+
+# The SDN zone that holds every lab network of this host. One zone per host is enough. The
+# name travels to the deployer-cli through the vault, so the scenarios use the same one.
+#
+range42_sdn_zone: "r42zone"
+
+# The lab networks created at init in SDN mode, with their outbound NAT.
+#   snat: true   the VMs of that network reach the internet through the Proxmox host
+#   snat: false  no outbound NAT, the network cannot reach the outside
+# net140 is the templating network : the template builds run apt there, keep its snat true.
+#
+# The wizard rewrites this list from its "outbound NAT per network" panel. A scenario may
+# declare the same networks : the bundle creates what is missing and never duplicates.
+#
+range42_sdn_networks:
+  - { vnet: "net140", subnet: "192.168.140.0/24", gateway: "192.168.140.1", snat: true }
+  - { vnet: "net141", subnet: "192.168.141.0/24", gateway: "192.168.141.1", snat: true }
+  - { vnet: "net142", subnet: "192.168.142.0/24", gateway: "192.168.142.1", snat: true }
+  - { vnet: "net143", subnet: "192.168.143.0/24", gateway: "192.168.143.1", snat: true }
+  - { vnet: "net144", subnet: "192.168.144.0/24", gateway: "192.168.144.1", snat: true }
+  - { vnet: "net145", subnet: "192.168.145.0/24", gateway: "192.168.145.1", snat: true }
+  - { vnet: "net146", subnet: "192.168.146.0/24", gateway: "192.168.146.1", snat: true }
+  - { vnet: "net147", subnet: "192.168.147.0/24", gateway: "192.168.147.1", snat: true }
+  - { vnet: "net148", subnet: "192.168.148.0/24", gateway: "192.168.148.1", snat: true }
+  - { vnet: "net149", subnet: "192.168.149.0/24", gateway: "192.168.149.1", snat: true }
+  - { vnet: "net150", subnet: "192.168.150.0/24", gateway: "192.168.150.1", snat: true }
+  - { vnet: "net151", subnet: "192.168.151.0/24", gateway: "192.168.151.1", snat: true }
+
+
+#### VM FIREWALL SSH SOURCES (OPTIONAL) ####
+#
+# Optional restriction of the ssh accept that every deployment declares on each VM of the
+# scenario in the PROXMOX guest firewall (hypervisor side, on the VM's network card, in force
+# once the guest is armed). This is NOT the firewall inside the VMs (ufw), which is untouched.
+#
+#   []                          default : ssh accepted from any source, as before
+#   ["203.0.113.7/32", ...]     ssh accepted from these addresses only, IPv4 /32 each
+#
+# Every network of the scenario is ALWAYS added, whole : the deployer reaches the VMs through the
+# Proxmox jump host, so a VM sees the host's address, not yours, and the VMs reach each other. The wizard
+# fills this list from its optional "VM firewall : ssh sources" step, the vault carries it to
+# the deployer-cli, the firewall.baseline.ssh_all_vms bundle reads it there. It applies to the
+# VMs a workspace creates : an accept already open on a VM is not tightened afterwards.
+#
+range42_fw_vm_ssh_sources: []
 
 #### PROXMOX API ACCESS ####
 

@@ -1,0 +1,22 @@
+---
+# proxmox init - ip forwarding + network reload
+#
+# NEEDED IN BOTH MODES, always played. The legacy bridges NAT through the node and the SDN
+# subnets SNAT through it : without net.ipv4.ip_forward=1 nothing routes in either mode.
+# Extracted from 03_create_network_bridge.yml when the legacy block went behind
+# INIT_LEGACY_BRIDGES - these two tasks must not follow that flag.
+
+- name: PROXMOX INIT - ENABLE IP FORWARDING
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "echo 1 > /proc/sys/net/ipv4/ip_forward &&
+    (grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf &&
+    sed -i 's/^#*net.ipv4.ip_forward=.*/net.ipv4.ip_forward=1/' /etc/sysctl.conf ||
+    echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf)"
+  changed_when: false
+
+- name: PROXMOX INIT - RELOAD NETWORK
+  ansible.builtin.shell: >
+    ssh root@{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}
+    "ifreload -a 2>/dev/null || true"
+  changed_when: false
