@@ -1,0 +1,18 @@
+---
+# Verify the effective MaxStartups on every run (even when the drop-in was already
+# in place) to catch drift or shadowing by another drop-in.
+
+- name: proxmox.ssh-limits - read effective sshd config
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -T]
+  register: _pxsl_effective
+  changed_when: false
+
+- name: proxmox.ssh-limits - assert MaxStartups is effective
+  ansible.builtin.assert:
+    that:
+      - '("maxstartups " ~ proxmox_ssh_limits_maxstartups) in _pxsl_effective.stdout'
+    fail_msg: >-
+      Effective MaxStartups is not {{ proxmox_ssh_limits_maxstartups }} : the
+      drop-in is shadowed or not loaded. Check /etc/ssh/sshd_config.d/.
+    success_msg: "Effective MaxStartups = {{ proxmox_ssh_limits_maxstartups }}"

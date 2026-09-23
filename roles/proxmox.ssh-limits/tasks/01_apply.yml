@@ -1,0 +1,49 @@
+---
+# Write the MaxStartups drop-in and reload sshd. Safe by construction:
+#   - the rendered file is validated (sshd -t -f) BEFORE it is moved into place,
+#     so a malformed value never lands on disk;
+#   - the running daemon is untouched until an explicit reload;
+#   - reload (never restart) validates via the unit ExecReload=sshd -t and keeps
+#     the previous config if invalid; existing connections are preserved;
+#   - any failure after the write rolls back (removes the drop-in + reloads).
+
+- name: proxmox.ssh-limits - deploy MaxStartups drop-in
+  ansible.builtin.template:
+    src: 60-range42-jump-concurrency.conf.j2
+    dest: "{{ proxmox_ssh_limits_dropin }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: false
+    validate: /usr/sbin/sshd -t -f %s
+  register: _pxsl_dropin
+
+- name: proxmox.ssh-limits - validate then reload sshd (rollback on failure)
+  when: _pxsl_dropin.changed
+  block:
+    - name: proxmox.ssh-limits - validate the full merged sshd config
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -t]
+      changed_when: false
+
+    - name: proxmox.ssh-limits - reload sshd (validated by the unit ExecReload)
+      ansible.builtin.systemd:
+        name: ssh
+        state: reloaded
+
+  rescue:
+    - name: proxmox.ssh-limits - ROLLBACK remove drop-in
+      ansible.builtin.file:
+        path: "{{ proxmox_ssh_limits_dropin }}"
+        state: absent
+
+    - name: proxmox.ssh-limits - ROLLBACK reload sshd to restore previous config
+      ansible.builtin.systemd:
+        name: ssh
+        state: reloaded
+
+    - name: proxmox.ssh-limits - fail after rollback
+      ansible.builtin.fail:
+        msg: >-
+          sshd validation or reload failed. The drop-in was removed and sshd was
+          reloaded to its previous config. The daemon kept its prior settings.

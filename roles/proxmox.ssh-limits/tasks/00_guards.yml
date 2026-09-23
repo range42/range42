@@ -1,0 +1,34 @@
+---
+# Preflight guards - fail early and cleanly on hosts where the drop-in would not
+# take effect, rather than applying blindly.
+
+- name: proxmox.ssh-limits - check whether ssh is socket-activated
+  ansible.builtin.command:
+    argv: [systemctl, is-active, ssh.socket]
+  register: _pxsl_ssh_socket
+  changed_when: false
+  failed_when: false
+
+# Socket-activation would govern concurrency at the systemd socket level and
+# bypass the sshd_config MaxStartups drop-in.
+- name: proxmox.ssh-limits - fail if ssh.socket is active
+  ansible.builtin.fail:
+    msg: >-
+      ssh is socket-activated (ssh.socket is active): the sshd_config MaxStartups
+      drop-in would be bypassed. This host needs a different approach.
+  when: (_pxsl_ssh_socket.stdout | trim) == "active"
+
+- name: proxmox.ssh-limits - check sshd_config includes the drop-in directory
+  ansible.builtin.command:
+    argv: [grep, -qE, '^[[:space:]]*Include.*sshd_config.d', /etc/ssh/sshd_config]
+  register: _pxsl_include
+  changed_when: false
+  failed_when: false
+
+# Without the Include, a file placed in sshd_config.d/ is never loaded.
+- name: proxmox.ssh-limits - fail if the drop-in directory is not included
+  ansible.builtin.fail:
+    msg: >-
+      /etc/ssh/sshd_config does not Include /etc/ssh/sshd_config.d/ ; the drop-in
+      would not be loaded.
+  when: _pxsl_include.rc != 0

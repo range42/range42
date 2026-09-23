@@ -12,9 +12,8 @@ proxmox_root_ssh_key_path: "to_define"
 
 # locale to set on proxmox
 proxmox_locale: "C.UTF-8"
-
 # network bridge for lab VMs
-vm_net_virtio_bridge: "vmbr142"
+# vm_net_virtio_bridge: "vmbr142"
 
 # outbound interface for NAT (check with: ip route | grep default)
 # on most Proxmox setups this is "vmbr0"

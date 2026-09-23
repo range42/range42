@@ -64,3 +64,38 @@
     - proxmox.init
     - proxmox.jump-user
     - proxmox.api-token
+
+################################################################################
+# Raise the jump host sshd concurrency limit (MaxStartups) so parallel Ansible
+# connections through the ProxyJump are not dropped on large deploys.
+# Runs after root access is established above. The Proxmox is reached as a real
+# ansible host (root over the same key), so the role uses native modules.
+################################################################################
+
+- name: 02 configure proxmox - register the proxmox root ssh target
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    DEPLOYER_CLI_ROOT_DIR: "{{ playbook_dir }}/.."
+    proxmox_root_ssh_key_path: "{{ DEPLOYER_CLI_ROOT_DIR }}/config/{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}/ssh_keys/jump_keys/px.{{ INFRASTRUCTURE_CODENAME }}-{{ INFRASTRUCTURE_SCENARIO }}-ssh_cli.root"
+
+  tasks:
+    - name: register proxmox as an ssh target (root over ssh key)
+      ansible.builtin.add_host:
+        name: r42_proxmox_ssh_target
+        ansible_host: "{{ INFRASTRUCTURE_PROXMOX_ADDRESS }}"
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ proxmox_root_ssh_key_path }}"
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: 02 configure proxmox - raise jump host ssh concurrency limit
+  hosts: r42_proxmox_ssh_target
+  gather_facts: false
+
+  environment:
+    SSH_AUTH_SOCK: "{{ hostvars['localhost']._ssh_auth_sock | default(lookup('env', 'SSH_AUTH_SOCK')) }}"
+
+  roles:
+    - proxmox.ssh-limits

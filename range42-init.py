@@ -6,7 +6,7 @@ range42-init.py  —  interactive infrastructure setup  (Textual edition)
   Run     : python3 range42-init.py
 """
 
-import argparse, json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
+import argparse, ipaddress, json, os, re, shlex, shutil, subprocess, ssl, sys, urllib.request
 from pathlib import Path
 
 # make wizard/ importable
@@ -230,14 +230,16 @@ except ImportError:
             print("  then: python3 range42-init.py")
             print()
             sys.exit(1)
-        print("  \033[1;33mINFO\033[0m  installing textual (pip install textual)...")
+        print("  \033[1;33mINFO\033[0m  installing textual + pyyaml (pip install)...")
+        print("        textual : the TUI framework used by range42-init and range42-context --tui")
+        print("        pyyaml  : parses scenario manifests (e.g. feature_flags.yml in the deploy modal)")
         print("        do NOT use: apt install python3-textual (version too old)")
         print()
-        r = subprocess.run([str(_pip), "install", "--quiet", "textual"], check=False)
+        r = subprocess.run([str(_pip), "install", "--quiet", "textual", "pyyaml"], check=False)
         if r.returncode != 0:
-            print("  \033[1;31mFAIL\033[0m  pip install textual failed")
+            print("  \033[1;31mFAIL\033[0m  pip install textual pyyaml failed")
             print()
-            print("  fix:  " + str(_pip) + " install textual")
+            print("  fix:  " + str(_pip) + " install textual pyyaml")
             print()
             sys.exit(1)
 
@@ -268,8 +270,13 @@ PLAYBOOKS_DIR = SCRIPT_DIR.parent / "range42-playbooks"
 def list_deployable_scenarios():
     """
     Return sorted list of scenario names in range42-playbooks/scenarios/ that
-    have a complete templates/ dir (all 4 required template files present).
-    Scenarios starting with '_' are treated as non-deployable placeholders.
+    look like a complete, deployable scenario :
+      - dir name does not start with '_' (those are non-deployable placeholders)
+      - has manifest/scenario_vms.json (source of truth for VMID / IP / role)
+      - has templates/ dir with all 4 required template files present
+    catalog_try is a regular scenario from this predicate's standpoint (it has
+    both the manifest and the templates) ; it is forced via the --catalog-try
+    CLI flag which bypasses StepScenario.
     """
     scenarios_dir = PLAYBOOKS_DIR / "scenarios"
     if not scenarios_dir.exists():
@@ -278,8 +285,11 @@ def list_deployable_scenarios():
     for d in sorted(scenarios_dir.iterdir()):
         if not d.is_dir() or d.name.startswith("_"):
             continue
+        manifest = d / "manifest" / "scenario_vms.json"
         tmpl = d / "templates"
-        if tmpl.is_dir() and all((tmpl / f).exists() for f in SCENARIO_REQUIRED_FILES):
+        if (manifest.is_file()
+                and tmpl.is_dir()
+                and all((tmpl / f).exists() for f in SCENARIO_REQUIRED_FILES)):
             out.append(d.name)
     return out
 
@@ -327,8 +337,16 @@ class _S:
     setup_mode      = "new"
     preflight_ok    = False
     deploy_now      = False
+    # True once the operator confirmed the overwrite of an existing configuration :
+    # site.yml then regenerates the SSH keys, so the recap tells them to redeploy the VMs.
+    overwrite       = False
     install_dir     = os.path.expanduser("~/range42")
     nat_interface   = "vmbr0"
+    # network mode of the host : "sdn" (the default, the supported one) or "legacy" (the
+    # pre-SDN vmbr bridges, unsupported, on explicit request only). Written to the
+    # inventory as INIT_LEGACY_BRIDGES ; the 12 NAT toggles below serve both modes.
+    network_mode    = "sdn"
+    vm_ssh_sources  = []          # optional ssh source restriction on the Proxmox VM firewall, IPv4 /32, empty = open
     apt_proxy_url         = _load_wizard_cache().get("apt_proxy_url", "")
     apt_mirror_enabled    = _load_wizard_cache().get("apt_mirror_enabled", False)
     apt_mirror_airgapped  = _load_wizard_cache().get("apt_mirror_airgapped", False)
@@ -521,6 +539,7 @@ STEPS = [
     (2, "proxmox address"),
     (2, "proxmox node"),
     (2, "connectivity"),
+    (2, "network mode"),
     (3, "scenario"),
     (3, "deployer IP"),
     (3, "deployer user"),
@@ -1168,30 +1187,121 @@ class StepAutoDetectNAT(Step):
 
     def handle_next(self, app):
         S.nat_interface = self.query_one("#i-nat-iface", Input).value.strip() or "vmbr0"
-        app._go(StepNATBridges())
+        app._go(StepNetworkMode())
 
     def handle_back(self, app):
         app._go(StepProxmoxCheck())
 
 
-# ── step 2d — NAT per bridge ─────────────────────────────────────────────────
+# ── step 2c bis - network mode ───────────────────────────────────────────────
+LEGACY_MODE_WARNING = (
+    "  Legacy vmbr bridges are UNSUPPORTED:\n"
+    "    - no network isolation between the labs\n"
+    "    - the new scenarios do not run on them\n"
+    "    - they receive no update\n"
+    "  Keep them only for a private scenario that was never migrated.\n"
+    "  If you go there, you debug alone.")
+
+
+class StepNetworkMode(Step):
+    """
+    SDN or legacy, one choice per Proxmox host. SDN is preselected and is the supported
+    mode ; legacy needs an explicit click AND an acknowledgement switch before the wizard
+    lets the operator through. The choice drives the NAT panel that follows (net140..151 or
+    vmbr140..151), the scenario compatibility warning, and INIT_LEGACY_BRIDGES in the
+    written inventory.
+    """
+    STEP_NUM  = 2
+    SHOW_BACK = True
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  network mode", classes="title")
+        yield Rule()
+        yield Static(
+            "  How the lab networks are created on this Proxmox host. One choice per host.\n\n"
+            "  SDN (recommended): the init creates one SDN zone and the 12 lab networks\n"
+            "  net140 .. net151, with outbound NAT per network. Every scenario declares its\n"
+            "  own networks on top of them. This is the supported mode.\n\n"
+            "  Legacy: the 12 Linux bridges vmbr140 .. vmbr151 of the pre-SDN era.\n",
+            classes="muted")
+        with Horizontal(id="mode-choices"):
+            yield Button(self._btn_label("sdn"),    id="mode-sdn",    classes="-ok")
+            yield Button(self._btn_label("legacy"), id="mode-legacy", classes="-danger")
+        yield Static("")
+        yield Label("", id="mode-warn", classes="warn")
+        with Horizontal(id="mode-confirm"):
+            yield Switch(value=False, id="sw-legacy-ack")
+            yield Label("  I understand: legacy is unsupported, I debug alone", classes="muted")
+
+    def _btn_label(self, mode):
+        mark = "●" if S.network_mode == mode else "○"
+        return (f" {mark}  SDN networks  (recommended) " if mode == "sdn"
+                else f" {mark}  Legacy vmbr bridges  (unsupported) ")
+
+    def on_mount(self):
+        self._refresh()
+
+    def _refresh(self):
+        legacy = S.network_mode == "legacy"
+        self.query_one("#mode-sdn", Button).label    = self._btn_label("sdn")
+        self.query_one("#mode-legacy", Button).label = self._btn_label("legacy")
+        self.query_one("#mode-warn", Label).update(LEGACY_MODE_WARNING if legacy else "")
+        self.query_one("#mode-confirm").display = legacy
+        self._gate()
+
+    def _gate(self):
+        # legacy passes only with the acknowledgement on ; SDN passes as is
+        legacy = S.network_mode == "legacy"
+        ack = self.query_one("#sw-legacy-ack", Switch).value
+        self.app.query_one("#btn-next", Button).disabled = legacy and not ack
+
+    @on(Button.Pressed, "#mode-sdn")
+    def pick_sdn(self):
+        S.network_mode = "sdn"
+        self._refresh()
+
+    @on(Button.Pressed, "#mode-legacy")
+    def pick_legacy(self):
+        S.network_mode = "legacy"
+        self._refresh()
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        self._gate()
+
+    def handle_next(self, app):
+        if S.network_mode == "legacy" and not self.query_one("#sw-legacy-ack", Switch).value:
+            return  # the button is disabled in that state ; belt and braces
+        app._go(StepNATBridges())
+
+    def handle_back(self, app):
+        app._go(StepAutoDetectNAT())
+
+
+# ── step 2d - outbound NAT per network (SDN) or per bridge (legacy) ────────────
 class StepNATBridges(Step):
     STEP_NUM  = 2
     SHOW_BACK = True
 
     def compose(self) -> ComposeResult:
-        yield Label("◆  NAT per bridge", classes="title")
+        sdn = S.network_mode != "legacy"
+        yield Label("◆  outbound NAT per network" if sdn else "◆  NAT per bridge (legacy)", classes="title")
         yield Rule()
         yield Static(
-            "  Enable or disable outbound NAT (internet access) per bridge.\n"
-            "  Click a bridge to toggle NAT on/off.\n",
+            ("  Enable or disable outbound NAT (internet access) per SDN network.\n"
+             "  All on by default. net140 is the templating network: keep it on, the\n"
+             "  template builds run apt there. Click a network to toggle.\n")
+            if sdn else
+            ("  Enable or disable outbound NAT (internet access) per bridge.\n"
+             "  Click a bridge to toggle NAT on/off.\n"),
             classes="muted")
         yield Horizontal(id="nat-columns")
 
     def _btn_label(self, name, enabled):
         idx = name.replace("vmbr", "")
+        # one dict of 12 toggles keyed vmbrNNN serves both modes ; only the shown name changes
+        shown = name if S.network_mode == "legacy" else f"net{idx}"
         status = "active " if enabled else "disabled"
-        return f" {status}  {name}  .{idx}.0/24"
+        return f" {status}  {shown}  .{idx}.0/24"
 
     def on_mount(self):
         cols = self.query_one("#nat-columns")
@@ -1233,10 +1343,37 @@ class StepNATBridges(Step):
             app._go(StepScenario())
 
     def handle_back(self, app):
-        app._go(StepAutoDetectNAT())
+        app._go(StepNetworkMode())
 
 
 # ── step 3 — scenario, deployer, network (split) ─────────────────────────────
+
+def _scenario_network_kind(name) -> str:
+    """
+    'sdn' when the scenario declares its own SDN networks (a 00_sdn_bootstrap/ dir),
+    'legacy' when it does not (it expects the vmbr bridges), '' when the scenario dir
+    is not there to look at.
+    """
+    d = PLAYBOOKS_DIR / "scenarios" / str(name)
+    if not d.is_dir():
+        return ""
+    return "sdn" if (d / "00_sdn_bootstrap").is_dir() else "legacy"
+
+
+def _scenario_mode_warning(name) -> str:
+    """Non-blocking : the text shown when the chosen scenario and the network mode disagree."""
+    kind = _scenario_network_kind(name)
+    if not kind:
+        return ""
+    if S.network_mode != "legacy" and kind == "legacy":
+        return (f"  ⚠  {name} declares no SDN networks (no 00_sdn_bootstrap/): it needs a fix\n"
+                "     to run on an SDN infrastructure. As is, it fails at the first VM.")
+    if S.network_mode == "legacy" and kind == "sdn":
+        return (f"  ⚠  {name} needs SDN networks (00_sdn_bootstrap/): it does not run on legacy\n"
+                "     vmbr bridges. Go back and pick the SDN network mode for this scenario.")
+    return ""
+
+
 
 class StepScenario(Step):
     STEP_NUM = 3
@@ -1246,9 +1383,10 @@ class StepScenario(Step):
         yield Rule()
         yield Static(
             "  Which lab scenario to deploy on this infrastructure.\n\n"
-            "  blank_scenario_2_subnets is the minimal lab (4 VMs on 2 subnets) — default.\n"
-            "  demo_lab is the full cyber range with admin + student + vulnerable hosts.\n\n"
-            "  Pick from the list of deployable scenarios in range42-playbooks.",
+            "  Pick from the auto-discovered list below. Each entry is sourced from\n"
+            "  range42-playbooks/scenarios/<name>/ and must carry\n"
+            "  manifest/scenario_vms.json + a complete templates/ dir to be listed.\n"
+            "  See the scenario's README and manifest for details.",
             classes="muted")
         yield Static("")
 
@@ -1274,6 +1412,22 @@ class StepScenario(Step):
                 "  Re-run preflight to auto-clone the repo.",
                 classes="muted")
             yield Input(value=S.scenario, placeholder="blank_scenario_2_subnets", id="i-scenario")
+        yield Static("")
+        yield Label("", id="scenario-warn", classes="warn")
+
+    def on_mount(self):
+        self._refresh_warning()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        self._refresh_warning()
+
+    def _refresh_warning(self):
+        w = self.query_one("#i-scenario")
+        if isinstance(w, Select):
+            name = w.value if w.value is not Select.BLANK else ""
+        else:
+            name = w.value
+        self.query_one("#scenario-warn", Label).update(_scenario_mode_warning(str(name or "").strip()))
 
     def handle_next(self, app):
         w = self.query_one("#i-scenario")
@@ -1281,9 +1435,80 @@ class StepScenario(Step):
             S.scenario = w.value if w.value is not Select.BLANK else "blank_scenario_2_subnets"
         else:
             S.scenario = w.value.strip() or "blank_scenario_2_subnets"
-        app._go(StepDeployerIP())
+        app._go(StepVmSshSources())
 
     def handle_back(self, app): app._go(StepNATBridges())
+
+
+class StepVmSshSources(Step):
+    STEP_NUM = 3
+
+    _IP_RE = re.compile(r'^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:/32)?$')
+
+    def compose(self) -> ComposeResult:
+        yield Label("◆  step 2/3  —  VM firewall : ssh sources (optional)", classes="title")
+        yield Rule()
+        yield Static(
+            "  OPTIONAL, OFF BY DEFAULT. Restrict who may reach port 22 of the lab VMs.\n\n"
+            "  WHERE THE RULE LIVES : in the PROXMOX firewall of each VM (hypervisor side, on the\n"
+            "  VM's network card, in force once the guest is armed). It is NOT the firewall inside\n"
+            "  the VMs (ufw), which this step never touches.\n\n"
+            "  OFF : the ssh accept the deployment declares on every VM stays open to any source.\n"
+            "  ON  : that accept is restricted to the IPv4 /32 listed below, plus EVERY network of\n"
+            "        the scenario, whole, always added : the deployer reaches the VMs through the\n"
+            "        Proxmox jump host, so a VM sees the host's address, not yours, and the lab VMs\n"
+            "        keep reaching each other. Only the outside is filtered.\n\n"
+            "  Applies to the VMs this workspace creates. Format : a.b.c.d or a.b.c.d/32,\n"
+            "  comma or space separated.",
+            classes="muted")
+        yield Static("")
+        yield Switch(value=bool(S.vm_ssh_sources), id="sw-vmssh")
+        yield Label("  restrict ssh on the Proxmox VM firewall to the addresses below", classes="muted")
+        yield Input(value=", ".join(S.vm_ssh_sources), placeholder="203.0.113.7, 198.51.100.20/32   (empty = no restriction)",
+                    id="i-vmssh", disabled=not S.vm_ssh_sources)
+        yield Label("", id="e-vmssh", classes="err")
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "sw-vmssh":
+            self.query_one("#i-vmssh", Input).disabled = not event.value
+            if not event.value:
+                self.query_one("#e-vmssh", Label).update("")
+
+    @staticmethod
+    def parse_sources(raw: str):
+        """Return (list of normalized a.b.c.d/32, error message or empty string)."""
+        tokens = [t for t in re.split(r'[\s,;]+', raw.strip()) if t]
+        if not tokens:
+            return [], "the restriction is ON but no address is listed : add IPv4 /32 addresses or switch it OFF"
+        out = []
+        for t in tokens:
+            if not StepVmSshSources._IP_RE.match(t):
+                return [], f"'{t}' is not an IPv4 /32 (expected a.b.c.d or a.b.c.d/32)"
+            try:
+                net = ipaddress.ip_network(t if "/" in t else t + "/32", strict=True)
+            except ValueError:
+                return [], f"'{t}' is not a valid IPv4 /32"
+            if net.version != 4 or net.prefixlen != 32:
+                return [], f"'{t}' : only IPv4 /32 is accepted"
+            s = str(net)
+            if s not in out:
+                out.append(s)
+        return out, ""
+
+    def handle_next(self, app):
+        err = self.query_one("#e-vmssh", Label)
+        if not self.query_one("#sw-vmssh", Switch).value:
+            S.vm_ssh_sources = []
+            err.update("")
+            app._go(StepDeployerIP()); return
+        out, msg = self.parse_sources(self.query_one("#i-vmssh", Input).value)
+        if msg:
+            err.update("✗ " + msg); return
+        err.update("")
+        S.vm_ssh_sources = out
+        app._go(StepDeployerIP())
+
+    def handle_back(self, app): app._go(StepScenario())
 
 
 class StepDeployerIP(Step):
@@ -1311,7 +1536,7 @@ class StepDeployerIP(Step):
         if S.catalog_try_path:
             app._go(StepNATBridges())
         else:
-            app._go(StepScenario())
+            app._go(StepVmSshSources())
 
 
 class StepDeployerUser(Step):
@@ -1500,8 +1725,12 @@ class StepReview(Step):
             ("scenario",        S.scenario),
             ("deployer user",   S.deployer_user),
             ("deployer IP",     S.deployer_ip),
+            ("VM ssh sources",  "open to any source (default)" if not S.vm_ssh_sources
+                                else f"{len(S.vm_ssh_sources)} address(es) + every scenario network : " + ", ".join(S.vm_ssh_sources)),
             ("NAT interface",   S.nat_interface),
-            ("NAT bridges",     ", ".join(n for n, v in sorted(S.nat_bridges.items()) if v)),
+            ("network mode",    "SDN networks (recommended)" if S.network_mode != "legacy" else "LEGACY vmbr bridges (unsupported)"),
+            ("outbound NAT on", ", ".join((n if S.network_mode == "legacy" else n.replace("vmbr", "net"))
+                                          for n, v in sorted(S.nat_bridges.items()) if v)),
             ("apt mirror",       "enabled" if S.apt_mirror_enabled else "disabled"),
             ("mirror IP",        S.apt_mirror_vm_ip if S.apt_mirror_enabled else "—"),
             ("root password",   pw),
@@ -1552,6 +1781,7 @@ class StepDeploy(Step):
 
     @on(Button.Pressed, "#b-overwrite")
     def do_overwrite(self):
+        S.overwrite = True
         self.query_one("#overwrite-confirm").display = False
         self.create_inventory()
 
@@ -1630,6 +1860,7 @@ class StepDeploy(Step):
              f'infrastructure_proxmox_default_network_card_interface: "{S.nat_interface}"'),
             ('DEPLOYER_CLI_USER: "your_deployer_cli_username"', f'DEPLOYER_CLI_USER: "{S.deployer_user}"'),
             ('deployer_cli_ip: "127.0.0.1"',   f'deployer_cli_ip: "{S.deployer_ip}"'),
+            ('range42_fw_vm_ssh_sources: []',  f'range42_fw_vm_ssh_sources: {json.dumps(S.vm_ssh_sources)}'),
             ('DEPLOYER_CLI__DST_GIT_DIR: "/home/your_deployer_cli_username/range42/"',
              f'DEPLOYER_CLI__DST_GIT_DIR: "{S.install_dir}/"'),
             ('DEPLOYER_CLI__DST_CONFIG_BASE_DIR: "/home/your_deployer_cli_username/range42.config"',
@@ -1676,15 +1907,31 @@ class StepDeploy(Step):
             log_row("PASS", "configured apt-mirror",
                     f"ip={S.apt_mirror_vm_ip}  airgapped={S.apt_mirror_airgapped}")
 
-        # inject range42_lab_bridges with NAT toggles
-        bridges_yaml = "\n\n# lab bridges NAT configuration (managed by wizard)\nrange42_lab_bridges:\n"
-        for name in sorted(S.nat_bridges.keys()):
-            idx = name.replace("vmbr", "")
-            ip = f"192.168.{idx}.1"
-            nat = "true" if S.nat_bridges[name] else "false"
-            bridges_yaml += f'  - {{ name: "{name}", ip: "{ip}", nat: {nat} }}\n'
-        with open(vars_, "a") as f:
-            f.write(bridges_yaml)
+        # network mode. The example ships SDN (INIT_LEGACY_BRIDGES "NO") with the 12 lab
+        # networks at outbound NAT on : the panel's choices are written on those exact lines.
+        # Legacy flips the flag and appends the bridge list proxmox.init reads in that mode.
+        if S.network_mode == "legacy":
+            sed_f(vars_, 'INIT_LEGACY_BRIDGES: "NO"', 'INIT_LEGACY_BRIDGES: "YES"')
+            bridges_yaml = "\n\n# lab bridges NAT configuration (managed by wizard)\nrange42_lab_bridges:\n"
+            for name in sorted(S.nat_bridges.keys()):
+                idx = name.replace("vmbr", "")
+                ip = f"192.168.{idx}.1"
+                nat = "true" if S.nat_bridges[name] else "false"
+                bridges_yaml += f'  - {{ name: "{name}", ip: "{ip}", nat: {nat} }}\n'
+            with open(vars_, "a") as f:
+                f.write(bridges_yaml)
+            log_row("WARN", "network mode: LEGACY vmbr bridges (unsupported)",
+                    f"nat on: {', '.join(n for n, v in sorted(S.nat_bridges.items()) if v)}")
+        else:
+            for name, enabled in sorted(S.nat_bridges.items()):
+                if enabled:
+                    continue
+                idx = name.replace("vmbr", "")
+                sed_f(vars_,
+                      f'  - {{ vnet: "net{idx}", subnet: "192.168.{idx}.0/24", gateway: "192.168.{idx}.1", snat: true }}',
+                      f'  - {{ vnet: "net{idx}", subnet: "192.168.{idx}.0/24", gateway: "192.168.{idx}.1", snat: false }}')
+            nat_off = ", ".join(n.replace("vmbr", "net") for n, v in sorted(S.nat_bridges.items()) if not v)
+            log_row("PASS", "network mode: SDN", f"zone=r42zone  networks=net140..net151  nat off: {nat_off or 'none'}")
 
         log_row("PASS", "configured vars.yml",
                 f"codename={S.codename}  node={S.proxmox_node}  nat={S.nat_interface}")
@@ -1726,11 +1973,15 @@ class StepDeploy(Step):
         log.write("")
         log.write("[bold #38bdf8]◆  deploy now?[/bold #38bdf8]")
         log.write("")
+        sdn_line = ("    4. sdn lab networks      (the SDN zone + 12 networks, right after site.yml)\n\n"
+                    if S.network_mode != "legacy" else
+                    "    (legacy network mode: the vmbr bridges come with step 2, no SDN step)\n\n")
         log.write(
-            "  Deploy now will run all 3 playbooks in sequence:\n"
+            "  Deploy now will run the playbooks in sequence:\n"
             "    1. generate credentials  (SSH keys, vault)\n"
             "    2. configure proxmox     (root SSH, jump user, API token)\n"
-            "    3. deploy deployer-cli   (packages, workspace, SSH config)\n\n"
+            "    3. deploy deployer-cli   (packages, workspace, SSH config)\n"
+            + sdn_line +
             f"  Note: step 2 needs the Proxmox root password for SSH setup.\n"
             f"  Root password: {'provided' if S.proxmox_root_pw else 'not set (will prompt during deploy)'}")
         log.write("")
@@ -1881,6 +2132,33 @@ def _print_cmd(msg):  print(f"  \033[36m       {msg}\033[0m")
 def _print_bold(msg): print(f"\n  \033[1;32m  ##  {msg}\033[0m\n")
 
 
+def _inventory_is_legacy(codename) -> bool:
+    """
+    Network mode of a codename, read from the inventory the wizard wrote :
+    INIT_LEGACY_BRIDGES "YES" in group_vars/all/vars.yml means legacy vmbr bridges,
+    anything else (or an inventory written before the key existed) means SDN.
+    """
+    vars_path = INVENTORIES / codename / "group_vars" / "all" / "vars.yml"
+    try:
+        m = re.search(r'^INIT_LEGACY_BRIDGES:\s*["\']?([A-Za-z]+)', vars_path.read_text(), re.M)
+    except OSError:
+        return False
+    return bool(m) and m.group(1).upper() == "YES"
+
+
+def _sdn_step_cmd_lines(codename, scenario):
+    """The copy-paste form of the SDN step, as GETTING_STARTED documents it (step 5b)."""
+    return [
+        f"export RANGE42_ACTIVE_CONFIG_DIR=\"$PWD/config/{codename}-{scenario}\"",
+        "ANSIBLE_ROLES_PATH=\"./roles:../range42-ansible_roles-proxmox_controller/roles\" \\",
+        "ansible-playbook playbooks/04_configure_sdn.yml \\",
+        f"  -i inventories/{codename}/hosts.yml \\",
+        f"  -e @inventories/{codename}/group_vars/{scenario}/vars.yml \\",
+        f"  -e INFRASTRUCTURE_SCENARIO={scenario} \\",
+        f"  --vault-password-file ./config/{codename}-{scenario}/secrets/vault_pass.txt",
+    ]
+
+
 def post_wizard():
     """Runs after Textual exits — deploy in native terminal."""
     if not S.codename:
@@ -1899,6 +2177,14 @@ def post_wizard():
         _print_cmd(f"  -e @inventories/{S.codename}/group_vars/{S.scenario}/vars.yml \\")
         _print_cmd(f"  -e INFRASTRUCTURE_SCENARIO={S.scenario}")
         print()
+        if not _inventory_is_legacy(S.codename):
+            # the SDN step is a separate run on purpose : it loads the encrypted vault, whose
+            # password file is created by site.yml itself
+            _print_info("then, once site.yml is through, create the SDN lab networks:")
+            _print_cmd("")
+            for line in _sdn_step_cmd_lines(S.codename, S.scenario):
+                _print_cmd(line)
+            print()
         return
 
     # ── deploy now — native terminal ──
@@ -1956,6 +2242,53 @@ def post_wizard():
         cwd=str(SCRIPT_DIR), env=env
     ).returncode
 
+    # ── the SDN lab networks (playbook 04) - a SECOND run, on purpose ──
+    # The bundle behind it loads the encrypted vault (the api token lives there), so the
+    # run needs the vault password file, and that file is created by playbook 01 DURING
+    # site.yml above : ansible reads vault secrets at startup, so it cannot be part of the
+    # same run on a first init. Legacy mode (INIT_LEGACY_BRIDGES YES in the written
+    # inventory) creates its bridges in playbook 02 and skips this entirely.
+    rc_sdn = None
+    legacy = _inventory_is_legacy(S.codename)
+    if rc == 0 and not legacy:
+        config_dir = SCRIPT_DIR / "config" / f"{S.codename}-{S.scenario}"
+        siblings = SCRIPT_DIR.parent
+        env_sdn = env.copy()
+        # the bundle dir : the operator's env when it has one (a deployer-cli with an active
+        # workspace), the sibling clone otherwise (the preflight guarantees it)
+        env_sdn["RANGE42_BUNDLE_DIR"] = env.get("RANGE42_BUNDLE_DIR") or str(siblings / "range42-playbooks" / "bundles")
+        # the bundle reads its vault under RANGE42_ACTIVE_CONFIG_DIR/secrets/ : at init the
+        # source of truth is the config dir playbooks 01 and 02 just wrote, not a workspace
+        env_sdn["RANGE42_ACTIVE_CONFIG_DIR"] = str(config_dir)
+        # the bundle includes the proxmox controller role, cloned as a sibling by the preflight
+        env_sdn["ANSIBLE_ROLES_PATH"] = f"{env['ANSIBLE_ROLES_PATH']}:{siblings}/range42-ansible_roles-proxmox_controller/roles"
+        print()
+        _print_info(f"running: ansible-playbook playbooks/04_configure_sdn.yml -i inventories/{S.codename}/hosts.yml  (the SDN lab networks)")
+        print()
+        rc_sdn = subprocess.run(
+            ["ansible-playbook", "playbooks/04_configure_sdn.yml",
+             "-i", f"inventories/{S.codename}/hosts.yml",
+             "-e", f"@{scenario_vars_file}",
+             "-e", f"INFRASTRUCTURE_SCENARIO={S.scenario}",
+             "--vault-password-file", str(config_dir / "secrets" / "vault_pass.txt")],
+            cwd=str(SCRIPT_DIR), env=env_sdn
+        ).returncode
+
+    # Hand the workspace over to the range42-context shell function when this wizard
+    # runs under it (`range42-context init` exports RANGE42_INIT_SENTINEL). Only that
+    # parent shell can load the ssh-agent and export the workspace environment : it
+    # runs `range42-context use <codename> <scenario>` once this process has exited,
+    # printing that command as it does. Written only when site.yml succeeded ; a failed
+    # SDN step does not hold the switch back, the workspace exists.
+    handed_over = False
+    init_sentinel = os.environ.get("RANGE42_INIT_SENTINEL", "")
+    if rc == 0 and init_sentinel:
+        try:
+            Path(init_sentinel).write_text(f"{S.codename} {S.scenario}\n")
+            handed_over = True
+        except OSError as exc:
+            _print_fail(f"cannot hand the workspace over to range42-context: {exc}")
+
     # clear passwords
     S.proxmox_root_pw = S.sudo_pw = S.deployer_cli_pw = ""
 
@@ -1965,14 +2298,31 @@ def post_wizard():
         _print_ok("credentials generated")
         _print_ok("proxmox configured")
         _print_ok("deployer-cli deployed")
+        if legacy:
+            _print_info("legacy network mode (INIT_LEGACY_BRIDGES is YES): the SDN step was skipped")
+        elif rc_sdn == 0:
+            _print_ok("sdn lab networks configured")
+        else:
+            _print_fail("sdn lab networks NOT configured - check the error above and re-run:")
+            _print_cmd("")
+            for line in _sdn_step_cmd_lines(S.codename, S.scenario):
+                _print_cmd(line)
         print()
         _print_info(f"repos cloned to:     {S.install_dir}/")
         _print_info(f"workspace config in: ~/range42.config/")
         print()
         print("  ---- first time setup ----")
         print()
-        _print_info("activate your workspace:")
+        if handed_over:
+            _print_info("your workspace is activated for you right after this recap, range42-context runs:")
+        else:
+            _print_info("activate your workspace:")
         _print_cmd(f"range42-context use {S.codename} {S.scenario}")
+        if S.overwrite:
+            print()
+            _print_info("this run regenerated the SSH keys: VMs deployed before it keep the previous alice key, redeploy them:")
+            _print_cmd("range42-context delete-vms")
+            _print_cmd("range42-context deploy-vms")
         print()
         _print_info("check everything is ready:")
         _print_cmd("range42-context status")

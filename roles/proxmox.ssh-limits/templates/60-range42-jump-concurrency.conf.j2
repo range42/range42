@@ -1,0 +1,4 @@
+# Managed by range42 (role proxmox.ssh-limits). Do not edit by hand.
+# Raise sshd pre-auth concurrency so parallel Ansible connections through this
+# jump host are not dropped (sshd default MaxStartups is 10:30:100).
+MaxStartups {{ proxmox_ssh_limits_maxstartups }}

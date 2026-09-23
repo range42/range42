@@ -63,12 +63,12 @@ The deployer-cli holds:
 
 ### Jump host
 
-The lab VMs run on a private network (e.g. 192.168.42.x). They are not
+The lab VMs run on private networks (the SDN vnets, e.g. `net143` = `192.168.143.0/24`). They are not
 directly reachable from outside. To reach them, SSH bounces through a
 "jump host" — usually the Proxmox server itself:
 
 ```
-[your machine] --SSH--> [Proxmox / jump_user] --SSH--> [VM: 192.168.42.x]
+[your machine] --SSH--> [Proxmox / jump_user] --SSH--> [VM: 192.168.143.x]
 ```
 
 This happens automatically via `ProxyJump` in the SSH config.
@@ -77,7 +77,7 @@ You just type `ssh r42.admin-wazuh` and SSH handles the bounce.
 ### Vault
 
 An Ansible vault file (`default_vault.yml`) that stores all secrets for a
-CODENAME-SCENARIO: API tokens, passwords, SSH public keys, Tailscale keys.
+CODENAME-SCENARIO: API tokens, passwords, SSH public keys, Tailscale keys, the SDN network declaration of the host (`range42_sdn_networks`) and the optional ssh sources of the lab VMs (`range42_fw_vm_ssh_sources`).
 
 The file is encrypted with `ansible-vault`. The password to decrypt it is in
 `vault_pass.txt` in the same directory (intentional by design — the deployer-cli
@@ -125,6 +125,10 @@ A zsh function available on the deployer-cli. Central tool for managing workspac
 | `range42-context delete` | delete all scenario VMs + templates |
 | `range42-context delete-vms` | delete VMs only (keep templates for fast redeploy) |
 | `range42-context reset` | delete + recreate all VMs |
+| `range42-context delete-everything` | delete every VM and template of every scenario on the node (cross-scenario) |
+| `range42-context start` / `stop` / `stop-acpi` / `pause` / `resume` | the lifecycle of every VM of the active scenario |
+| `range42-context snapshot [name]` / `snapshot-list` / `revert <name>` | snapshot, list and revert every VM of the active scenario |
+| `range42-context tools-update` | re-copy the shell tools from the local clone, without a git pull |
 | `range42-context ssh-reload` | reload SSH keys for the active workspace |
 
 **Info:**
@@ -136,6 +140,21 @@ A zsh function available on the deployer-cli. Central tool for managing workspac
 | `range42-context show-inventory` | show the Ansible inventory tree |
 | `range42-context ssh <pattern>` | quick SSH to a VM by partial name (e.g. `ssh wazuh`) |
 | `range42-context help` | show all commands |
+
+**Networks and firewall** (scoped to the active scenario, read back from the host):
+
+| Command | What it does |
+|---------|-------------|
+| `range42-context networks-show-sdn` | zone, vnet, subnet, outbound NAT and isolation of each network |
+| `range42-context networks-internet-list` | where egress is really active : declared vs live SNAT rules |
+| `range42-context networks-internet-on` / `-off` | enable or disable the outbound NAT of the scenario networks, one apply, live rules reconciled ; scope with `--roles all` (default, never the templating network), `--roles all-and-templating`, `--roles teams`, `--roles team-143,team-144`, `--vnet net143`, `--cidr 192.168.143.0/24` ; `--yes` skips the confirmation |
+| `range42-context networks-apply` | create what the scenario declares, idempotent ; `--dry-run` compares declared and live without writing |
+| `range42-context networks-show-firewall [--rules]` | datacenter, node and per-VM firewall switches ; with `--rules`, the rules of the three chains and what is in force ; `--scope scenario` (default), `vm_id <id>`, `vm_ids` (ids on stdin), `node`, `dc`, `all` ; `--json` for one object per line |
+| `range42-context networks-firewall-on` / `-off` | arm or disarm the guests of the scenario ; `--scope scenario` (default), `proxmox` (the host switches alone), `vm_id <id>`, `all` (off only) ; `--yes` skips the confirmation |
+| `range42-context networks-delete-sdn` | remove the scenario's subnets and vnets, the shared zone is kept ; refuses while VMs are attached |
+| `range42-context networks-legacy-clean` | migration only : disarm the pre-SDN bridge stanzas of the host, once |
+| `range42-context debug-on` / `debug-off` / `debug` | full ansible logs, or the readable output (default) ; say which is active |
+| `range42-context --tui` | the interactive dashboard : deploy with feature flags, network and firewall gestures with a scope picker |
 
 **Catalog testing:**
 
@@ -150,6 +169,14 @@ available elements.
 | `range42-context catalog-try-list` | list catalog elements deployable via `catalog-try` (excludes `docker/admin/*` by default) |
 | `range42-context catalog-try-list-admin` | list only the admin catalog elements (`docker/admin/*`) |
 
+### SDN zone, vnet, subnet
+
+The lab networks as Proxmox SDN objects. One **zone** per host (`r42zone` by default, type simple, host-local), one **vnet** per lab network (`net140` to `net151`), each with one **subnet** and its gateway held by the Proxmox host (`net143` carries `192.168.143.0/24`, gateway `192.168.143.1`). Outbound internet comes from the SNAT flag of the subnet, toggled at init per network. Created at init by `playbooks/04_configure_sdn.yml`, declared by each scenario in `00_sdn_bootstrap/_main.yml`, shared between scenarios : a vnet name is global to the cluster and is never deleted by a deployment. `net140` is the templating network, the VM templates are built on it. The legacy `vmbr14x` bridges are the previous model : a bridge and a vnet cannot carry the same gateway, hence `range42-context networks-legacy-clean` when a host migrates.
+
+### Firewall arming
+
+The Proxmox firewall of a VM filters only when three switches are on : the datacenter, the guest, and the flag of its network card. Every deployment declares the rules (anti-lockout accepts for ssh and the API on the datacenter and the node, an ssh accept on every VM, optionally restricted to the sources chosen at init plus every network of the scenario) but leaves the guests **unarmed**. Arming is opt-in : `FIREWALL_ARM_VMS=YES` at deploy, or `range42-context networks-firewall-on` later, and it refuses to arm a guest whose chain would cut ssh. The reference state of a host is datacenter and node switches on.
+
 ### range42-workspace
 
 A zsh function for exporting/importing workspaces between machines.
@@ -163,7 +190,7 @@ A zsh function for exporting/importing workspaces between machines.
 
 Interactive setup wizard (Python/Textual TUI). Creates an inventory with
 your Proxmox settings and optionally runs the full deployment automatically.
-Requires: `pip install --user textual` (not `apt install python3-textual`, version too old)
+Requires the `textual` Python package : the wizard installs it itself in a local venv (`.venv-wizard`) when it is missing, no manual pip step.
 
 First time: `python3 range42-init.py`
 After first deployment: `range42-context init` (shortcut, available once tools are deployed)
@@ -179,13 +206,14 @@ VMs in a scenario are organized in groups:
 | **admin** | Infrastructure services (monitoring, API, registry) | r42.admin-wazuh, r42.admin-web-api-kong |
 | **student** | Workstations for learners | r42.student-box-01 |
 | **vuln** | Vulnerable targets for attack/defense exercises | r42.vuln-box-00 to r42.vuln-box-04 |
+| **team** | Empty workstations of the blank scenarios, one group per subnet | r42.bs2-team-143-01, r42.bs2-team-144-01 |
 
 ### Inventory
 
 Two types of inventory in range42:
 
 1. **Bootstrapping inventory** (`inventories/<your-infra>/hosts.yml`) — defines the
-   Proxmox server and deployer-cli. Used by playbooks 01-03 and the wizard.
+   Proxmox server and deployer-cli. Used by playbooks 01 to 04 and the wizard.
 
 2. **Scenario inventory** (`~/range42.config/CODENAME-SCENARIO/inventory/inventory_default.yml`)
    — defines the lab VMs (admin, student, vuln groups). Used by the scenario playbooks
