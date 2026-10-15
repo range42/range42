@@ -195,6 +195,12 @@ _r42_list() {
 _r42_flush_known_hosts() {
     local target="${1:-}"
 
+    # The API runner owns its verified trust records as well as its links.
+    # Context selection and lifecycle dispatch must not erase those records.
+    if [[ "${RANGE42_CONTEXT_REPO_LINKS_MANAGED:-NO}" == "YES" ]]; then
+        return 0
+    fi
+
     # Source of truth = the scenario manifest (manifest/scenario_vms.json).
     # Only flush IPs of the scenario's VMs — never the Proxmox host (which is
     # referenced as ProxyJump and shouldn't change between deploys).
@@ -444,15 +450,28 @@ _r42_use() {
     local devkit_secrets="${git_dir%/}/range42-ansible_roles-debug-devkit/secrets"
     local playbooks_secrets="${git_dir%/}/range42-playbooks/scenarios/${scenario}/secrets"
 
-    if [[ -d "${git_dir%/}/range42-ansible_roles-debug-devkit" ]]; then
-        ln -sfn "$config_dir/secrets" "$devkit_secrets"
+    # The API's native adapter owns the attempt's scenario/credential links.
+    # Its reviewed repositories may be read-only; ordinary CLI use retains the
+    # existing shared-link workflow. Only that explicit caller opts out.
+    if [[ "${RANGE42_CONTEXT_REPO_LINKS_MANAGED:-NO}" == "YES" ]]; then
+        _r42_print_step "repository secret links are managed by the native runner"
+    elif [[ -d "${git_dir%/}/range42-ansible_roles-debug-devkit" ]]; then
+        ln -sfn "$config_dir/secrets" "$devkit_secrets" || {
+            _r42_print_fail "cannot select the devkit's workspace secret link" >&2
+            return 1
+        }
         _r42_print_step "updated secrets symlink in devkit → $target"
     else
         _r42_print_warning "range42-ansible_roles-debug-devkit not found at ${git_dir%/}/range42-ansible_roles-debug-devkit"
         _r42_print_warning "  -> devkit scripts (proxmox_vm.*.sh) will not work in this shell"
     fi
-    if [[ -d "${git_dir%/}/range42-playbooks/scenarios/${scenario}" ]]; then
-        ln -sfn "$config_dir/secrets" "$playbooks_secrets"
+    if [[ "${RANGE42_CONTEXT_REPO_LINKS_MANAGED:-NO}" == "YES" ]]; then
+        : # prepare_native_run already linked this attempt's scenario secrets.
+    elif [[ -d "${git_dir%/}/range42-playbooks/scenarios/${scenario}" ]]; then
+        ln -sfn "$config_dir/secrets" "$playbooks_secrets" || {
+            _r42_print_fail "cannot select the scenario's workspace secret link" >&2
+            return 1
+        }
         _r42_print_step "updated secrets symlink in playbooks → $target"
     else
         _r42_print_warning "scenario '${scenario}' not found in range42-playbooks (${git_dir%/}/range42-playbooks/scenarios/${scenario})"
@@ -480,6 +499,9 @@ _r42_use() {
 
     #### export ansible config so our settings apply everywhere (suppress warnings etc.)
     local r42_ansible_cfg="$HOME/range42/range42/ansible.cfg"
+    if [[ "${RANGE42_CONTEXT_REPO_LINKS_MANAGED:-NO}" == "YES" ]]; then
+        r42_ansible_cfg="${ANSIBLE_CONFIG:-$r42_ansible_cfg}"
+    fi
     if [[ -f "$r42_ansible_cfg" ]]; then
         export ANSIBLE_CONFIG="$r42_ansible_cfg"
         _r42_print_step "exported ANSIBLE_CONFIG=$r42_ansible_cfg"
