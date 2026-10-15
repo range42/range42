@@ -1337,8 +1337,12 @@ For this caller it exports `RANGE42_CONTEXT_REPO_LINKS_MANAGED=YES` before
 links unchanged. This supports reviewed read-only runtime exports without
 changing ordinary CLI/deployer or source-based devkit behavior.
 
+Managed contexts also retain verified guest host keys during context selection
+and deployment. Ordinary CLI contexts keep their existing guest-key reset.
+
 Keep home/SSH configuration and the native workspace writable and private. Set
 an explicit `ANSIBLE_CONFIG` for the reviewed execution runtime; context selection
-preserves that setting. Ordinary context selection still updates its existing
-secret links and now returns failure if an update fails. Install the matching
+preserves that setting for the managed API caller. Ordinary context selection
+selects the Range42 Ansible configuration, updates its existing secret links
+and returns failure if an update fails. Install the matching
 backend adapter revision alongside this core compatibility change.

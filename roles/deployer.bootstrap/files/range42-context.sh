@@ -195,6 +195,12 @@ _r42_list() {
 _r42_flush_known_hosts() {
     local target="${1:-}"
 
+    # The API runner owns its verified trust records as well as its links.
+    # Context selection and lifecycle dispatch must not erase those records.
+    if [[ "${RANGE42_CONTEXT_REPO_LINKS_MANAGED:-NO}" == "YES" ]]; then
+        return 0
+    fi
+
     # Source of truth = the scenario manifest (manifest/scenario_vms.json).
     # Only flush IPs of the scenario's VMs — never the Proxmox host (which is
     # referenced as ProxyJump and shouldn't change between deploys).
@@ -492,7 +498,10 @@ _r42_use() {
     export RANGE42_ACTIVE_CONFIG_DIR="$config_dir"
 
     #### export ansible config so our settings apply everywhere (suppress warnings etc.)
-    local r42_ansible_cfg="${ANSIBLE_CONFIG:-$HOME/range42/range42/ansible.cfg}"
+    local r42_ansible_cfg="$HOME/range42/range42/ansible.cfg"
+    if [[ "${RANGE42_CONTEXT_REPO_LINKS_MANAGED:-NO}" == "YES" ]]; then
+        r42_ansible_cfg="${ANSIBLE_CONFIG:-$r42_ansible_cfg}"
+    fi
     if [[ -f "$r42_ansible_cfg" ]]; then
         export ANSIBLE_CONFIG="$r42_ansible_cfg"
         _r42_print_step "exported ANSIBLE_CONFIG=$r42_ansible_cfg"
