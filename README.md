@@ -195,3 +195,12 @@ range42 is built and maintained by:
 | Philippe Parage | NC3 | [nc3.lu](https://nc3.lu/) |
 
 See AUTHORS file for the full list of contributors.
+
+For a reviewed release that spans different repository commits, set
+`RANGE42_REPOSITORY_REVISIONS_FILE` to a YAML mapping of known repository names
+to exact 40-character commit SHAs before running the native installer. The
+`deployer.repos` role validates the complete mapping before cloning, selects those
+revisions instead of `GIT_BRANCH`, and refuses to discard local changes in pinned
+repositories. Unspecified repositories retain the existing branch behavior. This
+lets workshop participants run the normal installer against the same revisions
+that were qualified together.
