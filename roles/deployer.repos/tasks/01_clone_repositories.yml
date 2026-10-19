@@ -6,13 +6,26 @@
 #
 # source: configure.deployer-cli/tasks/05_git.yml (lines 17-59)
 
+- name: DEPLOYER REPOS - READ OPTIONAL REVIEWED RELEASE REVISIONS
+  ansible.builtin.set_fact:
+    range42_release_revisions: "{{ (lookup('ansible.builtin.file', lookup('env', 'RANGE42_REPOSITORY_REVISIONS_FILE')) | from_yaml) if lookup('env', 'RANGE42_REPOSITORY_REVISIONS_FILE') else {} }}"
+
+- name: DEPLOYER REPOS - VALIDATE EXACT RELEASE REVISIONS BEFORE CLONING
+  ansible.builtin.assert:
+    that:
+      - range42_release_revisions is mapping
+      - range42_release_revisions.keys() | difference(['range42', 'range42-playbooks', 'range42-catalog', 'range42-backend-api', 'range42-deployer-ui', 'range42-ansible_roles-proxmox_controller', 'range42-ansible_roles-debug-devkit']) | length == 0
+      - range42_release_revisions.values() | select('string') | list | length == range42_release_revisions | length
+      - range42_release_revisions.values() | reject('match', '^[0-9a-f]{40}$') | list | length == 0
+    fail_msg: Release revisions must map known Range42 repository names to exact reviewed commit SHAs.
+
 - name: DEPLOYER REPOS - CLONE RANGE42 REPOSITORIES
   ansible.builtin.git:
     repo: "{{ item.repo }}"
     dest: "{{ DEPLOYER_CLI__DST_GIT_DIR }}/{{ item.name }}"
-    version: "{{ GIT_BRANCH | default(omit) }}"
-    update: "{{ GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"
-    force: "{{ GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"
+    version: "{{ range42_release_revisions.get(item.name, GIT_BRANCH | default(omit)) }}"
+    update: "{{ item.name in range42_release_revisions or (GIT_BRANCH is defined and GIT_BRANCH != 'main') }}"
+    force: "{{ item.name not in range42_release_revisions and GIT_BRANCH is defined and GIT_BRANCH != 'main' }}"
   become: true
   become_user: "{{ DEPLOYER_CLI_USER }}"
   loop:
