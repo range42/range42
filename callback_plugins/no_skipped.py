@@ -14,7 +14,11 @@
 # 'no_skipped': 'display_skipped_hosts'" and prints NO task at all. Measured on ansible-core
 # 2.21 : with the block, the output is the default one minus the skipped tasks, failed loop
 # items and assert reasons included.
+import inspect
+
 from ansible.plugins.callback.default import CallbackModule as DefaultCallbackModule
+
+_BASE_ACCEPTS_HOSTVARS = "hostvars" in inspect.signature(DefaultCallbackModule.get_option).parameters
 
 DOCUMENTATION = """
     name: no_skipped
@@ -46,7 +50,9 @@ class CallbackModule(DefaultCallbackModule):
     def get_option(self, option, hostvars=None):
         if option == "display_skipped_hosts":
             return False
-        return super().get_option(option, hostvars=hostvars)
+        if _BASE_ACCEPTS_HOSTVARS:
+            return super().get_option(option, hostvars=hostvars)
+        return super().get_option(option)
 
     # belt and braces : with the option off the default already prints nothing for these two,
     # and they keep the promise of the name even if the option ever comes back on.
