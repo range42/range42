@@ -1327,3 +1327,22 @@ For full definitions, see [GLOSSARY.md](GLOSSARY.md).
 > Screenshots are placeholders. Some flows may have changed since this was written.
 > Refer to the wizard text on screen as the source of truth.
 > Issues / corrections: open an issue on the range42 repo.
+
+## API runner context selection
+
+The API's native scenario adapter already creates an attempt-local copy of the
+saved repository and binds the selected workspace credentials into that copy.
+For this caller it exports `RANGE42_CONTEXT_REPO_LINKS_MANAGED=YES` before
+`range42-context use`; context selection then leaves installed repository secret
+links unchanged. This supports reviewed read-only runtime exports without
+changing ordinary CLI/deployer or source-based devkit behavior.
+
+Managed contexts also retain verified guest host keys during context selection
+and deployment. Ordinary CLI contexts keep their existing guest-key reset.
+
+Keep home/SSH configuration and the native workspace writable and private. Set
+an explicit `ANSIBLE_CONFIG` for the reviewed execution runtime; context selection
+preserves that setting for the managed API caller. Ordinary context selection
+selects the Range42 Ansible configuration, updates its existing secret links
+and returns failure if an update fails. Install the matching
+backend adapter revision alongside this core compatibility change.
