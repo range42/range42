@@ -216,6 +216,12 @@ _r42_flush_known_hosts() {
     else
         scenario_target=$(readlink -f "$scenario_link") || return 0
     fi
+    # catalog_try's reviewed Delete/Reset lifecycle retires exact guest pins
+    # only after authenticated native absence. Ordinary use/deploy must retain
+    # them too; switching workspaces is not evidence that a guest was deleted.
+    if [[ "${scenario_target##*/}" == "catalog_try" ]]; then
+        return 0
+    fi
     local manifest="${scenario_target}/manifest/scenario_vms.json"
     if [[ ! -f "$manifest" ]]; then
         # fallback : workspace/scenario without manifest yet — silently skip
@@ -2725,6 +2731,23 @@ _r42_catalog_try_list_admin() {
 # Usage : _r42_catalog_try <path>
 #   <path> : logical catalog path (e.g. docker/_ctf/hello)
 #
+# Authenticate guest-agent enrollment without changing the caller's CA context.
+# The fixed native workshop CA is optional: normal system trust remains the
+# default elsewhere. Never substitute a writable, linked or non-root CA file.
+_r42_catalog_try_deploy_vms() (
+    local native_ca="/etc/range42-workshop-pve-ca.pem"
+    if [[ -z "${RANGE42_PROXMOX_CA_FILE:-}" && -f "$native_ca" && ! -L "$native_ca" && -r "$native_ca" ]]; then
+        local ca_metadata
+        ca_metadata=$(stat -c '%u:%a:%h' "$native_ca" 2>/dev/null) || ca_metadata=""
+        case "$ca_metadata" in
+            0:600:1|0:640:1|0:644:1|0:400:1|0:440:1|0:444:1)
+                export RANGE42_PROXMOX_CA_FILE="$native_ca"
+                ;;
+        esac
+    fi
+    _r42_deploy_vms -e range42_guest_hostkey_from_pve_agent=true -e proxmox_api_validate_certs=true
+)
+
 # Requires : active scenario = catalog_try (range42-context use <codename> catalog_try first).
 _r42_catalog_try() {
     # IMPORTANT : do NOT name this local var "path" — zsh ties $PATH (string) to
@@ -2978,6 +3001,8 @@ _r42_catalog_try() {
         _r42_print_step "Smoke check   : L1 fallback (no contract declared)"
     fi
     _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip}, VMID ${vm_id})"
+    _r42_print_step "Guest trust   : authenticated QGA, verified Proxmox TLS; guest agent must already be enabled."
+    _r42_print_step "Workshop      : run range42-workshop ui after install to prepare the owned template before CLI catalog-try."
     _r42_print_warning "This will DESTROY VM ${vm_id} and redeploy it fresh."
     # Portable prompt (bash `read -p` is not zsh-compatible : -p means coprocess in zsh)
     printf '  Continue ? [y/N] '
@@ -2987,16 +3012,13 @@ _r42_catalog_try() {
         return 1
     fi
 
-    # 6. Flush known_hosts for the test VM IP (avoid SSH host key collision)
-    ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$vm_ip" >/dev/null 2>&1 || true
-
-    # 7. Destroy previous test VM
+    # Destroy previous test VM; the scenario alone owns absence-gated pin retirement.
     _r42_print_section "destroying previous test VM"
     _r42_delete_vms || { _r42_print_fail "delete_vms failed" ; return 1 ; }
 
     # 8. Redeploy fresh VM with Docker baseline
     _r42_print_section "redeploying test VM"
-    _r42_deploy_vms || { _r42_print_fail "deploy_vms failed" ; return 1 ; }
+    _r42_catalog_try_deploy_vms || { _r42_print_fail "deploy_vms failed; authenticated QGA, enabled guest agent and verified Proxmox TLS are required" ; return 1 ; }
 
     # 9-11. Deploy element to VM (copy + run + smoke) via Ansible playbook.
     # The playbook handles file transfer (ansible.builtin.copy / SFTP), docker
