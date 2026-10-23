@@ -216,6 +216,12 @@ _r42_flush_known_hosts() {
     else
         scenario_target=$(readlink -f "$scenario_link") || return 0
     fi
+    # catalog_try's reviewed Delete/Reset lifecycle retires exact guest pins
+    # only after authenticated native absence. Ordinary use/deploy must retain
+    # them too; switching workspaces is not evidence that a guest was deleted.
+    if [[ "${scenario_target##*/}" == "catalog_try" ]]; then
+        return 0
+    fi
     local manifest="${scenario_target}/manifest/scenario_vms.json"
     if [[ ! -f "$manifest" ]]; then
         # fallback : workspace/scenario without manifest yet — silently skip
@@ -839,6 +845,29 @@ _r42_deploy() {
     # Extra args (typically -e enable_<feature>=<bool> from the TUI deploy modal)
     # propagate as-is to the scenario's setup.sh which forwards to ansible-playbook.
     ( cd "$scenario_target" && bash "$setup_script" "$@" )
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context deploy-templates — prepare templates without deploying guests
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_deploy_templates() {
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local script="${scenario_target}/${scenario_name}.setup_templates_only.sh"
+    if [[ ! -f "$script" ]]; then
+        _r42_print_fail "script not found: $script"
+        return 1
+    fi
+    _r42_print_section "preparing templates only (no guest deployment)"
+    # The scenario owns its prerequisite and existing-template guards. Selecting
+    # this stage neither resets guest trust nor invokes any guest lifecycle.
+    if [[ "$scenario_name" == "catalog_try" ]]; then
+        ( cd "$scenario_target" && _r42_catalog_try_with_verified_api bash "$script" "$@" )
+    else
+        ( cd "$scenario_target" && bash "$script" "$@" )
+    fi
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
@@ -2725,6 +2754,75 @@ _r42_catalog_try_list_admin() {
 # Usage : _r42_catalog_try <path>
 #   <path> : logical catalog path (e.g. docker/_ctf/hello)
 #
+# Authenticate guest-agent enrollment without changing the caller's CA context.
+# The fixed native workshop CA is optional: normal system trust remains the
+# default elsewhere. Never substitute a writable, linked or non-root CA file.
+_r42_catalog_try_with_verified_api() (
+    local native_ca="/etc/range42-workshop-pve-ca.pem"
+    if [[ -z "${RANGE42_PROXMOX_CA_FILE:-}" && -f "$native_ca" && ! -L "$native_ca" && -r "$native_ca" ]]; then
+        local ca_metadata
+        ca_metadata=$(stat -c '%u:%a:%h' "$native_ca" 2>/dev/null) || ca_metadata=""
+        case "$ca_metadata" in
+            0:600:1|0:640:1|0:644:1|0:400:1|0:440:1|0:444:1)
+                export RANGE42_PROXMOX_CA_FILE="$native_ca"
+                ;;
+        esac
+    fi
+    if [[ -n "${RANGE42_PROXMOX_CA_FILE:-}" ]]; then
+        local ca_bundle
+        ca_bundle=$(mktemp "${TMPDIR:-/tmp}/range42-proxmox-ca.XXXXXXXX") || return 1
+        trap 'command rm -f -- "$ca_bundle"' EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        # Native uri/get_url tasks use OpenSSL trust; other providers can use
+        # Requests. Keep public and caller roots while adding the selected PVE
+        # CA, without persisting trust or changing the parent shell's variables.
+        if ! python3 - "$ca_bundle" "$RANGE42_PROXMOX_CA_FILE" "${SSL_CERT_FILE:-}" "${REQUESTS_CA_BUNDLE:-}" 2>/dev/null <<'PY'
+import os
+import re
+import ssl
+import stat
+import sys
+
+certificates = {}
+paths = [ssl.get_default_verify_paths().openssl_cafile, *sys.argv[2:]]
+for name in dict.fromkeys(path for path in paths if path):
+    with open(name, 'rb') as source:
+        data = source.read(4 * 1024 * 1024 + 1)
+    if len(data) > 4 * 1024 * 1024:
+        raise ValueError('CA input exceeds its bound')
+    blocks = re.findall(br'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', data, re.S)
+    if not blocks:
+        raise ValueError('CA input contains no certificates')
+    for block in blocks:
+        text = block.decode('ascii')
+        ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=text)
+        certificates[ssl.PEM_cert_to_DER_cert(text)] = block + b'\n'
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_NOFOLLOW)
+with os.fdopen(fd, 'wb') as output:
+    info = os.fstat(output.fileno())
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+        raise ValueError('CA output must remain a private owned file')
+    output.write(b''.join(certificates.values()))
+    output.flush()
+    os.fsync(output.fileno())
+PY
+        then
+            _r42_print_fail "cannot build verified API trust bundle"
+            return 1
+        fi
+        export SSL_CERT_FILE="$ca_bundle"
+        export REQUESTS_CA_BUNDLE="$ca_bundle"
+    fi
+    "$@" -e proxmox_api_validate_certs=true
+)
+
+_r42_catalog_try_deploy_vms() {
+    _r42_catalog_try_with_verified_api _r42_deploy_vms -e range42_guest_hostkey_from_pve_agent=true
+}
+
 # Requires : active scenario = catalog_try (range42-context use <codename> catalog_try first).
 _r42_catalog_try() {
     # IMPORTANT : do NOT name this local var "path" — zsh ties $PATH (string) to
@@ -2978,6 +3076,8 @@ _r42_catalog_try() {
         _r42_print_step "Smoke check   : L1 fallback (no contract declared)"
     fi
     _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip}, VMID ${vm_id})"
+    _r42_print_step "Guest trust   : authenticated QGA, verified Proxmox TLS; guest agent must already be enabled."
+    _r42_print_step "Workshop      : after install/use, run deploy-templates then range42-workshop ui before CLI catalog-try."
     _r42_print_warning "This will DESTROY VM ${vm_id} and redeploy it fresh."
     # Portable prompt (bash `read -p` is not zsh-compatible : -p means coprocess in zsh)
     printf '  Continue ? [y/N] '
@@ -2987,16 +3087,13 @@ _r42_catalog_try() {
         return 1
     fi
 
-    # 6. Flush known_hosts for the test VM IP (avoid SSH host key collision)
-    ssh-keygen -f "$HOME/.ssh/known_hosts" -R "$vm_ip" >/dev/null 2>&1 || true
-
-    # 7. Destroy previous test VM
+    # Destroy previous test VM; the scenario alone owns absence-gated pin retirement.
     _r42_print_section "destroying previous test VM"
     _r42_delete_vms || { _r42_print_fail "delete_vms failed" ; return 1 ; }
 
     # 8. Redeploy fresh VM with Docker baseline
     _r42_print_section "redeploying test VM"
-    _r42_deploy_vms || { _r42_print_fail "deploy_vms failed" ; return 1 ; }
+    _r42_catalog_try_deploy_vms || { _r42_print_fail "deploy_vms failed; authenticated QGA, enabled guest agent and verified Proxmox TLS are required" ; return 1 ; }
 
     # 9-11. Deploy element to VM (copy + run + smoke) via Ansible playbook.
     # The playbook handles file transfer (ansible.builtin.copy / SFTP), docker
@@ -3283,6 +3380,7 @@ _r42_help() {
     echo ""
     printf "  ${C}operations${R}\n"
     printf "    ${N}deploy${R}                         ${D}run full scenario setup (templates + VMs)${R}\n"
+    printf "    ${N}deploy-templates${R}               ${D}prepare scenario templates only (no guests)${R}\n"
     printf "    ${N}deploy-vms${R}                     ${D}deploy VMs only (skip templates)${R}\n"
     printf "    ${N}delete${R}                         ${D}delete all scenario VMs + templates${R}\n"
     printf "    ${N}delete-vms${R}                     ${D}delete VMs only (keep templates)${R}\n"
@@ -3368,6 +3466,7 @@ range42-context() {
         init)           _r42_init ;;
         tools-update)   _r42_tools_update ;;
         deploy)             _r42_deploy "$@" ;;
+        deploy-templates)   _r42_deploy_templates "$@" ;;
         deploy-vms)         _r42_deploy_vms "$@" ;;
         delete)             _r42_delete ;;
         delete-vms)         _r42_delete_vms ;;

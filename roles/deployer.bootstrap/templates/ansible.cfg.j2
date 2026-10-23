@@ -7,7 +7,7 @@ deprecation_warnings = False
 command_warnings = False
 # silently = allow dots/hyphens in host names (r42.admin-wazuh etc.) without warning every run
 force_valid_group_names = silently
-host_key_checking = False
+host_key_checking = True
 timeout = 30
 
 [privilege_escalation]
@@ -15,3 +15,6 @@ become = false
 
 [ssh_connection]
 pipelining = True
+# Detect disconnected SSH channels and retry transport failures only.
+ssh_args = -C -o ControlMaster=auto -o ControlPersist=60s -o ServerAliveInterval=15 -o ServerAliveCountMax=3
+retries = 3
