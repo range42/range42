@@ -3,6 +3,7 @@ import json
 import os
 import shlex
 import shutil
+import ssl
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'roles/deployer.bootstrap/files/range42-context.sh'
+
+
+def public_certificate():
+    context = ssl.create_default_context(cafile=ssl.get_default_verify_paths().openssl_cafile)
+    return ssl.DER_cert_to_PEM_cert(context.get_ca_certs(binary_form=True)[0])
 
 
 def fixture(tmp_path, *, failed_delete=False, caller_ca=None):
@@ -71,7 +77,9 @@ elif name!='ansible-playbook':
                TEST_CALLS=str(calls), TEST_STATE=str(state), TEST_PINS=str(pins),
                TEST_DELETE_FAILED='1' if failed_delete else '0')
     if caller_ca is not None:
-        env['RANGE42_PROXMOX_CA_FILE'] = caller_ca
+        caller = tmp_path / 'caller-ca.pem'
+        caller.write_text(public_certificate())
+        env['RANGE42_PROXMOX_CA_FILE'] = str(caller)
     return {'env': env, 'pins': pins, 'calls': calls, 'element': tmp_path / 'element', 'checkout': checkout}
 
 
@@ -79,6 +87,7 @@ elif name!='ansible-playbook':
 @pytest.mark.parametrize('caller_ca', [None, '/fixture/operator-qualified-ca.pem'])
 def test_ordinary_catalog_use_deletion_and_enrollment_preserve_strict_trust(tmp_path, failed_delete, caller_ca):
     f = fixture(tmp_path, failed_delete=failed_delete, caller_ca=caller_ca)
+    caller_ca = f['env'].get('RANGE42_PROXMOX_CA_FILE')
     before = f['pins'].read_text()
     command = f'''source {shlex.quote(str(SCRIPT))}
 _r42_ssh_reload() {{ return 0; }}
@@ -119,7 +128,7 @@ exit $result
 def test_catalog_ca_scope_requires_secure_native_file_and_preserves_caller(tmp_path, shell, state, operation):
     ca = tmp_path / 'qualified-ca.pem'
     if state != 'missing':
-        ca.write_text('synthetic public CA fixture\n')
+        ca.write_text(public_certificate())
         ca.chmod(0o644)
     if state == 'symlink':
         original = ca.with_name('real-ca.pem')
@@ -129,8 +138,10 @@ def test_catalog_ca_scope_requires_secure_native_file_and_preserves_caller(tmp_p
     script = tmp_path / 'context.sh'
     script.write_text(SCRIPT.read_text().replace('/etc/range42-workshop-pve-ca.pem', str(ca)))
     env = {key: value for key, value in os.environ.items() if key != 'RANGE42_PROXMOX_CA_FILE'}
+    caller = tmp_path / 'caller-ca.pem'
     if state == 'caller':
-        env['RANGE42_PROXMOX_CA_FILE'] = '/operator/qualified-ca.pem'
+        caller.write_text(public_certificate())
+        env['RANGE42_PROXMOX_CA_FILE'] = str(caller)
     dispatch = '_r42_catalog_try_deploy_vms' if operation == 'guest' else '_r42_catalog_try_with_verified_api _r42_deploy_vms'
     command = f'''source {shlex.quote(str(script))}
 stat() {{ printf '%s\\n' {shlex.quote(metadata)}; }}
@@ -140,9 +151,9 @@ printf 'RESTORED=%s\\n' "${{RANGE42_PROXMOX_CA_FILE-UNSET}}"
 '''
     result = subprocess.run([shell, '-c', command], env=env, capture_output=True, text=True, timeout=5, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
-    expected = str(ca) if state == 'qualified' else '/operator/qualified-ca.pem' if state == 'caller' else 'UNSET'
+    expected = str(ca) if state == 'qualified' else str(caller) if state == 'caller' else 'UNSET'
     assert f'SELECTED={expected}\n' in result.stdout
-    assert f"RESTORED={'/operator/qualified-ca.pem' if state == 'caller' else 'UNSET'}\n" in result.stdout
+    assert f"RESTORED={str(caller) if state == 'caller' else 'UNSET'}\n" in result.stdout
     assert result.stdout.count('ARG=range42_guest_hostkey_from_pve_agent=true\n') == (1 if operation == 'guest' else 0)
     assert result.stdout.count('ARG=proxmox_api_validate_certs=true\n') == 1
 
@@ -152,6 +163,7 @@ printf 'RESTORED=%s\\n' "${{RANGE42_PROXMOX_CA_FILE-UNSET}}"
 @pytest.mark.parametrize('caller_ca', [None, '/operator/qualified-ca.pem'])
 def test_templates_only_dispatch_preserves_pins_context_and_literal_arguments(tmp_path, shell, wrapper_exists, caller_ca):
     f = fixture(tmp_path, caller_ca=caller_ca)
+    caller_ca = f['env'].get('RANGE42_PROXMOX_CA_FILE')
     scenario = f['checkout'] / 'range42-playbooks/scenarios/catalog_try'
     wrapper = scenario / 'catalog_try.setup_templates_only.sh'
     if wrapper_exists:
@@ -203,5 +215,5 @@ def test_other_scenario_template_dispatch_does_not_rewrite_its_arguments_or_conf
     calls = [json.loads(line) for line in f['calls'].read_text().splitlines()]
     assert len(calls) == 1
     assert calls[0]['argv'] == ['./main_templates_only.yml', '-e', 'operator_feature=true']
-    assert calls[0]['ca'] == '/operator/qualified-ca.pem'
+    assert calls[0]['ca'] == f['env']['RANGE42_PROXMOX_CA_FILE']
     assert calls[0]['config'] == '/operator/strict.cfg'

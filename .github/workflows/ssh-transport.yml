@@ -11,6 +11,7 @@ name: SSH transport
       - 'tests/test_context_runner_links.py'
       - 'tests/test_cli_host_trust.py'
       - 'tests/test_cli_catalog_trust.py'
+      - 'tests/test_cli_ca_bundle.py'
   push:
     branches: [dev]
     paths:
@@ -22,6 +23,7 @@ name: SSH transport
       - 'tests/test_context_runner_links.py'
       - 'tests/test_cli_host_trust.py'
       - 'tests/test_cli_catalog_trust.py'
+      - 'tests/test_cli_ca_bundle.py'
 
 permissions:
   contents: read
@@ -54,7 +56,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: range42/range42-playbooks
-          ref: 99762e27440e103cb18ca3615af0aa024173d3de
+          ref: 59bd610b5353fd409fe63a3ee074080b78fd8e74
           path: .runtime-contract/playbooks
           persist-credentials: false
       - name: Install local shell dependencies

@@ -2768,6 +2768,54 @@ _r42_catalog_try_with_verified_api() (
                 ;;
         esac
     fi
+    if [[ -n "${RANGE42_PROXMOX_CA_FILE:-}" ]]; then
+        local ca_bundle
+        ca_bundle=$(mktemp "${TMPDIR:-/tmp}/range42-proxmox-ca.XXXXXXXX") || return 1
+        trap 'command rm -f -- "$ca_bundle"' EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        # Native uri/get_url tasks use OpenSSL trust; other providers can use
+        # Requests. Keep public and caller roots while adding the selected PVE
+        # CA, without persisting trust or changing the parent shell's variables.
+        if ! python3 - "$ca_bundle" "$RANGE42_PROXMOX_CA_FILE" "${SSL_CERT_FILE:-}" "${REQUESTS_CA_BUNDLE:-}" 2>/dev/null <<'PY'
+import os
+import re
+import ssl
+import stat
+import sys
+
+certificates = {}
+paths = [ssl.get_default_verify_paths().openssl_cafile, *sys.argv[2:]]
+for name in dict.fromkeys(path for path in paths if path):
+    with open(name, 'rb') as source:
+        data = source.read(4 * 1024 * 1024 + 1)
+    if len(data) > 4 * 1024 * 1024:
+        raise ValueError('CA input exceeds its bound')
+    blocks = re.findall(br'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', data, re.S)
+    if not blocks:
+        raise ValueError('CA input contains no certificates')
+    for block in blocks:
+        text = block.decode('ascii')
+        ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=text)
+        certificates[ssl.PEM_cert_to_DER_cert(text)] = block + b'\n'
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_NOFOLLOW)
+with os.fdopen(fd, 'wb') as output:
+    info = os.fstat(output.fileno())
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+        raise ValueError('CA output must remain a private owned file')
+    output.write(b''.join(certificates.values()))
+    output.flush()
+    os.fsync(output.fileno())
+PY
+        then
+            _r42_print_fail "cannot build verified API trust bundle"
+            return 1
+        fi
+        export SSL_CERT_FILE="$ca_bundle"
+        export REQUESTS_CA_BUNDLE="$ca_bundle"
+    fi
     "$@" -e proxmox_api_validate_certs=true
 )
 
