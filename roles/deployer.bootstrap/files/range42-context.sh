@@ -848,6 +848,29 @@ _r42_deploy() {
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+# range42-context deploy-templates — prepare templates without deploying guests
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
+
+_r42_deploy_templates() {
+    local scenario_target
+    scenario_target=$(_r42_active_scenario_dir) || return 1
+    local scenario_name="${scenario_target##*/}"
+    local script="${scenario_target}/${scenario_name}.setup_templates_only.sh"
+    if [[ ! -f "$script" ]]; then
+        _r42_print_fail "script not found: $script"
+        return 1
+    fi
+    _r42_print_section "preparing templates only (no guest deployment)"
+    # The scenario owns its prerequisite and existing-template guards. Selecting
+    # this stage neither resets guest trust nor invokes any guest lifecycle.
+    if [[ "$scenario_name" == "catalog_try" ]]; then
+        ( cd "$scenario_target" && _r42_catalog_try_with_verified_api bash "$script" "$@" )
+    else
+        ( cd "$scenario_target" && bash "$script" "$@" )
+    fi
+}
+
+#### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 # range42-context deploy-vms — deploy VMs only (skip templates)
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
 
@@ -2734,7 +2757,7 @@ _r42_catalog_try_list_admin() {
 # Authenticate guest-agent enrollment without changing the caller's CA context.
 # The fixed native workshop CA is optional: normal system trust remains the
 # default elsewhere. Never substitute a writable, linked or non-root CA file.
-_r42_catalog_try_deploy_vms() (
+_r42_catalog_try_with_verified_api() (
     local native_ca="/etc/range42-workshop-pve-ca.pem"
     if [[ -z "${RANGE42_PROXMOX_CA_FILE:-}" && -f "$native_ca" && ! -L "$native_ca" && -r "$native_ca" ]]; then
         local ca_metadata
@@ -2745,8 +2768,12 @@ _r42_catalog_try_deploy_vms() (
                 ;;
         esac
     fi
-    _r42_deploy_vms -e range42_guest_hostkey_from_pve_agent=true -e proxmox_api_validate_certs=true
+    "$@" -e proxmox_api_validate_certs=true
 )
+
+_r42_catalog_try_deploy_vms() {
+    _r42_catalog_try_with_verified_api _r42_deploy_vms -e range42_guest_hostkey_from_pve_agent=true
+}
 
 # Requires : active scenario = catalog_try (range42-context use <codename> catalog_try first).
 _r42_catalog_try() {
@@ -3002,7 +3029,7 @@ _r42_catalog_try() {
     fi
     _r42_print_step "Test VM       : ${vm_ssh}  (IP ${vm_ip}, VMID ${vm_id})"
     _r42_print_step "Guest trust   : authenticated QGA, verified Proxmox TLS; guest agent must already be enabled."
-    _r42_print_step "Workshop      : run range42-workshop ui after install to prepare the owned template before CLI catalog-try."
+    _r42_print_step "Workshop      : after install/use, run deploy-templates then range42-workshop ui before CLI catalog-try."
     _r42_print_warning "This will DESTROY VM ${vm_id} and redeploy it fresh."
     # Portable prompt (bash `read -p` is not zsh-compatible : -p means coprocess in zsh)
     printf '  Continue ? [y/N] '
@@ -3305,6 +3332,7 @@ _r42_help() {
     echo ""
     printf "  ${C}operations${R}\n"
     printf "    ${N}deploy${R}                         ${D}run full scenario setup (templates + VMs)${R}\n"
+    printf "    ${N}deploy-templates${R}               ${D}prepare scenario templates only (no guests)${R}\n"
     printf "    ${N}deploy-vms${R}                     ${D}deploy VMs only (skip templates)${R}\n"
     printf "    ${N}delete${R}                         ${D}delete all scenario VMs + templates${R}\n"
     printf "    ${N}delete-vms${R}                     ${D}delete VMs only (keep templates)${R}\n"
@@ -3390,6 +3418,7 @@ range42-context() {
         init)           _r42_init ;;
         tools-update)   _r42_tools_update ;;
         deploy)             _r42_deploy "$@" ;;
+        deploy-templates)   _r42_deploy_templates "$@" ;;
         deploy-vms)         _r42_deploy_vms "$@" ;;
         delete)             _r42_delete ;;
         delete-vms)         _r42_delete_vms ;;

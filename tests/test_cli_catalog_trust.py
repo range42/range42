@@ -115,7 +115,8 @@ exit $result
 
 @pytest.mark.parametrize('shell', ['bash', 'zsh'])
 @pytest.mark.parametrize('state', ['qualified', 'caller', 'missing', 'symlink', 'nonroot', 'writable', 'hardlinked'])
-def test_catalog_ca_scope_requires_secure_native_file_and_preserves_caller(tmp_path, shell, state):
+@pytest.mark.parametrize('operation', ['guest', 'template'])
+def test_catalog_ca_scope_requires_secure_native_file_and_preserves_caller(tmp_path, shell, state, operation):
     ca = tmp_path / 'qualified-ca.pem'
     if state != 'missing':
         ca.write_text('synthetic public CA fixture\n')
@@ -130,10 +131,11 @@ def test_catalog_ca_scope_requires_secure_native_file_and_preserves_caller(tmp_p
     env = {key: value for key, value in os.environ.items() if key != 'RANGE42_PROXMOX_CA_FILE'}
     if state == 'caller':
         env['RANGE42_PROXMOX_CA_FILE'] = '/operator/qualified-ca.pem'
+    dispatch = '_r42_catalog_try_deploy_vms' if operation == 'guest' else '_r42_catalog_try_with_verified_api _r42_deploy_vms'
     command = f'''source {shlex.quote(str(script))}
 stat() {{ printf '%s\\n' {shlex.quote(metadata)}; }}
 _r42_deploy_vms() {{ printf 'SELECTED=%s\\n' "${{RANGE42_PROXMOX_CA_FILE-UNSET}}"; printf 'ARG=%s\\n' "$@"; }}
-_r42_catalog_try_deploy_vms || exit $?
+{dispatch} || exit $?
 printf 'RESTORED=%s\\n' "${{RANGE42_PROXMOX_CA_FILE-UNSET}}"
 '''
     result = subprocess.run([shell, '-c', command], env=env, capture_output=True, text=True, timeout=5, check=False)
@@ -141,5 +143,65 @@ printf 'RESTORED=%s\\n' "${{RANGE42_PROXMOX_CA_FILE-UNSET}}"
     expected = str(ca) if state == 'qualified' else '/operator/qualified-ca.pem' if state == 'caller' else 'UNSET'
     assert f'SELECTED={expected}\n' in result.stdout
     assert f"RESTORED={'/operator/qualified-ca.pem' if state == 'caller' else 'UNSET'}\n" in result.stdout
-    assert result.stdout.count('ARG=range42_guest_hostkey_from_pve_agent=true\n') == 1
+    assert result.stdout.count('ARG=range42_guest_hostkey_from_pve_agent=true\n') == (1 if operation == 'guest' else 0)
     assert result.stdout.count('ARG=proxmox_api_validate_certs=true\n') == 1
+
+
+@pytest.mark.parametrize('shell', ['bash', 'zsh'])
+@pytest.mark.parametrize('wrapper_exists', [True, False])
+@pytest.mark.parametrize('caller_ca', [None, '/operator/qualified-ca.pem'])
+def test_templates_only_dispatch_preserves_pins_context_and_literal_arguments(tmp_path, shell, wrapper_exists, caller_ca):
+    f = fixture(tmp_path, caller_ca=caller_ca)
+    scenario = f['checkout'] / 'range42-playbooks/scenarios/catalog_try'
+    wrapper = scenario / 'catalog_try.setup_templates_only.sh'
+    if wrapper_exists:
+        wrapper.write_text('#!/bin/bash\nansible-playbook ./main_templates_only.yml "$@"\n')
+    else:
+        wrapper.unlink(missing_ok=True)
+    before = f['pins'].read_bytes()
+    command = f'''source {shlex.quote(str(SCRIPT))}
+_r42_ssh_reload() {{ return 0; }}
+_r42_status() {{ return 0; }}
+range42-context use lab catalog_try || exit $?
+range42-context deploy-templates --start-at-task 'fixed task; no interpretation' -e proxmox_api_validate_certs=false
+'''
+    result = subprocess.run([shell, '-c', command], env=f['env'], capture_output=True,
+                            text=True, timeout=10, check=False)
+    assert (result.returncode == 0) is wrapper_exists, result.stdout + result.stderr
+    assert f['pins'].read_bytes() == before
+    calls = [json.loads(line) for line in f['calls'].read_text().splitlines()] if f['calls'].exists() else []
+    if wrapper_exists:
+        assert len(calls) == 1 and calls[0]['name'] == 'ansible-playbook'
+        assert calls[0]['argv'] == ['./main_templates_only.yml', '--start-at-task',
+                                     'fixed task; no interpretation', '-e', 'proxmox_api_validate_certs=false',
+                                     '-e', 'proxmox_api_validate_certs=true']
+        assert calls[0]['config'] == str(f['checkout'] / 'range42/ansible.cfg')
+        assert calls[0]['ca'] == caller_ca
+    else:
+        assert 'catalog_try.setup_templates_only.sh' in result.stdout + result.stderr
+        assert not calls
+
+
+@pytest.mark.parametrize('shell', ['bash', 'zsh'])
+def test_other_scenario_template_dispatch_does_not_rewrite_its_arguments_or_configuration(tmp_path, shell):
+    f = fixture(tmp_path, caller_ca='/operator/qualified-ca.pem')
+    scenario = tmp_path / 'other_scenario'
+    scenario.mkdir()
+    (scenario / 'other_scenario.setup_templates_only.sh').write_text(
+        '#!/bin/bash\nansible-playbook ./main_templates_only.yml "$@"\n')
+    link = Path(f['env']['HOME']) / 'range42.config/lab-catalog_try/scenario'
+    link.unlink()
+    link.symlink_to(scenario)
+    f['env']['RANGE42_ACTIVE_CONFIG_DIR'] = str(link.parent)
+    f['env']['ANSIBLE_CONFIG'] = '/operator/strict.cfg'
+    before = f['pins'].read_bytes()
+    command = f'source {shlex.quote(str(SCRIPT))}\nrange42-context deploy-templates -e operator_feature=true'
+    result = subprocess.run([shell, '-c', command],
+                            env=f['env'], capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f['pins'].read_bytes() == before
+    calls = [json.loads(line) for line in f['calls'].read_text().splitlines()]
+    assert len(calls) == 1
+    assert calls[0]['argv'] == ['./main_templates_only.yml', '-e', 'operator_feature=true']
+    assert calls[0]['ca'] == '/operator/qualified-ca.pem'
+    assert calls[0]['config'] == '/operator/strict.cfg'
