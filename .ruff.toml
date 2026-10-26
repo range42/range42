@@ -1,0 +1,7 @@
+# CI gate: syntax errors (E9) and pyflakes (F) — undefined names, unused
+# imports, broken f-strings. Style families (E7 one-liners, D docstrings,
+# ANN annotations) stay off: the wizard/TUI code deliberately uses compact
+# one-line statements, and enabling style rules belongs to a dedicated
+# lint-cleanup change, not the CI bootstrap.
+[lint]
+select = ["E9", "F"]
