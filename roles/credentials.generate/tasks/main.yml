@@ -30,6 +30,9 @@
 #   - credentials_output_dir        (required — base output path)
 #   - context_auto_generate_ssh_keys        (YES/NO, default YES)
 #   - context_auto_generate_vm_passwords    (YES/NO, default YES)
+#       NO = import every password from the inventory : default_admin_vm_ci_password,
+#       default_trainee_vm_ci_password, WAZUH_PASSWORD, default_ad_dsrm_password,
+#       default_windows_builtin_admin_password
 #   - student_additional_keys_count         (int, default 5)
 #
 ################################################################################

@@ -82,6 +82,12 @@ default_trainee_vm_ci_user: "{{ default_trainee_vm_ci_user }}"
 default_trainee_vm_ci_password: "{{ generated_trainee_password }}"
 default_trainee_vm_ci_ssh_key: "{{ generated_trainee_ssh_pubkey }}"
 
+# --- windows active directory (generated for every scenario, used by the windows ones)
+# directory services restore mode password of a domain controller
+default_ad_dsrm_password: "{{ generated_ad_dsrm_password }}"
+# built-in administrator (rid 500) ; becomes the domain administrator on the first domain controller
+default_windows_builtin_admin_password: "{{ generated_windows_builtin_admin_password }}"
+
 
 ###############################################################################
 # 5 - MISC
