@@ -739,6 +739,8 @@ alice@admin-wazuh:~$
 The hostnames are defined in the auto-generated SSH config:
 `~/.ssh/config_range42-<codename>-<scenario>` (included from `~/.ssh/config`).
 
+`range42-context ssh <pattern>` connects with `StrictHostKeyChecking=accept-new` because `use`, `deploy` and `deploy-vms` remove the scenario VM keys from `~/.ssh/known_hosts` (other infrastructures reuse the same VM IPs): the first connection after them records the presented key without a prompt, later connections still refuse a changed key, and that first key is not verified — the same trust as answering "yes" to the prompt of a plain `ssh r42.<vm>`; reading the guest key through the Proxmox guest agent or cloud-init would be the stronger option.
+
 VMs are on the lab networks (`net143`, `net144`, etc.), which are host-local - your operator machine
 has no direct route to them. SSH uses **ProxyJump** through the Proxmox host:
 
