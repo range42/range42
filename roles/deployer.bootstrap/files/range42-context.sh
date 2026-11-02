@@ -809,7 +809,8 @@ _r42_ssh() {
 
     local host="$matches"
     _r42_print_step "connecting to $host"
-    ssh "$host"
+    # _r42_flush_known_hosts drops VM keys on use/deploy: record the new key, still reject a changed one.
+    ssh -o StrictHostKeyChecking=accept-new "$host"
 }
 
 #### #### #### #### #### #### #### #### #### #### #### #### #### #### #### ####
