@@ -15,3 +15,5 @@ become = false
 
 [ssh_connection]
 pipelining = True
+# ssh_args replaces Ansible's default (first 3 options); ServerAlive* fails a silently dead peer (guest reboot) after 30 s x 4 instead of hanging
+ssh_args = -C -o ControlMaster=auto -o ControlPersist=60s -o ServerAliveInterval=30 -o ServerAliveCountMax=4
