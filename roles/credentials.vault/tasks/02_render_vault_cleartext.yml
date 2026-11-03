@@ -6,6 +6,7 @@
 #
 # consumes facts set by credentials.generate:
 #   - generated_admin_password, generated_trainee_password, generated_wazuh_password
+#   - generated_ad_dsrm_password, generated_windows_builtin_admin_password
 #   - generated_admin_ssh_pubkey, generated_trainee_ssh_pubkey
 
 - name: CREDENTIALS VAULT - RENDER VAULT CLEARTEXT FROM TEMPLATE

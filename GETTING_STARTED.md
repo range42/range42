@@ -450,7 +450,7 @@ After confirming, the wizard runs the full deployment automatically (~10-15 min)
   - `px.<codename>-<scenario>-ssh_cli.jump_user` - Proxmox jump user SSH
   - `r42.<codename>-<scenario>-deployer-key_alice` - admin user on VMs
   - `r42.<codename>-<scenario>-student-key_bob` - student user on VMs
-- Generate vault with random VM passwords + Wazuh password
+- Generate vault with random VM passwords + Wazuh password + Windows Active Directory passwords (DSRM, built-in Administrator)
 - Encrypt vault with `vault_pass.txt`
 - Generate operator's SSH config snippet
 
@@ -992,8 +992,10 @@ vault password every time.
 
 #### How to view the vault contents
 
-The vault contains generated VM passwords, the Wazuh password, the Proxmox API
-token, and the SSH key passphrases (`ssh_passphrase_px_root`,
+The vault contains generated VM passwords, the Wazuh password, the Windows
+Active Directory passwords (`default_ad_dsrm_password`,
+`default_windows_builtin_admin_password`), the Proxmox API token, and the SSH
+key passphrases (`ssh_passphrase_px_root`,
 `ssh_passphrase_px_jump`, `ssh_passphrase_admin_alice`,
 `ssh_passphrase_student_bob`, plus one per student extra key). To inspect them
 with the active workspace loaded:

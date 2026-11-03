@@ -11,7 +11,10 @@
 - name: proxmox.ssh-limits - assert MaxStartups is effective
   ansible.builtin.assert:
     that:
-      - '("maxstartups " ~ proxmox_ssh_limits_maxstartups) in _pxsl_effective.stdout'
+      # Lower-case the haystack: sshd -T prints the keyword in canonical case,
+      # which is "MaxStartups" on OpenSSH >= 10.5p1 and "maxstartups" before it,
+      # so a case-sensitive match gives a false negative on newer sshd (#261).
+      - '("maxstartups " ~ proxmox_ssh_limits_maxstartups) in (_pxsl_effective.stdout | lower)'
     fail_msg: >-
       Effective MaxStartups is not {{ proxmox_ssh_limits_maxstartups }} : the
       drop-in is shadowed or not loaded. Check /etc/ssh/sshd_config.d/.
