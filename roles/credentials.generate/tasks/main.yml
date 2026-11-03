@@ -30,6 +30,8 @@
 #   - credentials_output_dir        (required — base output path)
 #   - context_auto_generate_ssh_keys        (YES/NO, default YES)
 #   - context_auto_generate_vm_passwords    (YES/NO, default YES)
+#       NO = import the wazuh manager secrets from the inventory too : infrastructure_wazuh_authd_password,
+#       infrastructure_wazuh_api_password, infrastructure_wazuh_wui_password
 #   - student_additional_keys_count         (int, default 5)
 #
 ################################################################################

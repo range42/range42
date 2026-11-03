@@ -92,6 +92,10 @@ deployer_cli_user_ssh_known_hosts: "/home/{{ DEPLOYER_CLI_USER }}/.ssh/known_hos
 infrastructure_tailscale_authkey: "{{ infrastructure_tailscale_authkey }}"
 infrastructure_tailscale_apikey: "{{ infrastructure_tailscale_apikey }}"
 infrastructure_wazuh_admin_password: "{{ generated_wazuh_password }}"
+# wazuh manager : agent enrollment password (authd, tcp 1515) and the api users (tcp 55000)
+infrastructure_wazuh_authd_password: "{{ generated_wazuh_authd_password }}"
+infrastructure_wazuh_api_password: "{{ generated_wazuh_api_password }}"
+infrastructure_wazuh_wui_password: "{{ generated_wazuh_wui_password }}"
 
 
 ###############################################################################
