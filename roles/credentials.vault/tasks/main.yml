@@ -12,6 +12,7 @@
 #
 # Consumes facts set by credentials.generate:
 #   - generated_admin_password, generated_trainee_password, generated_wazuh_password
+#   - generated_wazuh_authd_password, generated_wazuh_api_password, generated_wazuh_wui_password
 #   - generated_admin_ssh_pubkey, generated_trainee_ssh_pubkey
 #
 # Produces:
@@ -43,6 +44,8 @@
 #     deployer_cli_user_ssh_known_hosts
 #     infrastructure_tailscale_authkey, infrastructure_tailscale_apikey
 #     infrastructure_wazuh_admin_password    ← mapped from WAZUH_PASSWORD in MASTER_FILE
+#     infrastructure_wazuh_authd_password, infrastructure_wazuh_api_password,
+#     infrastructure_wazuh_wui_password      ← wazuh manager enrollment and api users
 #
 # Variables consumed:
 #   - INFRASTRUCTURE_CODENAME          (required)
